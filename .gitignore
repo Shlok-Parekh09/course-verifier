@@ -1,0 +1,22 @@
+# Environment variables
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Chrome profiles
+chrome_profile/
+chrome_profile_fallback/
+
+# Data/Reports
+verification_screenshots/
+*.pdf
+*.xlsx
+# dump_courses.json
+# *_floating_items.json
+
+# Virtual environment
+venv/
+.venv/

@@ -1,0 +1,14 @@
+requests
+beautifulsoup4
+fpdf2
+Pillow
+playwright
+six
+timezonefinder
+PyMuPDF
+pdfplumber
+opencv-python
+numpy
+pytesseract
+selenium
+undetected-chromedriver
