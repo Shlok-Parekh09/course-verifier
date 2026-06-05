@@ -14,27 +14,57 @@ class LLMManager:
         self.gemini_keys = [os.environ.get(f"GEMINI_KEY_{i}") for i in range(1, 7) if os.environ.get(f"GEMINI_KEY_{i}")]
         
         # Track last call time per provider to enforce rate limits
-        self.last_call = {
-            "openrouter": 0.0,
-            "gemini": 0.0
-        }
+        # Track last call time per key to enforce rate limits individually
+        self.last_call = {}
 
-    def _rate_limit(self, provider: str, min_interval: float = 4.29):
-        """Enforces a minimum interval (in seconds) between API calls for a given provider."""
+    def _rate_limit(self, key_identifier: str, min_interval: float = 4.29):
+        """Enforces a minimum interval (in seconds) between API calls for a given key."""
         now = time.time()
-        elapsed = now - self.last_call[provider]
+        if key_identifier not in self.last_call:
+            self.last_call[key_identifier] = 0.0
+            
+        elapsed = now - self.last_call[key_identifier]
         if elapsed < min_interval:
             wait_time = min_interval - elapsed
-            print(f"      -> [Rate Limit] Sleeping for {wait_time:.1f}s to respect {provider} limit (14 req/min)...")
+            print(f"      -> [Rate Limit] Sleeping for {wait_time:.1f}s for key {key_identifier} (14 req/min)...")
             time.sleep(wait_time)
-        self.last_call[provider] = time.time()
+        self.last_call[key_identifier] = time.time()
 
-    def generate(self, prompt: str, system: Optional[str] = None, format: str = "text", temperature: float = 0.0, provider: str = "auto") -> Optional[str]:
-        # If a specific provider is requested, only use that provider
+    def generate(self, prompt: str, system: Optional[str] = None, format: str = "text", temperature: float = 0.0, provider: str = "auto", worker_id: int = None) -> Optional[str]:
+        if not self.gemini_keys and not self.openrouter_keys:
+            print("      -> [LLM Manager] CRITICAL ERROR: No API keys configured!")
+            return None
+            
+        if worker_id is not None:
+            # DEDICATED KEY LOGIC for Multithreading
+            gemini_idx = worker_id % max(1, len(self.gemini_keys))
+            openrouter_idx = worker_id % max(1, len(self.openrouter_keys))
+            
+            if self.gemini_keys and provider in ["auto", "gemini"]:
+                g_key = self.gemini_keys[gemini_idx]
+                key_id = f"gemini_{gemini_idx}"
+                print(f"      -> [LLM Manager] Worker {worker_id+1} using dedicated Gemini Key {gemini_idx+1}...")
+                self._rate_limit(key_id)
+                res = self._call_gemini(g_key, prompt, system, format, temperature)
+                if res: return res
+                print(f"      -> [LLM Manager] Worker {worker_id+1}'s Gemini Key {gemini_idx+1} failed. Failing over to OpenRouter...")
+                
+            if self.openrouter_keys and provider in ["auto", "openrouter"]:
+                o_key = self.openrouter_keys[openrouter_idx]
+                key_id = f"openrouter_{openrouter_idx}"
+                print(f"      -> [LLM Manager] Worker {worker_id+1} using dedicated OpenRouter Key {openrouter_idx+1} as fallback...")
+                self._rate_limit(key_id, min_interval=1.0)
+                res = self._call_openrouter(o_key, prompt, system, format, temperature)
+                if res: return res
+                print(f"      -> [LLM Manager] Worker {worker_id+1}'s OpenRouter Key {openrouter_idx+1} failed.")
+                
+            return None
+
+        # FALLBACK SEQUENTIAL LOGIC (If worker_id is not provided)
         if provider == "gemini":
             for idx, key in enumerate(self.gemini_keys):
                 print(f"      -> [LLM Manager] Trying Gemini Key {idx+1}/{len(self.gemini_keys)} (Requested)...")
-                self._rate_limit("gemini")
+                self._rate_limit(f"gemini_{idx}")
                 result = self._call_gemini(key, prompt, system, format, temperature)
                 if result: return result
                 print(f"      -> [LLM Manager] Gemini Key {idx+1} failed. Failing over...")
@@ -43,15 +73,15 @@ class LLMManager:
         # Provider 1: GEMINI
         for idx, key in enumerate(self.gemini_keys):
             print(f"      -> [LLM Manager] Trying Gemini Key {idx+1}/{len(self.gemini_keys)}...")
-            self._rate_limit("gemini")
+            self._rate_limit(f"gemini_{idx}")
             result = self._call_gemini(key, prompt, system, format, temperature)
             if result: return result
             print(f"      -> [LLM Manager] Gemini Key {idx+1} failed. Failing over...")
             
-        # Provider 2: OPENROUTER (Fallback)
+        # Provider 2: OPENROUTER
         for idx, key in enumerate(self.openrouter_keys):
             print(f"      -> [LLM Manager] Trying OpenRouter Key {idx+1}/{len(self.openrouter_keys)}...")
-            self._rate_limit("openrouter", min_interval=1.0)
+            self._rate_limit(f"openrouter_{idx}", min_interval=1.0)
             result = self._call_openrouter(key, prompt, system, format, temperature)
             if result: return result
             print(f"      -> [LLM Manager] OpenRouter Key {idx+1} failed. Failing over...")
@@ -59,11 +89,20 @@ class LLMManager:
         print("      -> [LLM Manager] CRITICAL ERROR: All API keys for Gemini and OpenRouter failed!")
         return None
 
-    def generate_with_image(self, prompt: str, base64_image: str, system: Optional[str] = None) -> Optional[str]:
+    def generate_with_image(self, prompt: str, base64_image: str, system: Optional[str] = None, worker_id: int = None) -> Optional[str]:
         """Specific method for Vision using Gemma 4 31B"""
+        if not self.gemini_keys: return None
+        
+        if worker_id is not None:
+            idx = worker_id % max(1, len(self.gemini_keys))
+            key = self.gemini_keys[idx]
+            print(f"      -> [LLM Manager] Thread {worker_id} using dedicated Gemini Vision Key {idx+1}...")
+            self._rate_limit(f"gemini_vision_{idx}", min_interval=4.29)
+            return self._call_gemini_vision(key, prompt, base64_image, system)
+
         for idx, key in enumerate(self.gemini_keys):
             print(f"      -> [LLM Manager] Trying Gemini Vision Key {idx+1}/{len(self.gemini_keys)}...")
-            self._rate_limit("gemini", min_interval=4.29)
+            self._rate_limit(f"gemini_vision_{idx}", min_interval=4.29)
             result = self._call_gemini_vision(key, prompt, base64_image, system)
             if result: return result
             print(f"      -> [LLM Manager] Gemini Vision Key {idx+1} failed. Failing over...")

@@ -115,8 +115,8 @@ def generate_pdf_report():
         def draw_row(attr, orig, ver, status):
             orig_s = safe_latin(str(orig).strip())
             ver_s = safe_latin(str(ver).strip())
-            if orig_s.lower() in ["n/a", "not found", "error", "error/unreachable"]: orig_s = "-"
-            if ver_s.lower() in ["n/a", "not found", "error", "error/unreachable"]: ver_s = "-"
+            if orig_s.lower() in ["n/a", "not found", "-", "error", "error/unreachable", "none", "nan", ""]: orig_s = "Not Provided in Source"
+            if ver_s.lower() in ["n/a", "not found", "-", "error", "error/unreachable", "none", "nan", ""]: ver_s = "Not Found on Website"
             
             pdf.set_fill_color(255, 255, 255)
             pdf.set_text_color(60, 60, 60)
@@ -165,43 +165,87 @@ def generate_pdf_report():
         link_ok = course.get('web_status') == 'MATCH'
         has_url = course.get('url') and course.get('url') != 'Unknown'
 
-        draw_row('Cost', course.get('cost', 'N/A'), course.get('web_cost', 'N/A') if link_ok else 'N/A', 'MATCH' if link_ok and course.get('cost_match') else 'FALSE')
-        draw_row('Duration', course.get('duration', 'N/A'), course.get('web_duration', 'N/A') if link_ok else 'N/A', 'MATCH' if link_ok and course.get('duration_match') else 'FALSE')
-        draw_row('Mode', course.get('mode', 'N/A'), course.get('web_mode', 'N/A') if link_ok else 'N/A', 'MATCH' if link_ok and course.get('mode_match') else 'FALSE')
-        draw_row('Language', course.get('language', 'N/A'), course.get('web_language', 'N/A') if link_ok else 'N/A', 'MATCH' if course.get('lang_match') else 'FALSE')
-        draw_row('Country', course.get('country', 'N/A'), course.get('country_verified', 'N/A') if link_ok else 'N/A', 'MATCH' if course.get('country_match') else 'FALSE')
-        draw_row('University', course.get('uni', 'N/A'), course.get('web_uni', 'N/A') if link_ok else 'Error/Unreachable', 'MATCH' if course.get('uni_match') else 'FALSE')
-        draw_row('Skills', course.get('skills', 'N/A'), 'Always Matched', 'MATCH')
-        draw_row('Scholarship', 'Present', 'Matched', 'MATCH')
+        is_hard_error = course.get('is_hard_error', False)
+        
+        def safe_val(val):
+            return 'Page Load Error' if is_hard_error else val
 
+        def fmt_pdf(val):
+            v = str(val).strip()
+            vl = v.lower()
+            if not v or vl in ['n/a', 'nan', 'none', 'n/a in pdf'] or v.strip('-') == '':
+                return "Not Provided in Source"
+            return v
 
+        def fmt_web(val):
+            v = str(val).strip()
+            vl = v.lower()
+            if not v or vl in ['n/a', 'nan', 'none'] or v.strip('-') == '':
+                return "Not Found / Mentioned on Website"
+            return v
+
+        draw_row('Cost', fmt_pdf(course.get('cost')), safe_val(fmt_web(course.get('web_cost'))), 'MATCH' if (course.get('cost_match') and not is_hard_error) else 'FALSE')
+        draw_row('Duration', fmt_pdf(course.get('duration')), safe_val(fmt_web(course.get('web_duration'))), 'MATCH' if (course.get('duration_match') and not is_hard_error) else 'FALSE')
+        draw_row('Mode', fmt_pdf(course.get('mode')), safe_val(fmt_web(course.get('web_mode'))), 'MATCH' if (course.get('mode_match') and not is_hard_error) else 'FALSE')
+        draw_row('Language', fmt_pdf(course.get('language')), safe_val(fmt_web(course.get('web_language'))), 'MATCH' if (course.get('lang_match') and not is_hard_error) else 'FALSE')
+        draw_row('Country', fmt_pdf(course.get('country')), safe_val(fmt_web(course.get('country_verified'))), 'MATCH' if (course.get('country_match') and not is_hard_error) else 'FALSE')
+        draw_row('University', fmt_pdf(course.get('uni')), safe_val(fmt_web(course.get('web_uni'))), 'MATCH' if (course.get('uni_match') and not is_hard_error) else 'FALSE')
+        
+        sk_pdf = fmt_pdf(course.get('skills'))
+        sk_web = fmt_web(course.get('skills_verified')) if course.get('skills_verified') else ('Always Matched' if sk_pdf != 'Not Provided in Source' else 'Not Found')
+        draw_row('Skills', sk_pdf, safe_val(sk_web), 'MATCH' if not is_hard_error else 'FALSE')
+        
         # Boolean Rank Display (Requirement 11)
         has_qs = course.get('has_qs_badge')
         qs_pdf_val = "Yes (Badge)" if has_qs else "No (Badge)"
         qs_web_raw = course.get('qs_detail', '').strip()
-        qs_web = "Ranked" if "Rank" in qs_web_raw and not "Not" in qs_web_raw else "Not Ranked"
-        if not qs_web_raw: qs_web = 'Not Claimed' if not has_qs else 'Not Found'
+        qs_web = qs_web_raw if qs_web_raw else ('Not Claimed' if not has_qs else 'Not Found on Website')
         qs_status = 'MATCH' if (course.get('qs_ranked') or not has_qs) else 'FALSE'
-        draw_row('QS Ranked', qs_pdf_val, qs_web, qs_status)
+        draw_row('QS Ranked', qs_pdf_val, safe_val(qs_web), qs_status if not is_hard_error else 'FALSE')
 
         has_nirf = course.get('has_nirf_badge')
         nirf_pdf_val = "Yes (Badge)" if has_nirf else "No (Badge)"
         nirf_web_raw = course.get('nirf_detail', '').strip()
-        nirf_web = "Ranked" if "Rank" in nirf_web_raw and not "Not" in nirf_web_raw else "Not Ranked"
-        if not nirf_web_raw: nirf_web = 'Not Claimed' if not has_nirf else 'Not Found'
+        nirf_web = nirf_web_raw if nirf_web_raw else ('Not Claimed' if not has_nirf else 'Not Found on Website')
         nirf_status = 'MATCH' if (course.get('nirf_ranked') or not has_nirf) else 'FALSE'
-        draw_row('NIRF Ranked', nirf_pdf_val, nirf_web, nirf_status)
+        draw_row('NIRF Ranked', nirf_pdf_val, safe_val(nirf_web), nirf_status if not is_hard_error else 'FALSE')
 
         has_free_box = course.get('has_free_box', False)
         cost_is_free = 'free' in str(course.get('cost', '')).lower()
         free_pdf_val = "Yes" if has_free_box or cost_is_free else "No"
         free_web_val = "Free" if has_free_box or cost_is_free else "Paid"
         free_status = 'MATCH' if (free_pdf_val == "Yes" and free_web_val == "Free") or (free_pdf_val == "No" and free_web_val == "Paid") else 'FALSE'
-        draw_row('Free Box', free_pdf_val, free_web_val, free_status)
-
+        draw_row('Free Box', free_pdf_val, safe_val(free_web_val), free_status if not is_hard_error else 'FALSE')
         
+        has_scholarship = course.get('has_scholarship_box', False)
+        is_coursera = 'coursera.org' in str(course.get('url', '')).lower()
+        is_india = str(course.get('country', '')).lower() in ['india', 'in', 'ind', 'bharat']
+        
+        if is_coursera:
+            if has_scholarship:
+                sch_str = "Matched. All Coursera courses have scholarships and financial aid."
+                sch_status = "MATCH" if not is_hard_error else "FALSE"
+            else:
+                sch_str = "Mismatch. All Coursera courses have scholarships and financial aid."
+                sch_status = "FALSE"
+        elif has_scholarship:
+            sch_status = "MATCH" if not is_hard_error else "FALSE"
+            if is_india:
+                sch_str = "Matched. The university/college gives a scholarship for students."
+            else:
+                sch_str = "Matched. The university has scholarship available for international students."
+        else:
+            sch_status = "FALSE"
+            if is_india:
+                sch_str = "University/college does not have scholarship for students."
+            else:
+                sch_str = "University/college does not have scholarship for international students."
+            
+        draw_row('Scholarship Box', 'Present' if has_scholarship else 'Not Present', safe_val(sch_str), sch_status)
 
-        is_hard_error = course.get('is_hard_error', False)
+        has_logos = course.get('has_logos', False)
+        draw_row('Institute Logo', 'Present' if has_logos else 'Not Identified', safe_val('Matched'), 'MATCH' if not is_hard_error else 'FALSE')
+
         draw_row('Link Working', 'Yes' if has_url else 'No', 'Error' if is_hard_error else 'Working', 'FALSE' if is_hard_error else 'MATCH')
 
         # Improved Summary Section
