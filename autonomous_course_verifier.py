@@ -4358,6 +4358,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         tl_stdout = ThreadLocalStdout(original_stdout)
         sys.stdout = tl_stdout
 
+        class EarlyExit(Exception): pass
+
         def process_course(item):
             sys.stdout.local.buffer = StringIO()
             import numpy as np
@@ -4369,18 +4371,16 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 if not url or url == "Unknown":
                     course['web_status'] = "FALSE"
                     course['reason'] = "No valid URL found in PDF."
-                    logs = sys.stdout.local.buffer.getvalue()
-                    del sys.stdout.local.buffer
-                    return i, logs
-
+                    course['direct_link_working'] = False
+                    course['is_hard_error'] = True
+                    raise EarlyExit()
+                    
                 cache_key = f"{url}::{normalize(course.get('name', ''))}"
                 if cache_key in url_cache:
                     cached = url_cache[cache_key]
                     for k in ['web_status', 'reason', 'web_name', 'web_cost', 'web_uni', 'skills_verified', 'scholarship_found', 'is_hard_error']:
                         course[k] = cached.get(k, course.get(k, False))
-                    logs = sys.stdout.local.buffer.getvalue()
-                    del sys.stdout.local.buffer
-                    return i, logs
+                    raise EarlyExit()
 
                 print(f"  [{i + 1}/{len(self.courses)}] Investigating: {url}")
 
@@ -4423,7 +4423,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         except Exception:
                             print("    -> Initial page error. Screenshot could not be saved.")
                         url_cache[cache_key] = {"web_status": "FALSE", "reason": course['reason'], "direct_link_working": False, "is_hard_error": True}
-                        return
+                        raise EarlyExit()
                         
                     # FALLBACK: If the browser failed before showing a real page, search DuckDuckGo.
                     # Explicit 404/not-found pages are handled above and are not auto-replaced.
@@ -4540,7 +4540,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             course['uni_match'] = True
                             
                             url_cache[cache_key] = course.copy()
-                            return
+                            raise EarlyExit()
                         except Exception as e:
                             print(f"    -> Failed to parse PDF: {e}")
                             pass
@@ -5393,6 +5393,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         if not success:
                             print("    -> CRITICAL: Failed to recover browser instance!")
 
+            except EarlyExit:
+                pass
             finally:
                 with checkpoint_lock:
                     try:
