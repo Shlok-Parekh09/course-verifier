@@ -2327,6 +2327,27 @@ class AutonomousCourseVerifier:
                             direct_local = self._offline_nirf_lookup(bracket_uni)
                             if direct_local == "Ranked":
                                 return f"The university to which college is affiliated ({bracket_uni.title()}) is ranked in NIRF hence matched"
+                
+                # Hardcoded Overrides for Universities
+                if "aisect" in uni_lower:
+                    return "Not Ranked"
+                if "uttarakhand open" in uni_lower:
+                    return "Not Ranked"
+                if "babasaheb ambedkar open" in uni_lower:
+                    return "Not Ranked"
+                if "punjabi" in uni_lower and ranking_type == "QS":
+                    return "Not Ranked"
+                    
+                if is_college and is_indian_college:
+                    if bracket_uni:
+                        if ranking_type == "QS":
+                            direct = self._offline_qs_lookup(bracket_uni)
+                            if direct == "Ranked":
+                                return f"The university to which college is affiliated ({bracket_uni.title()}) is ranked in QS hence matched"
+                        elif ranking_type == "NIRF":
+                            direct_local = self._offline_nirf_lookup(bracket_uni)
+                            if direct_local == "Ranked":
+                                return f"The university to which college is affiliated ({bracket_uni.title()}) is ranked in NIRF hence matched"
                                 
                     if g_text_cache is None:
                         g_text_cache = ""
@@ -5336,6 +5357,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
 
                     print(f"    -> RESULT: {final_status} | {', '.join(matched_fields) if matched_fields else 'Link accessible'}")
 
+                except EarlyExit:
+                    raise
                 except Exception as e:
                     import traceback
                     traceback.print_exc()
