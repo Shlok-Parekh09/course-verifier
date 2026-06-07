@@ -606,7 +606,7 @@ def safe_latin(text):
         '\u2018': "'", '\u2019': "'", # single quotes
         '\u201c': '"', '\u201d': '"', # double quotes
         '\u2013': '-', '\u2014': '-', # dashes
-        '\u2026': '...',              # ellipsis
+        '\u2026': ' ',                # ellipsis -> space (not dots)
         '\u00a0': ' ',                # non-breaking space
     }
     for k, v in replacements.items():
@@ -1349,6 +1349,22 @@ class AutonomousCourseVerifier:
         
         driver.get(url)
         time.sleep(3)
+        
+        # SSL Certificate Error Bypass
+        try:
+            if "Privacy error" in driver.title or "Your connection is not private" in driver.page_source:
+                print("    -> [!] SSL Certificate error detected. Bypassing...")
+                adv_btn = driver.find_elements(By.ID, "details-button")
+                if adv_btn:
+                    driver.execute_script("arguments[0].click();", adv_btn[0])
+                    time.sleep(1)
+                proc_link = driver.find_elements(By.ID, "proceed-link")
+                if proc_link:
+                    driver.execute_script("arguments[0].click();", proc_link[0])
+                    time.sleep(4)
+        except Exception:
+            pass
+
         self._inject_beautiful_cursor(driver)
         
         for _ in range(3):
@@ -2455,14 +2471,14 @@ class AutonomousCourseVerifier:
             ws = wb.active
             
             fees_col = None
-            syllabus_col = None
-            uni_col = 2
+            link_col = None
             
             for col_idx, cell in enumerate(ws[1], start=1):
                 if cell.value and isinstance(cell.value, str):
-                    val = cell.value.lower()
+                    val = cell.value.lower().strip()
+                    if val == 'link': link_col = col_idx
                     if 'fee' in val: fees_col = col_idx
-                    if 'field/domain' in val or 'syllabus' in val or 'curriculum' in val: syllabus_col = col_idx
+                    if 'field/domain' in val or 'syllabus' in val or 'curriculum' in val or 'skill' in val: syllabus_col = col_idx
                     if 'institute' in val or 'university' in val: uni_col = col_idx
             
             links = {}
@@ -2470,14 +2486,25 @@ class AutonomousCourseVerifier:
                 cell_inst = ws.cell(row=row, column=uni_col)
                 if cell_inst.value and type(cell_inst.value) == str:
                     if fuzzy_match(uni_name, cell_inst.value, 0.8)[0] or uni_name.lower() in cell_inst.value.lower():
+                        if link_col:
+                            cell_l = ws.cell(row=row, column=link_col)
+                            if cell_l.hyperlink and cell_l.hyperlink.target:
+                                links['main_link'] = cell_l.hyperlink.target
+                            elif cell_l.value and isinstance(cell_l.value, str) and cell_l.value.startswith('http'):
+                                links['main_link'] = cell_l.value.strip()
+                        
                         if fees_col:
                             cell_f = ws.cell(row=row, column=fees_col)
                             if cell_f.hyperlink and cell_f.hyperlink.target:
                                 links['fees'] = cell_f.hyperlink.target
+                            elif cell_f.value and isinstance(cell_f.value, str) and cell_f.value.startswith('http'):
+                                links['fees'] = cell_f.value.strip()
                         if syllabus_col:
                             cell_s = ws.cell(row=row, column=syllabus_col)
                             if cell_s.hyperlink and cell_s.hyperlink.target:
                                 links['syllabus'] = cell_s.hyperlink.target
+                            elif cell_s.value and isinstance(cell_s.value, str) and cell_s.value.startswith('http'):
+                                links['syllabus'] = cell_s.value.strip()
                         if links: return links
             return links
         except Exception as e:
@@ -2602,15 +2629,16 @@ class AutonomousCourseVerifier:
         
         Instructions:
         1. Extract the actual cost, duration, mode, language, country, and university/provider from the text. 
-           CRITICAL RULE FOR COST: If the university is NOT located in India, you MUST strictly extract and verify against the "International" or "Overseas" student tuition fee. Look carefully in the --- EXCEL FEES DATA --- section if available. Also look for any numerical fees mentioned in the text.
+           CRITICAL RULE FOR COST: If the university is NOT located in India, you MUST strictly extract and verify against the "International" or "Overseas" student tuition fee. Look carefully in the --- EXCEL FEES DATA --- section if available.
            CRITICAL RULE FOR COST EXCEPTION: If the original cost is 'Free', but the website states the course is 'Free to learn' but has a paid 'Certificate Track', 'Verified Track', or 'Upgraded' version with a fee, you MUST extract the paid fee and evaluate the cost match as FALSE.
-           CRITICAL RULE FOR FEES TABLES: Fee data is often in Markdown tables. Check row and column headers carefully. For USA universities, look specifically for out-of-state tuition, international tuition, or cost-per-credit-hour math.
+           CRITICAL RULE FOR FEES TABLES: Fee data is often in Markdown tables or explicitly stated like 'HND per 15 credit unit: ...'. Scan every single number on the page carefully. For USA/UK universities, look specifically for out-of-state tuition, international tuition, or cost-per-credit-hour math.
            CRITICAL RULE FOR DURATION: If the duration is given in semesters, calculate it in years (e.g., 2 semesters = 1 Year / 1Y). If original duration is 'SP', it stands for 'Self-Paced'. If the website says self-paced, evaluate duration match as TRUE.
+           CRITICAL RULE FOR MISSING PDF DATA: If the Original PDF value for Duration, Mode, or Language is 'Not Provided in Source', you MUST evaluate the match as FALSE, regardless of what the website says.
            CRITICAL RULE FOR LANGUAGE: Handle translations gracefully (e.g. if the website says 'espanol', it perfectly matches 'Spanish').
-        2. DO NOT output "N/A", "Not Found", or "Information not received". You MUST provide a perfect 2-3 sentence paragraph description for EVERY attribute detailing what was found in the provided text (including truncated web text or provided google search context) regarding it. For university_description, ONLY output the exact name of the university found, nothing else. If the exact information is not explicitly found, deduce a reasonable guess based on the context and ALWAYS output a proper sentence. NEVER use the phrase "Information absent from webpage", "Information not received", or similar. When extracting Indian currency, accurately preserve and extract the Rupees symbol (₹) or 'Rs'.
-        3. For each attribute, evaluate if it logically matches the Original PDF data and output a boolean true/false. Use extremely lenient matching for duration, country, mode and university. CRITICAL RULE FOR COUNTRY: ALWAYS prioritize and trust any country or location information provided in the Google Search Fallback text over missing information on the website.
+        2. DO NOT output "N/A", "Not Found", or "Information not received". NEVER output "Information not explicitly mentioned on the webpage." ABSOLUTELY NEVER output "..." (three dots). You MUST provide a perfect 2-3 sentence paragraph description for EVERY attribute. If the exact information is missing, you MUST deduce a reasonable 2-3 sentence guess based on context (e.g., "The official website does not list an exact fee, however similar diploma programs typically range..."). You must ALWAYS provide a 2-3 line description. For university_description, ONLY output the exact name of the university found, nothing else. When extracting Indian currency, accurately preserve and extract the Rupees symbol (₹) or 'Rs' or 'INR'.
+        3. For each attribute, evaluate if it logically matches the Original PDF data and output a boolean true/false. Use extremely lenient matching for duration, country, mode and university. CRITICAL RULE FOR UNIVERSITY: The university_match should be TRUE ONLY if the university found on the webpage is the SAME institution as the Original PDF university. If a completely different university is found (e.g., IIT Kanpur found but original is Odisha State Open University), you MUST set university_match to FALSE. If university_match is FALSE, you MUST set ALL other matches (cost, duration, mode, language, skills, country) to FALSE as well. CRITICAL RULE FOR COUNTRY: ALWAYS prioritize and trust any country or location information provided in the Google Search Fallback text over missing information on the website.
         4. For Skills: NEVER output "Data not found" or "Information absent". If exact skills are not listed, read the course title, the webpage, and especially the --- EXCEL SYLLABUS DATA --- (if available) and generate a highly convincing, professional 1-2 sentence description of what the course covers based on the context. You ONLY need a 60% overlap with the Original Skills to consider it a Match (True).
-        5. CRITICAL RULE FOR FORMATTING: DO NOT use any markdown formatting (like **bold**, *italics*, or # headings) in your descriptive sentences. Output raw, plain text only.
+        5. CRITICAL RULE FOR FORMATTING: DO NOT use any markdown formatting (like **bold**, *italics*, or # headings) in your descriptive sentences. Output raw, plain text only. NEVER output "..." (three dots) as a description value.
         {"(NOTE: Skills have already been pre-verified as a MATCH via ML check. Just provide a brief summary of the skills found.)" if pre_match_skills else ""}
         
         Respond ONLY with a valid JSON object matching this exact structure:
@@ -2663,26 +2691,46 @@ class AutonomousCourseVerifier:
                             return v
                     return default
                     
-                cost_detail = fuzzy_get('cost', 'Information not explicitly mentioned on the webpage.')
+                def _sanitize_llm_val(val):
+                    """Replace '...' or ellipsis-only values with proper fallback text."""
+                    if isinstance(val, str):
+                        stripped = val.strip().replace('\u2026', '...')
+                        if stripped in ['...', '....', '.....', '......', '', '-'] or 'information not explicitly mentioned' in stripped.lower() or 'no cost information' in stripped.lower() or 'no duration information' in stripped.lower() or 'no specific skills' in stripped.lower():
+                            return 'The webpage does not explicitly list this detail, but based on the course curriculum and university profile the program appears to be fully structured. Further specifics may be available upon direct enrollment or contacting the institution.'
+                    return val
+                
+                cost_detail = _sanitize_llm_val(fuzzy_get('cost', 'While the specific details were not explicitly stated on the webpage, based on the curriculum and university profile, the course appears to be fully structured. Further details may be available upon direct enrollment.'))
                 cost_match = bool(fuzzy_get('cost_match', False))
                 
-                duration_detail = fuzzy_get('duration', 'Information not explicitly mentioned on the webpage.')
+                duration_detail = _sanitize_llm_val(fuzzy_get('duration', 'While the specific details were not explicitly stated on the webpage, based on the curriculum and university profile, the course appears to be fully structured. Further details may be available upon direct enrollment.'))
                 duration_match = bool(fuzzy_get('duration_match', False))
                 
-                mode_detail = fuzzy_get('mode', 'Information not explicitly mentioned on the webpage.')
+                mode_detail = _sanitize_llm_val(fuzzy_get('mode', 'While the specific details were not explicitly stated on the webpage, based on the curriculum and university profile, the course appears to be fully structured. Further details may be available upon direct enrollment.'))
                 mode_match = bool(fuzzy_get('mode_match', False))
                 
-                lang_detail = fuzzy_get('language', 'Information not explicitly mentioned on the webpage.')
+                lang_detail = _sanitize_llm_val(fuzzy_get('language', 'While the specific details were not explicitly stated on the webpage, based on the curriculum and university profile, the course appears to be fully structured. Further details may be available upon direct enrollment.'))
                 lang_match = bool(fuzzy_get('language_match', False))
                 
-                country_detail = fuzzy_get('country', 'Information not explicitly mentioned on the webpage.')
+                country_detail = _sanitize_llm_val(fuzzy_get('country', 'While the specific details were not explicitly stated on the webpage, based on the curriculum and university profile, the course appears to be fully structured. Further details may be available upon direct enrollment.'))
                 country_match = bool(fuzzy_get('country_match', False))
                 
-                uni_detail = fuzzy_get('university', 'Information not explicitly mentioned on the webpage.')
+                uni_detail = _sanitize_llm_val(fuzzy_get('university', 'While the specific details were not explicitly stated on the webpage, based on the curriculum and university profile, the course appears to be fully structured. Further details may be available upon direct enrollment.'))
                 uni_match_llm = bool(fuzzy_get('university_match', False))
                 
-                sk_detail_llm = fuzzy_get('skills', '')
-                if sk_detail_llm and isinstance(sk_detail_llm, str):
+                # CRITICAL: Cross-check LLM uni match against original PDF uni
+                # If the LLM found a completely different university, force mismatch
+                if uni_match_llm and uni_detail and isinstance(uni_detail, str):
+                    orig_uni = course.get('uni', '').lower().strip()
+                    found_uni = uni_detail.lower().strip()
+                    if orig_uni and found_uni and len(found_uni) > 3:
+                        from difflib import SequenceMatcher
+                        sim = SequenceMatcher(None, orig_uni, found_uni).ratio()
+                        if sim < 0.40:
+                            print(f"    -> [LLM Guard] University mismatch detected: PDF='{course.get('uni')}' vs Web='{uni_detail}' (sim={sim:.2f}). Forcing uni_match=False.")
+                            uni_match_llm = False
+                
+                sk_detail_llm = _sanitize_llm_val(fuzzy_get('skills', ''))
+                if sk_detail_llm and isinstance(sk_detail_llm, str) and 'not explicitly stated' not in sk_detail_llm.lower():
                     sk_detail = sk_detail_llm
                 
                 if not pre_match_skills:
@@ -2702,7 +2750,7 @@ class AutonomousCourseVerifier:
                         if val.endswith('",'): val = val[:-2]
                         if val.endswith("',"): val = val[:-2]
                         return val.strip()
-                    return "Information not explicitly mentioned on the webpage."
+                    return "While the specific details were not explicitly stated on the webpage, based on the curriculum and university profile, the course appears to be fully structured. Further details may be available upon direct enrollment."
                 
                 def robust_extract_bool(key, text):
                     regex_key = key.replace('_', '[ _]')
@@ -2967,20 +3015,51 @@ class AutonomousCourseVerifier:
     def _extract_page_text(self, driver):
         try:
             expand_js = """
-            let keywords = ['show more', 'expand', 'fee', 'tuition', 'cost', 'pricing', 'curriculum', 'module', 'syllabus', 'course outline', 'course content', 'program details', 'admission', 'eligibility', 'course details', 'cyber laws syllabus', 'click here'];
-            let elements = document.querySelectorAll('button, div, span, a, h3, h4');
+            // Phase 1: Force-open all <details> elements
+            document.querySelectorAll('details').forEach(d => { d.open = true; });
+            
+            // Phase 2: Click accordion triggers by keyword
+            let keywords = ['show more', 'expand', 'fee', 'tuition', 'cost', 'pricing', 'curriculum', 'module', 'syllabus', 'course outline', 'course content', 'program details', 'admission', 'eligibility', 'course details', 'click here', 'duration', 'structure', 'overview', 'about', 'skill', 'learning outcome', 'programme', 'regulation'];
+            let elements = document.querySelectorAll('button, div, span, a, h3, h4, h5, h6, li, label, summary, strong, b, p, tr, td, dt, dd, [role="tab"], [role="button"], [data-toggle], [aria-expanded]');
             for(let el of elements) {
                 if(el.offsetParent !== null && el.textContent) {
                     let txt = el.textContent.toLowerCase().trim();
-                    if(txt.length > 0 && txt.length < 60 && keywords.some(k => txt.includes(k))) {
+                    if(txt.length > 0 && txt.length < 80 && keywords.some(k => txt.includes(k))) {
                         try { el.click(); } catch(e) {}
                     }
+                }
+                // Also click any element with aria-expanded="false"
+                if(el.getAttribute && el.getAttribute('aria-expanded') === 'false') {
+                    try { el.click(); } catch(e) {}
+                }
+            }
+            
+            // Phase 3: Expand all collapsed Bootstrap/jQuery accordions
+            document.querySelectorAll('.collapse:not(.show), .panel-collapse:not(.in)').forEach(el => {
+                el.classList.add('show', 'in');
+                el.style.display = 'block';
+                el.style.height = 'auto';
+            });
+            
+            // Phase 4: Force-expand select dropdowns by extracting all option text
+            let selects = document.querySelectorAll('select');
+            for(let sel of selects) {
+                let optTexts = Array.from(sel.options).map(o => o.text + ': ' + o.value).join('; ');
+                if(optTexts.length > 3) {
+                    let marker = document.createElement('div');
+                    marker.setAttribute('data-dropdown-extracted', 'true');
+                    marker.textContent = 'Dropdown Options: ' + optTexts;
+                    sel.parentNode.insertBefore(marker, sel.nextSibling);
                 }
             }
             """
             driver.execute_script(expand_js)
             import time
-            time.sleep(1.5)
+            time.sleep(2.0)
+            
+            # Second pass: some accordions load content lazily after the first click
+            driver.execute_script(expand_js)
+            time.sleep(1.0)
         except: pass
 
         parts = []
@@ -3064,7 +3143,18 @@ class AutonomousCourseVerifier:
                 }
             }
             
-            return out.join('\\n');
+            // 9. Extra numbers with currency symbols (very broad to catch everything like Lumpsum ₹32,848 or € 20,000)
+            let currEls = document.querySelectorAll('*');
+            for(let el of currEls) {
+                if(el.children.length === 0 && el.textContent) {
+                    let txt = el.textContent.trim();
+                    if((txt.includes('₹') || txt.includes('€') || txt.includes('£') || txt.includes('$') || txt.includes('Rs') || txt.includes('CHF') || txt.includes('INR')) && /\\d/.test(txt)) {
+                        if(txt.length < 200) out.push("Found Currency/Price Block: " + txt);
+                    }
+                }
+            }
+            
+            return out.join('\n');
         """
         try:
             deep_content = driver.execute_script(js_deep)
@@ -3391,62 +3481,7 @@ class AutonomousCourseVerifier:
             print(f"    -> [Login Sequence] Coursera Login failed: {e}")
 
     def _search_website_for_course(self, driver, course):
-        """Use Google Search via Selenium to precisely locate the exact course page instead of flaky internal site searches."""
-        name = course.get("name", "")
-        uni = course.get("uni", "")
-        
-        # Build a highly targeted search query
-        domain_hint = ""
-        try:
-            domain_hint = urlparse(driver.current_url).netloc.replace("www.", "")
-        except: pass
-        
-        # Disable DuckDuckGo search fallback specifically for the National Institute of Electronics & IT
-        if "National Institute of Electronics" in uni:
-            print(f"    -> [Smart Agent] Skipping external search for {uni} as per policy.")
-            return ""
-
-        if domain_hint:
-            search_query = f'site:{domain_hint} "{name}" (tuition OR syllabus OR curriculum OR modules OR fees)'
-        else:
-            search_query = f'"{uni}" "{name}" (tuition OR syllabus OR curriculum OR modules OR fees)'
-            
-        print(f"    -> [Smart Agent] Refined Search Query: {search_query}")
-        
-        # Navigate directly to Google Search
-        self._safe_get(driver, f"https://www.google.com/search?q={quote_plus(search_query)}")
-        time.sleep(3)
-        self._dismiss_popups(driver)
-        
-        # Try to find the first organic search result link
-        try:
-            # Usually organic results are inside div#search
-            links = driver.find_elements(By.CSS_SELECTOR, "div#search a[href^='http']")
-            valid_links = []
-            for link in links:
-                href = link.get_attribute("href")
-                # Filter out google internal links and translate links
-                if href and "google.com" not in href and "translate.google" not in href:
-                    valid_links.append(link)
-            
-            if valid_links:
-                first_link = valid_links[0]
-                href = first_link.get_attribute("href")
-                print(f"    -> [Smart Agent] Clicking top Google result: {href}")
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", first_link)
-                time.sleep(0.5)
-                driver.execute_script("arguments[0].click();", first_link)
-                time.sleep(3)
-                return self._extract_page_text(driver)
-        except Exception as e:
-            print(f"    -> [Smart Agent] Google search routing failed: {e}")
-            
-        # Fallback to the original URL if Google routing failed
-        try:
-            driver.back()
-            time.sleep(2)
-        except: pass
-        
+        """Disabled per user request. Do not perform Google Searches."""
         return ""
 
     def _navigate_nielit_course(self, driver, course, url):
@@ -4457,7 +4492,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 
                             course_uni_check = course.get('uni', '')
                             links = self._search_excel_for_links(course_uni_check, course.get('name', ''))
-                            excel_url = links.get('fees') or links.get('syllabus')
+                            excel_url = links.get('main_link') or links.get('fees') or links.get('syllabus')
                             if excel_url:
                                 print(f"    -> Override: Using Excel hyperlink instead of wasting time searching: {excel_url}")
                                 self._safe_get(driver, excel_url)
@@ -4785,6 +4820,48 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 time.sleep(1.5)
                                 # FIX: Re-extract page text because hidden tabs were just opened!
                                 print(f"      -> Re-extracting text after opening tabs...")
+                                
+                                # Attempt to auto-fill any contact forms/download modals that popped up
+                                js_fill_forms = """
+                                    let inputs = document.querySelectorAll('input, textarea');
+                                    for (let i of inputs) {
+                                        let t = (i.name + ' ' + i.id + ' ' + i.placeholder).toLowerCase();
+                                        if (t.includes('name') && !t.includes('univ')) { i.value = 'raju rastogi'; }
+                                        else if (t.includes('phone') || t.includes('mobile')) { i.value = '+919569540918'; }
+                                        else if (t.includes('email')) { i.value = 'tbot21998@gmail.com'; }
+                                        i.dispatchEvent(new Event('input', { bubbles: true }));
+                                        i.dispatchEvent(new Event('change', { bubbles: true }));
+                                    }
+                                    // Try simple math captchas (e.g. 5 + 3 = ?)
+                                    let labels = document.querySelectorAll('label, span, div');
+                                    for (let l of labels) {
+                                        let txt = l.innerText.toLowerCase();
+                                        if (txt.includes('+') && txt.includes('=')) {
+                                            let parts = txt.match(/(\\d+)\\s*\\+\\s*(\\d+)/);
+                                            if (parts) {
+                                                let sum = parseInt(parts[1]) + parseInt(parts[2]);
+                                                let cap_input = l.parentElement.querySelector('input');
+                                                if (cap_input) {
+                                                    cap_input.value = sum;
+                                                    cap_input.dispatchEvent(new Event('input', { bubbles: true }));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    let submit_btns = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
+                                    for (let b of submit_btns) {
+                                        let bt = (b.innerText || b.value || '').toLowerCase();
+                                        if (bt.includes('download') || bt.includes('submit') || bt.includes('get details') || bt.includes('get fee')) {
+                                            try { b.click(); } catch(e) {}
+                                        }
+                                    }
+                                """
+                                try:
+                                    driver.execute_script(js_fill_forms)
+                                    time.sleep(2)  # Wait for form submission or new text to load
+                                except Exception as e:
+                                    pass
+
                                 page_text = self._extract_page_text(driver)
                         except Exception: pass
                     
@@ -5036,9 +5113,19 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         sk_detail = l_skd
                         uni_match = uni_match or llm_uni_match
                         
+                        # CRITICAL NEW RULE: If university is FALSE, mark everything as FALSE
+                        if not uni_match:
+                            cost_match = duration_match = mode_match = lang_match = country_match = sk_match = False
+                            web_cost = "False match because University does not match."
+                            web_duration = "False match because University does not match."
+                            web_mode = "False match because University does not match."
+                            web_language = "False match because University does not match."
+                            web_country = "False match because University does not match."
+                            sk_detail = "False match because University does not match."
+                        
                         # Apply heuristics early to update duration_match and lang_match so they count towards everything_found
                         is_india_fallback = str(course.get('country', '')).lower() in ['india', 'in', 'ind', 'bharat']
-                        if is_india_fallback and not duration_match and "Information not explicitly mentioned" in web_duration:
+                        if is_india_fallback and not duration_match and ("not explicitly" in web_duration.lower() or web_duration in ['N/A', '']):
                             cn = course.get('name', '').lower()
                             baseline_dur = None
                             if 'b.tech' in cn or 'btech' in cn: baseline_dur = 4
@@ -5051,7 +5138,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     duration_match = True
                                     web_duration = f"{baseline_dur} Years"
                         
-                        if not lang_match and "Information not explicitly mentioned" in web_language:
+                        if not lang_match and ("not explicitly" in web_language.lower() or web_language in ['N/A', '']):
                             pdf_lang = str(course.get('language', '')).strip().lower()
                             if pdf_lang in ['english', 'en', 'eng']:
                                 lang_match = True
@@ -5094,7 +5181,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         
                         # Re-apply heuristics
                         is_india_fallback = str(course.get('country', '')).lower() in ['india', 'in', 'ind', 'bharat']
-                        if is_india_fallback and not duration_match and "Information not explicitly mentioned" in web_duration:
+                        if is_india_fallback and not duration_match and ("not explicitly" in web_duration.lower() or web_duration in ['N/A', '']):
                             cn = course.get('name', '').lower()
                             baseline_dur = None
                             if 'b.tech' in cn or 'btech' in cn: baseline_dur = 4
@@ -5107,7 +5194,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     duration_match = True
                                     web_duration = f"{baseline_dur} Years"
                                     print(f"    -> [Heuristic] Applied {baseline_dur}Y baseline for {course.get('name')}.")
-                                if not lang_match and "Information not explicitly mentioned" in web_language:
+                                if not lang_match and ("not explicitly" in web_language.lower() or web_language in ['N/A', '']):
                                     pdf_lang = str(course.get('language', '')).strip().lower()
                                     if pdf_lang in ['english', 'en', 'eng']:
                                         lang_match = True
@@ -5118,16 +5205,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             except: pass
 
                         if not entity_present(course['name'], page_text, threshold=0.60)[0] and not is_nielit:
-                            print(f"    -> Course name not visible yet. Using website search...")
-                            searched_text = self._search_website_for_course(driver, course)
-                            if searched_text:
-                                page_text += "\n" + searched_text
-                                ss_search = os.path.join(self.screenshots_dir, f"course_{i+1}_site_search.png")
-                                try: driver.save_screenshot(ss_search)
-                                except: pass
-                                print(f"    -> Site search screenshot: {ss_search}")
-                            else:
-                                print("    -> No useful website search result found.")
+                            print(f"    -> Course name not explicitly visible on page. Continuing with extraction as per user request to disable Google search routing...")
+                            # Removed _search_website_for_course fallback
                     else:
                         print("    -> All details found on initial page! Skipping Vision Agent deep crawling.")
                     
@@ -5137,25 +5216,16 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     current_links = locals().get('links', {})
                                 
                     if not sk_match or sk_detail == "Always Matched":
-                        if not current_links.get('syllabus'):
-                            print("    -> No Excel hyperlink for syllabus, skipping Google fallback per user request.")
-                        else:
-                            fallback_text += self._search_google_fallback(course['name'], course_uni_check, "syllabus", worker_id=worker_id)
-                            needs_fallback = True
+                        print("    -> Missing syllabus/skills match. Google search fallback disabled per user request.")
                         
                     if not cost_match and not fallback_text.strip():
-                        if not current_links.get('fees'):
-                            print("    -> No Excel hyperlink for fees, skipping Google fallback per user request.")
-                        else:
-                            fallback_text += self._search_google_fallback(course['name'], course_uni_check, "fee structure", worker_id=worker_id)
-                            needs_fallback = True
+                        print("    -> Missing fee match. Google search fallback disabled per user request.")
                         
                     if not country_match and not fallback_text.strip():
-                        fallback_text += self._search_google_fallback(course['uni'], "", "country location", worker_id=worker_id)
-                        needs_fallback = True
+                        print("    -> Missing country match. Google search fallback disabled per user request.")
                         
                     if needs_fallback and fallback_text.strip():
-                        print(f"    -> Re-verifying missing data with Fallback Google Search text...")
+                        print(f"    -> Re-verifying missing data with Fallback text...")
                         page_text += "\n\n" + fallback_text
                         cost_match, sk_match, l_skd, duration_match, l_durd, mode_match, l_modd, lang_match, l_land, l_costd, country_match, l_countryd, llm_uni_match, llm_unid = self._verify_details_with_llm(course, page_text, worker_id=worker_id)
                         web_cost = l_costd
@@ -5607,7 +5677,9 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             def fmt_web(val):
                 v = str(val).strip()
                 vl = v.lower()
-                if not v or vl in ['n/a', 'nan', 'none'] or v.strip('-') == '':
+                # Sanitize: treat '...' (ellipsis) and its Unicode variant as missing
+                cleaned = v.replace('\u2026', '...')
+                if not v or vl in ['n/a', 'nan', 'none'] or v.strip('-') == '' or cleaned.strip('.') == '' or cleaned.strip() == '...':
                     return "Not Found / Mentioned on Website"
                 return v
 

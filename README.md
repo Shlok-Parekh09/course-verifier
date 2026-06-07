@@ -10,7 +10,7 @@ The **Autonomous Course Verifier** is a robust, local-first Python application d
    - Visually detects "QS", "NIRF", and "Free/Scholarship" badges using OpenCV mask analysis and fallback OCR (Tesseract).
 
 2. **Rank Verification Pipeline**
-   - Loads offline ranking data (`nirf_100.csv`, `qs_world.csv`, `qs_asia.csv`) without API calls.
+   - Loads offline ranking data (`nirf_ranked.csv`, `qs_ranked.csv`) without API calls.
    - Normalizes names and applies difflib-based semantic matching to verify if a university is truly ranked.
 
 3. **Autonomous Web Verification & Smart Browsing**
@@ -21,19 +21,32 @@ The **Autonomous Course Verifier** is a robust, local-first Python application d
 
 4. **Local LLM Verification Engine**
    - Analyzes scraped web text against PDF details using **local semantic verification**.
-   - Attempts to query a fast API (Puter GPT-4o), and automatically falls back to **Local Ollama** (e.g., `llama3.2`) if the network is down or APIs fail.
+   - Attempts to query a fast API (OpenRouter, Gemini), and automatically falls back to **Local Ollama** (e.g., `llama3.2`) if the network is down or APIs fail.
    - If no LLM is available, falls back to a custom `spaCy` NLP Regex Engine to perform sentence-level context parsing.
 
 5. **Report Generation**
    - Generates a beautifully formatted output PDF (`_AUTONOMOUS_VERIFIED.pdf`) detailing each course, highlighting discrepancies in red and matches in green.
    - Preserves visual proof by saving screenshots of the original PDF quadrants and the scraped websites into the `verification_screenshots/` folder.
 
+## Setup
+
+1. **Environment Variables**
+   - Copy `.env.example` to `.env`.
+   - Fill in your Coursera/NDU credentials and LLM API keys.
+
+2. **Dependencies**
+   - Install required packages:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
 ## File Structure
 
 - `autonomous_course_verifier.py`: The main engine containing the PDF parser, ranking logic, and web scraper.
 - `generate_report_only.py`: The PDF drawing logic (using `reportlab`) that produces the final visually-stunning output.
-- `puter_client.py` & `ollama_client.py`: Handlers for intelligent LLM routing.
-- `clean_rankings.py`: Utilities to preprocess and clean offline ranking CSV files.
+- `llm_manager.py`: Handler for intelligent LLM routing (OpenRouter, Gemini, Ollama).
+- `CombinedWork.xlsx`: Supplemental course data used for verification.
+- `qs_ranked.csv` & `nirf_ranked.csv`: Offline ranking data.
 - `chrome_profile/`: Your persistent browser session storage.
 
 ## Usage

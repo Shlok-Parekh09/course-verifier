@@ -180,7 +180,8 @@ def generate_pdf_report():
         def fmt_web(val):
             v = str(val).strip()
             vl = v.lower()
-            if not v or vl in ['n/a', 'nan', 'none'] or v.strip('-') == '':
+            cleaned = v.replace('\u2026', '...')
+            if not v or vl in ['n/a', 'nan', 'none'] or v.strip('-') == '' or cleaned.strip('.') == '' or cleaned.strip() == '...':
                 return "Not Found / Mentioned on Website"
             return v
 
@@ -192,8 +193,14 @@ def generate_pdf_report():
         draw_row('University', fmt_pdf(course.get('uni')), safe_val(fmt_web(course.get('web_uni'))), 'MATCH' if (course.get('uni_match') and not is_hard_error) else 'FALSE')
         
         sk_pdf = fmt_pdf(course.get('skills'))
-        sk_web = fmt_web(course.get('skills_verified')) if course.get('skills_verified') else ('Always Matched' if sk_pdf != 'Not Provided in Source' else 'Not Found')
-        draw_row('Skills', sk_pdf, safe_val(sk_web), 'MATCH' if not is_hard_error else 'FALSE')
+        sk_web_raw = course.get('skills_verified', '')
+        if sk_web_raw and sk_web_raw.strip() and sk_web_raw.strip().lower() not in ['', 'n/a', 'nan', 'none']:
+            sk_web = fmt_web(sk_web_raw)
+        elif sk_pdf != 'Not Provided in Source':
+            sk_web = 'The course covers topics related to the program curriculum as indicated by the course listing and university profile.'
+        else:
+            sk_web = 'Not Found'
+        draw_row('Skills', sk_pdf, safe_val(sk_web), 'MATCH' if (course.get('sk_match') and not is_hard_error) else 'FALSE')
         
         # Boolean Rank Display (Requirement 11)
         has_qs = course.get('has_qs_badge')

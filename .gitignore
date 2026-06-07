@@ -16,6 +16,7 @@ chrome_profile_fallback_*/
 verification_screenshots/
 *.pdf
 *.xlsx
+!CombinedWork.xlsx
 # dump_courses.json
 *_floating_items.json
 
