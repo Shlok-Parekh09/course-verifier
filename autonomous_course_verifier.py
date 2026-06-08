@@ -22,7 +22,11 @@ except ImportError:
     cv2 = None
 
 import base64
-import pytesseract
+
+try:
+    import pytesseract
+except ImportError:
+    pytesseract = None
 
 try:
     import numpy as np
@@ -142,6 +146,7 @@ def normalize(text):
     if not text:
         return ""
     text = text.lower()
+    text = text.replace("tamilnadu", "tamil nadu").replace("tamil-nadu", "tamil nadu")
     
     aliases = {
         "illinois tech": "illinois institute of technology",
@@ -239,6 +244,10 @@ def extract_cost_value(cost_str):
         ('rs.', 'INR'), ('rs ', 'INR'),
         ('inr', 'INR'), ('usd', 'USD'), ('eur', 'EUR'), ('gbp', 'GBP'),
     ]
+    symbol_map.extend([
+        ('\u20b9', 'INR'), ('rupee', 'INR'), ('rupees', 'INR'),
+        ('aud', 'AUD'), ('cad', 'CAD'), ('chf', 'CHF'),
+    ])
     for sym, code in symbol_map:
         if sym in cost_lower:
             currency = code
@@ -246,13 +255,139 @@ def extract_cost_value(cost_str):
             
     if "free" in cost_lower or "free to audit" in cost_lower:
         return 0.0, currency
-    match = re.search(r'\d{1,3}(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?', cost_str)
+    lakh_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:lakh|lakhs|lac|lacs)\b', cost_lower)
+    if lakh_match:
+        try:
+            return float(lakh_match.group(1)) * 100000, currency
+        except ValueError:
+            pass
+    match = re.search(r'\d{1,3}(?:,\d{2,3})+(?:\.\d+)?|\d{4,}(?:\.\d+)?|\d+(?:\.\d+)?', cost_str)
     if match:
         try:
             return float(match.group(0).replace(',', '')), currency
         except ValueError:
             pass
     return None, currency
+
+
+def format_indian_number(value):
+    try:
+        n = int(float(value))
+    except (TypeError, ValueError):
+        return ""
+    s = str(abs(n))
+    if len(s) <= 3:
+        out = s
+    else:
+        out = s[-3:]
+        s = s[:-3]
+        while s:
+            out = s[-2:] + "," + out
+            s = s[:-2]
+    return ("-" if n < 0 else "") + out
+
+
+def is_missing_detail(value):
+    s = str(value or "").strip().lower().replace("\u2026", "...")
+    if not s or s in {"n/a", "na", "none", "not found", "unknown", "...", "-"}:
+        return True
+    missing_phrases = [
+        "not explicitly", "does not explicitly", "does not list", "not listed",
+        "not mentioned", "not stated", "not provided", "no specific",
+        "could not be found", "may be available", "likely", "typically",
+        "similar programs", "based on context",
+    ]
+    return any(phrase in s for phrase in missing_phrases)
+
+
+def is_indian_institution_name(uni_name="", country=""):
+    country_norm = normalize(country)
+    if country_norm in {"india", "in", "ind", "bharat"}:
+        return True
+    hay = normalize(uni_name)
+    indian_keywords = [
+        "india", "indian", "iit", "iim", "iiit", "nit", "nielit", "swayam",
+        "delhi", "mumbai", "bangalore", "bengaluru", "chennai", "kanpur",
+        "roorkee", "pune", "hyderabad", "kolkata", "coimbatore", "madurai",
+        "kanchipuram", "tiruchirappalli", "tirunelveli", "namakkal", "erode",
+        "salem", "thiruvallur", "dindigul", "kanyakumari", "tamil nadu",
+        "anna university", "bharathiar", "madras", "vellore", "amity",
+        "symbiosis", "jindal", "bits", "thapar", "manipal", "nmims",
+        "spjimr", "xlri", "punjab", "maharashtra", "gujarat", "kerala",
+        "karnataka", "andhra", "telangana",
+    ]
+    return any(k in hay for k in indian_keywords)
+
+
+def is_tamil_nadu_college(course):
+    hay = normalize(" ".join([
+        str(course.get("uni", "")),
+        str(course.get("country", "")),
+        str(course.get("url", "")),
+    ]))
+    tn_keywords = [
+        "tamil nadu", "anna university", "chennai", "coimbatore", "madurai",
+        "kanchipuram", "tiruppur", "tirunelveli", "namakkal", "erode",
+        "salem", "thiruvallur", "dindigul", "kanyakumari", "thoothukudi",
+        "villupuram", "sivakasi", "virudhunagar", "pudukkottai",
+    ]
+    return any(k in hay for k in tn_keywords)
+
+
+def expected_indian_course_duration_years(course_name):
+    cn = normalize(course_name)
+    if not cn:
+        return None
+    if any(x in cn for x in ["b tech", "btech", "b e ", "be ", "bachelor of engineering", "bachelor of technology"]):
+        return 4
+    if any(x in cn for x in ["m tech", "mtech", "m e ", "me ", "master of engineering", "master of technology"]):
+        return 2
+    if "post graduate diploma" in cn or "pg diploma" in cn:
+        return 1
+    if "diploma" in cn:
+        return 3
+    if any(x in cn for x in ["b sc", "bsc", "b c a", "bca", "bachelor of science", "bachelor of computer applications"]):
+        return 3
+    if any(x in cn for x in ["m sc", "msc", "m c a", "mca", "master of science", "master of computer applications"]):
+        return 2
+    return None
+
+
+def normalize_mode_label(value):
+    s = normalize(value)
+    if not s:
+        return ""
+    online_markers = [
+        "online mode", "online delivery", "online learning", "online platform",
+        "online program", "online programme", "mooc", "digital learning",
+        "remote learning", "distance learning", "e learning",
+    ]
+    offline_markers = [
+        "offline mode", "on campus", "oncampus", "in person", "classroom",
+        "physical campus", "college based", "traditional college", "campus based",
+        "regular mode",
+    ]
+    if "hybrid" in s or "blended" in s:
+        return "hybrid"
+    if any(m in s for m in online_markers):
+        return "online"
+    if any(m in s for m in offline_markers):
+        return "offline"
+    if "online" in s and "offline" not in s:
+        return "online"
+    if "offline" in s and "online" not in s:
+        return "offline"
+    if "online" in s and "differs" in s:
+        return "online"
+    return ""
+
+
+def modes_equivalent(pdf_mode, web_mode):
+    pdf_norm = normalize_mode_label(pdf_mode)
+    web_norm = normalize_mode_label(web_mode)
+    if not pdf_norm or not web_norm:
+        return None
+    return pdf_norm == web_norm
 
 
 # ──────────────────────────────────────────────────────────────
@@ -374,9 +509,7 @@ def durations_equivalent(pdf_duration, web_text):
 def verify_cost_in_text(target_cost_tuple, text, target_cost_str="", uni_name=""):
     is_indian = True
     if uni_name:
-        uni_lower = uni_name.lower()
-        indian_keywords = ['indian', 'iit', 'iim', 'nit', 'delhi', 'mumbai', 'bangalore', 'chennai', 'kanpur', 'roorkee', 'amity', 'symbiosis', 'jindal', 'bits', 'thapar', 'manipal', 'nmims', 'spjimr', 'xlri', 'india']
-        if not any(k in uni_lower for k in indian_keywords):
+        if not is_indian_institution_name(uni_name):
             is_indian = False
     target_cost, target_currency = target_cost_tuple if isinstance(target_cost_tuple, tuple) else (target_cost_tuple, None)
     text_lower = text.lower()
@@ -406,16 +539,21 @@ def verify_cost_in_text(target_cost_tuple, text, target_cost_str="", uni_name=""
 
     # Direct ₹ pattern matching (e.g., "₹735", "₹ 735", "Rs.735")
     target_int = str(int(target_cost)) if target_cost == int(target_cost) else str(target_cost)
+    target_indian = format_indian_number(target_cost)
     for sym in ['₹', 'Rs.', 'Rs ', 'INR ', '$ ', '$', '€', '£']:
         if f"{sym}{target_int}" in text or f"{sym} {target_int}" in text:
             return True
+        if target_indian and (f"{sym}{target_indian}" in text or f"{sym} {target_indian}" in text):
+            return True
 
     # Find all numeric matches in text (e.g., 1200, 1,200, 1.2k)
-    matches = list(re.finditer(r'\b\d{1,3}(?:,\d{3})*(?:\.\d+)?\b', text))
+    matches = list(re.finditer(r'\b\d{1,3}(?:,\d{2,3})+(?:\.\d+)?\b|\b\d{4,}(?:\.\d+)?\b|\b\d+(?:\.\d+)?\s*(?:lakh|lakhs|lac|lacs)\b', text, flags=re.IGNORECASE))
     
     for m in matches:
         try:
-            val = float(m.group(0).replace(',', ''))
+            raw = m.group(0)
+            lakh_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:lakh|lakhs|lac|lacs)\b', raw, flags=re.IGNORECASE)
+            val = float(lakh_match.group(1)) * 100000 if lakh_match else float(raw.replace(',', ''))
             if val == target_cost:
                 if not target_currency:
                     return True
@@ -441,12 +579,15 @@ def verify_cost_in_text(target_cost_tuple, text, target_cost_str="", uni_name=""
     # As a last resort, look for the cost joined exactly with a symbol (e.g., $1200 or 1200INR)
     target_str_no_comma = str(int(target_cost) if target_cost.is_integer() else target_cost)
     target_str_comma = f"{target_cost:,.0f}" if target_cost.is_integer() else f"{target_cost:,.2f}"
+    target_str_indian = format_indian_number(target_cost)
     
     for sym in target_symbols:
         if f"{sym}{target_str_no_comma}" in text_lower or f"{sym} {target_str_no_comma}" in text_lower: return True
         if f"{sym}{target_str_comma}" in text_lower or f"{sym} {target_str_comma}" in text_lower: return True
+        if target_str_indian and (f"{sym}{target_str_indian}" in text_lower or f"{sym} {target_str_indian}" in text_lower): return True
         if f"{target_str_no_comma}{sym}" in text_lower or f"{target_str_no_comma} {sym}" in text_lower: return True
         if f"{target_str_comma}{sym}" in text_lower or f"{target_str_comma} {sym}" in text_lower: return True
+        if target_str_indian and (f"{target_str_indian}{sym}" in text_lower or f"{target_str_indian} {sym}" in text_lower): return True
 
     return False
 
@@ -2985,16 +3126,9 @@ class AutonomousCourseVerifier:
         # Compare detected mode against PDF mode
         if mode_match and mode_detail != "Not found":
             web_mode = mode_detail
-            # Check if modes actually agree
-            detected_lower = mode_detail.lower()
-            if pdf_mode in detected_lower or detected_lower in pdf_mode:
-                mode_match = True
-            elif pdf_mode == 'online' and detected_lower == 'online':
-                mode_match = True
-            elif pdf_mode in ('offline', 'on-campus') and detected_lower in ('on-campus', 'offline'):
-                mode_match = True
-            elif pdf_mode == 'hybrid' and detected_lower == 'hybrid':
-                mode_match = True
+            mode_equiv = modes_equivalent(pdf_mode, mode_detail)
+            if mode_equiv is not None:
+                mode_match = mode_equiv
 
         # 5. Language
         lang_match, lang_detail = language_matches(course.get('language', ''), page_text)
