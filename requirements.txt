@@ -12,3 +12,4 @@ numpy
 pytesseract
 selenium
 undetected-chromedriver
+streamlit
