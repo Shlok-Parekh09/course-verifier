@@ -10,7 +10,11 @@ st.set_page_config(page_title="Enterprise Verification Dashboard", layout="wide"
 # --- DATA LOADERS ---
 @st.cache_data
 def load_legacy_data():
-    file_path = "autonomous_verified_data.json"
+    file_path = "master_dashboard_results.json"
+    if not os.path.exists(file_path):
+        # Fallback to the temporary file if master doesn't exist yet
+        file_path = "autonomous_verified_data.json"
+        
     if os.path.exists(file_path):
         try:
             with open(file_path, "r", encoding="utf-8") as f:

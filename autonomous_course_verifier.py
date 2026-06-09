@@ -5942,58 +5942,28 @@ if __name__ == "__main__":
 
     start_idx = 0
     resume = False
-    if os.path.exists("autonomous_verified_data.json"):
-        choice = input("\n[!] Checkpoint found ('autonomous_verified_data.json'). Resume from last run? (y/n): ").strip().lower()
-        if choice == 'y':
-            try:
-                with open("autonomous_verified_data.json", "r", encoding="utf-8") as f:
-                    # Temporary read to check length, we will init agent and assign later
-                    pass
-                resume = True
-            except Exception as e:
-                resume = False
-
-    if not resume:
-        try:
-            import shutil
-            screenshots_base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "verification_screenshots")
-            if os.path.exists(screenshots_base):
-                shutil.rmtree(screenshots_base)
-                print("\n[*] Flushed all previous screenshot folders.")
-        except Exception as e:
-            print(f"\n[!] Warning: Could not flush old screenshot folders: {e}")
-            
-        try:
-            if os.path.exists("autonomous_verified_data.json"):
-                os.remove("autonomous_verified_data.json")
-                print("[*] Flushed old checkpoint data.")
-        except Exception as e:
-            print(f"[!] Warning: Could not flush old checkpoint data: {e}")
+    
+    # Always force a clean start to prevent old errors
+    try:
+        import shutil
+        screenshots_base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "verification_screenshots")
+        if os.path.exists(screenshots_base):
+            shutil.rmtree(screenshots_base)
+            print("\n[*] Flushed all previous screenshot folders.")
+    except Exception as e:
+        print(f"\n[!] Warning: Could not flush old screenshot folders: {e}")
+        
+    try:
+        if os.path.exists("autonomous_verified_data.json"):
+            os.remove("autonomous_verified_data.json")
+            print("[*] Flushed old checkpoint data. Starting fresh.")
+    except Exception as e:
+        print(f"[!] Warning: Could not flush old checkpoint data: {e}")
 
     # NOW initialize the agent, which will create the new screenshot folder
     agent = AutonomousCourseVerifier(pdf_path)
 
-    if resume:
-        try:
-            with open("autonomous_verified_data.json", "r", encoding="utf-8") as f:
-                agent.courses = json.load(f)
-            
-            # Determine where it left off
-            for i, c in enumerate(agent.courses):
-                if "web_verified_data" not in c:
-                    start_idx = i
-                    break
-            else:
-                start_idx = len(agent.courses)
-            
-            print(f"[*] Resuming from checkpoint. Loaded {len(agent.courses)} courses. Resuming web verification at index {start_idx}.")
-        except Exception as e:
-            print(f"[!] Warning: Could not load checkpoint data: {e}")
-            start_idx = 0
-            resume = False
-
-    if not resume:
-        agent.extract_and_parse()
+    agent.extract_and_parse()
 
     # Ask the user for an optional manual start index
     manual_start = input(f"\n[?] From which course number (1-{len(agent.courses)}) do you want to start web verification? (Press Enter to use default): ").strip()
@@ -6029,6 +5999,12 @@ if __name__ == "__main__":
         pdf_name = "Autonomous_Course_Verification_Report"
         
     agent.generate_pdf_report(start_idx=start_idx, end_idx=end_idx, pdf_name=pdf_name)
+    
+    # --- SAVE PERMANENT DASHBOARD RESULTS ---
+    import shutil
+    if os.path.exists("autonomous_verified_data.json"):
+        shutil.copy("autonomous_verified_data.json", "master_dashboard_results.json")
+        print("\n[*] Saved permanent dashboard results to master_dashboard_results.json")
     
     # Prevent undetected_chromedriver from spamming WinError 6 during Python teardown
     import os
