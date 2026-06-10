@@ -1,58 +1,69 @@
 # Autonomous Course Verifier 3.0
 
-The **Autonomous Course Verifier** is a robust, local-first Python application designed to automatically extract course information from structurally complex PDFs, cross-reference university rankings, and autonomously navigate the web to verify course details (such as cost, duration, mode, and skills) against the university's official website.
+The **Autonomous Course Verifier** is a robust, local-first Python application designed to automatically extract course information from structurally complex PDFs, cross-reference university rankings, and autonomously navigate the web to verify course details (such as cost, duration, mode, and skills) against official university websites.
 
-## Core Features
+## 🚀 Key Features
 
-1. **Intelligent PDF Parsing**
-   - Parses the given PDF (e.g. `HIGH VALUE LOW COST (1).pdf`) by geometrically slicing pages into quadrants.
-   - Extracts course details, detecting the university name using a fuzzy-matching mechanism against a database of over 10,000 global universities.
-   - Visually detects "QS", "NIRF", and "Free/Scholarship" badges using OpenCV mask analysis and fallback OCR (Tesseract).
+### 1. Intelligent PDF Parsing
+- **Geometric Slicing:** Parses PDFs by slicing pages into quadrants to isolate individual course boxes.
+- **Fuzzy University Matching:** Detects university names using a fuzzy-matching mechanism against a global database of over 10,000 institutions.
+- **Visual Badge Detection:** Uses OpenCV mask analysis and Tesseract OCR to identify "QS", "NIRF", and "Free/Scholarship" badges.
 
-2. **Rank Verification Pipeline**
-   - Loads offline ranking data (`nirf_ranked.csv`, `qs_ranked.csv`) without API calls.
-   - Normalizes names and applies difflib-based semantic matching to verify if a university is truly ranked.
+### 2. Rank Verification Pipeline
+- **Offline Data:** Leverages local ranking data (`nirf_ranked.csv`, `qs_ranked.csv`) to verify university standings without external API calls.
+- **Semantic Normalization:** Employs `difflib` for semantic name matching to ensure accuracy across different naming conventions.
 
-3. **Autonomous Web Verification & Smart Browsing**
-   - Uses `undetected_chromedriver` (uc) to bypass standard bot protections (Cloudflare).
-   - **Persistent Chrome Profiles:** Automatically saves your cookies and sessions inside the `chrome_profile` directory, ensuring you stay logged in to platforms like Coursera and NDU without triggering captchas.
-   - **NDU Batch Caching:** For NDU (National Institute of Electronics and Information Technology) courses, it efficiently navigates to "Browse by Category", scrapes all pages of course cards into memory, and verifies multiple courses rapidly without redundant page loads.
-   - Executes precise Google Search queries using `site:` operators if internal site search fails.
+### 3. Autonomous Web Verification
+- **Anti-Bot Navigation:** Uses `undetected_chromedriver` to bypass bot protections (like Cloudflare).
+- **Persistent Sessions:** Saves cookies and sessions in local Chrome profiles to maintain logins for platforms like Coursera and NDU.
+- **Smart Scraped Caching:** For specific platforms like NDU, it scrapes multiple course cards in one pass to minimize redundant page loads.
 
-4. **Local LLM Verification Engine**
-   - Analyzes scraped web text against PDF details using **local semantic verification**.
-   - Attempts to query a fast API (OpenRouter, Gemini), and automatically falls back to **Local Ollama** (e.g., `llama3.2`) if the network is down or APIs fail.
-   - If no LLM is available, falls back to a custom `spaCy` NLP Regex Engine to perform sentence-level context parsing.
+### 4. Local LLM & NLP Engine
+- **Hybrid Verification:** Analyzes scraped text against PDF data using local semantic verification.
+- **Resilient Routing:** Attempts OpenRouter or Gemini first, with an automatic fallback to **Local Ollama** (e.g., `llama3.2`) or a custom **spaCy NLP engine** if offline.
 
-5. **Report Generation**
-   - Generates a beautifully formatted output PDF (`_AUTONOMOUS_VERIFIED.pdf`) detailing each course, highlighting discrepancies in red and matches in green.
-   - Preserves visual proof by saving screenshots of the original PDF quadrants and the scraped websites into the `verification_screenshots/` folder.
+### 5. Professional Reporting
+- **Visual Output:** Generates a detailed PDF report (`_AUTONOMOUS_VERIFIED.pdf`) with color-coded results (matches in green, discrepancies in red).
+- **Audit Trail:** Saves screenshots of both the original PDF quadrants and the scraped websites for manual verification.
 
-## Setup
+## 🛠️ Setup & Installation
 
-1. **Environment Variables**
+1. **Clone the Repository:**
+   ```bash
+   git clone https://github.com/Shlok-Parekh09/course-verifier.git
+   cd course-verifier
+   ```
+
+2. **Environment Configuration:**
    - Copy `.env.example` to `.env`.
-   - Fill in your Coursera/NDU credentials and LLM API keys.
+   - Add your API keys (OpenRouter/Gemini) and platform credentials (Coursera/NDU).
 
-2. **Dependencies**
-   - Install required packages:
+3. **Install Dependencies:**
    ```bash
    pip install -r requirements.txt
    ```
 
-## File Structure
+4. **Prepare Data:**
+   Ensure `qs_ranked.csv` and `nirf_ranked.csv` are in the root directory.
 
-- `autonomous_course_verifier.py`: The main engine containing the PDF parser, ranking logic, and web scraper.
-- `generate_report_only.py`: The PDF drawing logic (using `reportlab`) that produces the final visually-stunning output.
-- `llm_manager.py`: Handler for intelligent LLM routing (OpenRouter, Gemini, Ollama).
-- `CombinedWork.xlsx`: Supplemental course data used for verification.
-- `qs_ranked.csv` & `nirf_ranked.csv`: Offline ranking data.
-- `chrome_profile/`: Your persistent browser session storage.
+## 💻 Usage
 
-## Usage
-
-Run the main verifier script on a target PDF:
+Run the main verification engine:
 ```bash
 python autonomous_course_verifier.py
 ```
-The script will ask for the path to your PDF. Once provided, it will begin the 4-step autonomous process and save the verified results in a `.json` checkpoint file, before generating the final `.pdf` report.
+- **Input:** Provide the path to your target course PDF.
+- **Process:** The script will extract data, verify rankings, browse the web, and run LLM analysis.
+- **Output:** Check the `verification_screenshots/` folder for proof and the final generated PDF report.
+
+## 📂 Project Structure
+
+- `autonomous_course_verifier.py`: Core engine (Parser, Scraper, Logic).
+- `generate_report_only.py`: PDF report generation logic.
+- `llm_manager.py`: LLM routing and fallback management.
+- `dashboard.py`: (Optional) Web dashboard for viewing results.
+- `CombinedWork.xlsx`: Supplemental verification data.
+- `*.csv`: Offline university ranking databases.
+
+---
+*Developed for autonomous educational data verification.*

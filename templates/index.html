@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anomaly Detection Platform - Course Verifier</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="main-content">
+        <header>
+            <div class="header-content">
+                <h1>Course Verifier Dashboard</h1>
+                <p>Live Anomaly Detection Platform</p>
+            </div>
+            <div class="user-profile">
+                <span class="user-badge">SP</span>
+            </div>
+        </header>
+
+        <div class="top-cards">
+            <div class="card">
+                <h2 id="total-count">0</h2>
+                <p>Total Processed</p>
+            </div>
+            <div class="card success">
+                <h2 id="verified-count">0</h2>
+                <p>Perfect Matches</p>
+            </div>
+            <div class="card warning">
+                <h2 id="discrepancy-count">0</h2>
+                <p>Discrepancies</p>
+            </div>
+            <div class="card danger">
+                <h2 id="error-count">0</h2>
+                <p>Errors (Missing/404)</p>
+            </div>
+            <div class="card info">
+                <h2 id="missing-link-count">0</h2>
+                <p>Missing Links</p>
+            </div>
+        </div>
+
+        <div class="dashboard-grid">
+            <div class="panel chart-panel">
+                <h3>Verification Status Distribution</h3>
+                <div class="chart-container">
+                    <canvas id="statusChart"></canvas>
+                </div>
+            </div>
+
+            <div class="panel exceptions-panel">
+                <h3>Discrepancies / Exceptions</h3>
+                <div class="table-container">
+                    <table id="discrepancy-table">
+                        <thead>
+                            <tr>
+                                <th>Course Name</th>
+                                <th>Entity (University)</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Discrepancy rows injected here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="panel wide-panel">
+                <h3>Recent Verification Requests (Live)</h3>
+                <div class="table-container">
+                    <table id="recent-table">
+                        <thead>
+                            <tr>
+                                <th>Idx</th>
+                                <th>Course Name</th>
+                                <th>University</th>
+                                <th>Cost Match</th>
+                                <th>Duration Match</th>
+                                <th>Overall Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Recent rows injected here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

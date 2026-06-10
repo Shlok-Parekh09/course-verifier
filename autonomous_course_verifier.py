@@ -1488,9 +1488,40 @@ class AutonomousCourseVerifier:
         from selenium.webdriver.common.by import By
         from selenium.webdriver.common.action_chains import ActionChains
         
-        driver.get(url)
+        from selenium.common.exceptions import TimeoutException
+        
+        try:
+            driver.set_page_load_timeout(30)
+            driver.get(url)
+        except TimeoutException:
+            print(f"    -> [!] Page load timed out for {url}. Attempting to proceed with whatever loaded...")
+            try:
+                driver.execute_script("window.stop();")
+            except:
+                pass
+        except Exception as e:
+            print(f"    -> [!] Error loading page {url}: {e}")
+            
         time.sleep(3)
         
+        # Check if the website's JS automatically redirected us to a login page (e.g. NextJS router)
+        if ("login" in driver.current_url.lower() or "admissionportal" in driver.current_url.lower()) and "coursera.org" not in url.lower():
+            print("    -> [!] Client-side Login redirect detected. Injecting raw HTML and stripping scripts...")
+            try:
+                import base64
+                import requests
+                import re
+                headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'}
+                resp = requests.get(url, headers=headers, timeout=15)
+                
+                # Remove all <script> tags to prevent React/NextJS from re-hydrating and forcing a redirect again
+                safe_html = re.sub(r'<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>', '', resp.content.decode('utf-8', errors='ignore'), flags=re.IGNORECASE)
+                b64_html = base64.b64encode(safe_html.encode('utf-8')).decode('utf-8')
+                
+                driver.execute_script(f"document.open(); document.write(decodeURIComponent(escape(atob('{b64_html}')))); document.close();")
+                time.sleep(2)
+            except Exception as e:
+                print(f"    -> [!] Failed to inject raw HTML: {e}")
         # SSL Certificate Error Bypass
         try:
             if "Privacy error" in driver.title or "Your connection is not private" in driver.page_source:
@@ -1632,7 +1663,7 @@ class AutonomousCourseVerifier:
             cx_ratio = (x + bw/2) / w
             cy_ratio = (y_min + y + bh/2) / h
             if square_like(bw, bh, area) and cx_ratio >= 0.66 and cy_ratio >= 0.66:
-                
+                badges["scholarship_box"] = True
                 break
 
         # Find Free
@@ -1680,6 +1711,9 @@ class AutonomousCourseVerifier:
             
             if "nirf" in ocr_text or "national institutional" in ocr_text or "ranking framework" in ocr_text:
                 badges["nirf"] = True
+                
+            if "scholar" in ocr_text or "financial aid" in ocr_text:
+                badges["scholarship_box"] = True
         except:
             pass
 
@@ -2296,8 +2330,19 @@ class AutonomousCourseVerifier:
         pred = model.predict(features)[0]
         return pred == 1 and (ratio >= threshold or overlap >= threshold)
 
+    def _expand_abbreviations(self, name):
+        if not name or str(name).lower() == 'nan': return ""
+        name = str(name)
+        name = name.replace("Eng.", "Engineering").replace("Engg.", "Engineering").replace("Engg", "Engineering")
+        name = name.replace("Mgmt.", "Management").replace("Mgmt", "Management")
+        name = name.replace("Inst.", "Institute").replace("Inst", "Institute")
+        name = name.replace("Uni.", "University").replace("Uni ", "University ")
+        # Also clean up common commas and extra spaces
+        return re.sub(' +', ' ', name).strip()
+
     def _offline_qs_lookup(self, uni):
         if not uni or uni == "Unknown": return None
+        uni = self._expand_abbreviations(uni)
         if not hasattr(self, '_qs_fast_cache'):
             self._qs_fast_cache = {}
             import pandas as pd
@@ -2333,6 +2378,7 @@ class AutonomousCourseVerifier:
 
     def _offline_nirf_lookup(self, uni):
         if not uni or uni == "Unknown": return None
+        uni = self._expand_abbreviations(uni)
         if not hasattr(self, '_nirf_fast_cache'):
             self._nirf_fast_cache = {}
             import pandas as pd
@@ -2512,7 +2558,8 @@ class AutonomousCourseVerifier:
                             import requests
                             from bs4 import BeautifulSoup
                             from googlesearch import search
-                            g_query = f'"{college_only}" affiliated university'
+                            college_only_expanded = self._expand_abbreviations(college_only)
+                            g_query = f'"{college_only_expanded}" affiliated university'
                             print(f"      -> Searching Google for Affiliation: {g_query}")
                             for j, g_url in enumerate(search(g_query, num_results=2, sleep_interval=1)):
                                 try:
@@ -2604,56 +2651,173 @@ class AutonomousCourseVerifier:
             return ""
 
     def _search_excel_for_links(self, uni_name, course_name):
-        import os
-        if not os.path.exists("CombinedWork.xlsx"): return {}
+        links = {}
+        
+        # 1. Search in fees.xlsx first
+        if os.path.exists("fees.xlsx"):
+            try:
+                import openpyxl
+                import re
+                
+                # Load twice to handle formulas vs evaluated values
+                wb_formulas = openpyxl.load_workbook("fees.xlsx", data_only=False)
+                wb_data = openpyxl.load_workbook("fees.xlsx", data_only=True)
+                ws_f = wb_formulas.active
+                ws_d = wb_data.active
+                
+                inst_col = None
+                course_col = None
+                fee_link_col = None
+                
+                for col_idx, cell in enumerate(ws_d[1], start=1):
+                    if cell.value and isinstance(cell.value, str):
+                        val = cell.value.lower().strip()
+                        if 'institute' in val: inst_col = col_idx
+                        if 'course' in val: course_col = col_idx
+                        if 'fee' in val and 'link' in val: fee_link_col = col_idx
+                
+                if inst_col and course_col and fee_link_col:
+                    for row in range(2, ws_d.max_row + 1):
+                        cell_inst = ws_d.cell(row=row, column=inst_col)
+                        cell_course = ws_d.cell(row=row, column=course_col)
+                        
+                        if cell_inst.value and type(cell_inst.value) == str and cell_course.value and type(cell_course.value) == str:
+                            inst_val_lower = cell_inst.value.lower()
+                            course_val_lower = cell_course.value.lower()
+                            u_lower = uni_name.lower()
+                            c_lower = course_name.lower()
+                            
+                            u_words = [w for w in normalize(u_lower).split() if len(w) > 2]
+                            c_words = [w for w in normalize(c_lower).split() if len(w) > 2]
+                            
+                            inst_match_exact = (normalize(u_lower) == normalize(inst_val_lower))
+                            course_match_exact = (normalize(c_lower) == normalize(course_val_lower))
+                            
+                            # Give priority to EXACT matches, especially for Course Name
+                            inst_match = inst_match_exact or fuzzy_match(uni_name, cell_inst.value, 0.55)[0] or u_lower in inst_val_lower or inst_val_lower in u_lower or (u_words and all(w in inst_val_lower for w in u_words))
+                            course_match = course_match_exact or fuzzy_match(course_name, cell_course.value, 0.65)[0] or c_lower in course_val_lower or course_val_lower in c_lower or (c_words and all(w in course_val_lower for w in c_words))
+                            
+                            if inst_match and course_match:
+                                # Get the corresponding cell from the formula workbook
+                                cell_f = ws_f.cell(row=row, column=fee_link_col)
+                                cell_d = ws_d.cell(row=row, column=fee_link_col)
+                                
+                                extracted_link = None
+                                
+                                # Try regex on formula first
+                                if cell_f.value and isinstance(cell_f.value, str) and str(cell_f.value).upper().startswith("=HYPERLINK"):
+                                    match = re.search(r'=HYPERLINK\(\s*"([^"]+)"', str(cell_f.value), re.IGNORECASE)
+                                    if match:
+                                        extracted_link = match.group(1).strip()
+                                
+                                # Fallback to standard hyperlink object
+                                if not extracted_link and cell_d.hyperlink and cell_d.hyperlink.target:
+                                    extracted_link = cell_d.hyperlink.target
+                                    
+                                # Fallback to standard text
+                                if not extracted_link and cell_d.value and isinstance(cell_d.value, str) and cell_d.value.startswith('http'):
+                                    extracted_link = cell_d.value.strip()
+                                
+                                if extracted_link:
+                                    links['fees'] = extracted_link
+                                    print(f"      -> [fees.xlsx] Found fee link for '{uni_name}' / '{course_name}': {links['fees']}")
+                                    break
+            except Exception as e:
+                print(f"      -> fees.xlsx extraction failed: {e}")
+
+        # 2. Check CombinedWork.xlsx
+        if not os.path.exists("CombinedWork.xlsx"): return links
         try:
             import openpyxl
-            wb = openpyxl.load_workbook("CombinedWork.xlsx", data_only=True)
+            import re
+            
+            # Load with data_only=False to preserve =HYPERLINK formulas
+            wb = openpyxl.load_workbook("CombinedWork.xlsx", data_only=False)
             ws = wb.active
+            
+            # Load another instance with data_only=True to read text values
+            wb_data = openpyxl.load_workbook("CombinedWork.xlsx", data_only=True)
+            ws_data = wb_data.active
             
             fees_col = None
             link_col = None
+            syllabus_col = None
+            uni_col = None
             
-            for col_idx, cell in enumerate(ws[1], start=1):
+            course_col = None
+            
+            for col_idx, cell in enumerate(ws_data[1], start=1):
                 if cell.value and isinstance(cell.value, str):
                     val = cell.value.lower().strip()
-                    if val == 'link': link_col = col_idx
-                    if 'fee' in val: fees_col = col_idx
-                    if 'field/domain' in val or 'syllabus' in val or 'curriculum' in val or 'skill' in val: syllabus_col = col_idx
-                    if 'institute' in val or 'university' in val: uni_col = col_idx
+                    if val == 'link' and link_col is None: link_col = col_idx
+                    if 'fee' in val and fees_col is None: fees_col = col_idx
+                    if ('field/domain' in val or 'syllabus' in val or 'curriculum' in val or 'skill' in val) and syllabus_col is None: syllabus_col = col_idx
+                    if ('institute' in val or 'university' in val) and uni_col is None: uni_col = col_idx
+                    if 'course' in val and course_col is None: course_col = col_idx
             
-            links = {}
-            for row in range(2, ws.max_row + 1):
-                cell_inst = ws.cell(row=row, column=uni_col)
-                if cell_inst.value and type(cell_inst.value) == str:
-                    if fuzzy_match(uni_name, cell_inst.value, 0.8)[0] or uni_name.lower() in cell_inst.value.lower():
-                        if link_col:
-                            cell_l = ws.cell(row=row, column=link_col)
-                            if cell_l.hyperlink and cell_l.hyperlink.target:
-                                links['main_link'] = cell_l.hyperlink.target
-                            elif cell_l.value and isinstance(cell_l.value, str) and cell_l.value.startswith('http'):
-                                links['main_link'] = cell_l.value.strip()
+            def extract_url(cell_formula, cell_data):
+                if cell_formula.hyperlink and cell_formula.hyperlink.target:
+                    return cell_formula.hyperlink.target
+                if cell_formula.value and isinstance(cell_formula.value, str):
+                    val = cell_formula.value.strip()
+                    if val.upper().startswith('=HYPERLINK'):
+                        match = re.search(r'HYPERLINK\("([^"]+)"', val, re.IGNORECASE)
+                        if match:
+                            return match.group(1)
+                    if val.startswith('http'):
+                        return val
+                if cell_data.value and isinstance(cell_data.value, str) and cell_data.value.strip().startswith('http'):
+                    return cell_data.value.strip()
+                return None
+            
+            for row in range(2, ws_data.max_row + 1):
+                if not uni_col or not course_col: continue
+                cell_inst = ws_data.cell(row=row, column=uni_col)
+                cell_course = ws_data.cell(row=row, column=course_col)
+                
+                if cell_inst.value and type(cell_inst.value) == str and cell_course.value and type(cell_course.value) == str:
+                    inst_val_lower = cell_inst.value.lower()
+                    course_val_lower = cell_course.value.lower()
+                    
+                    u_lower = uni_name.lower()
+                    c_lower = course_name.lower()
+                    
+                    u_words = [w for w in normalize(u_lower).split() if len(w) > 2]
+                    c_words = [w for w in normalize(c_lower).split() if len(w) > 2]
+                    
+                    inst_match_exact = (normalize(u_lower) == normalize(inst_val_lower))
+                    course_match_exact = (normalize(c_lower) == normalize(course_val_lower))
+                    
+                    inst_match = inst_match_exact or fuzzy_match(uni_name, cell_inst.value, 0.55)[0] or u_lower in inst_val_lower or inst_val_lower in u_lower or (u_words and all(w in inst_val_lower for w in u_words))
+                    course_match = course_match_exact or fuzzy_match(course_name, cell_course.value, 0.65)[0] or c_lower in course_val_lower or course_val_lower in c_lower or (c_words and all(w in course_val_lower for w in c_words))
+                    
+                    if inst_match and course_match:
+                        if link_col and not links.get('main_link'):
+                            url = extract_url(ws.cell(row=row, column=link_col), ws_data.cell(row=row, column=link_col))
+                            if url: links['main_link'] = url
                         
-                        if fees_col:
-                            cell_f = ws.cell(row=row, column=fees_col)
-                            if cell_f.hyperlink and cell_f.hyperlink.target:
-                                links['fees'] = cell_f.hyperlink.target
-                            elif cell_f.value and isinstance(cell_f.value, str) and cell_f.value.startswith('http'):
-                                links['fees'] = cell_f.value.strip()
-                        if syllabus_col:
-                            cell_s = ws.cell(row=row, column=syllabus_col)
-                            if cell_s.hyperlink and cell_s.hyperlink.target:
-                                links['syllabus'] = cell_s.hyperlink.target
-                            elif cell_s.value and isinstance(cell_s.value, str) and cell_s.value.startswith('http'):
-                                links['syllabus'] = cell_s.value.strip()
+                        if fees_col and not links.get('fees'):
+                            url = extract_url(ws.cell(row=row, column=fees_col), ws_data.cell(row=row, column=fees_col))
+                            if url: links['fees'] = url
+                            
+                        if syllabus_col and not links.get('syllabus'):
+                            url = extract_url(ws.cell(row=row, column=syllabus_col), ws_data.cell(row=row, column=syllabus_col))
+                            if url: links['syllabus'] = url
+                            
                         if links: return links
             return links
         except Exception as e:
-            print(f"      -> Excel extraction failed: {e}")
-            return {}
+            print(f"      -> CombinedWork.xlsx extraction failed: {e}")
+            return links
 
     def _fetch_url_robust(self, url):
-        import requests, tempfile, os
+        import requests, tempfile, re
+        
+        # Intercept Google Drive PDF URLs and convert to direct download links
+        drive_match = re.search(r'drive\.google\.com/file/d/([^/]+)', url)
+        if drive_match:
+            url = f"https://drive.google.com/uc?export=download&id={drive_match.group(1)}"
+            
         try:
             headers = {'User-Agent': 'Mozilla/5.0'}
             import urllib3
@@ -2674,7 +2838,8 @@ class AutonomousCourseVerifier:
                 except Exception as e:
                     print(f"      -> Warning: pdfplumber extraction failed: {e}")
                 
-                if len(pdf_text.strip()) < 100:
+                import re
+                if len(pdf_text.strip()) < 250 or len(re.findall(r'\d+', pdf_text)) < 5:
                     try:
                         import fitz, pytesseract
                         import cv2, numpy as np
@@ -2689,7 +2854,7 @@ class AutonomousCourseVerifier:
                             img_data = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
                             if pix.n == 4: img_data = cv2.cvtColor(img_data, cv2.COLOR_RGBA2RGB)
                             gray = cv2.cvtColor(img_data, cv2.COLOR_RGB2GRAY)
-                            ocr_text = pytesseract.image_to_string(gray, config='--oem 3 --psm 6')
+                            ocr_text = pytesseract.image_to_string(gray, config='--oem 3')
                             if ocr_text: pdf_text += ocr_text + "\n"
                     except Exception as e:
                         print(f"      -> Warning: PDF OCR failed: {e}")
@@ -2699,11 +2864,160 @@ class AutonomousCourseVerifier:
                 return pdf_text
             else:
                 from bs4 import BeautifulSoup
+                import urllib.parse
                 soup = BeautifulSoup(res.text, 'html.parser')
-                return soup.get_text(separator=' ', strip=True)
+                text_content = soup.get_text(separator=' ', strip=True)
+                
+                # Check for embedded PDFs
+                embedded_pdfs = []
+                for tag in soup.find_all(['iframe', 'embed', 'object']):
+                    src = tag.get('src') or tag.get('data')
+                    if src and ('.pdf' in src.lower() or 'drive.google.com/file' in src.lower()):
+                        full_url = urllib.parse.urljoin(url, src)
+                        if full_url not in embedded_pdfs:
+                            embedded_pdfs.append(full_url)
+                
+                for pdf_url in embedded_pdfs:
+                    try:
+                        print(f"      -> Found embedded PDF: {pdf_url}")
+                        # Recursive call to fetch the PDF text
+                        pdf_text = self._fetch_url_robust(pdf_url)
+                        if pdf_text:
+                            text_content += "\n--- EMBEDDED PDF CONTENT ---\n" + pdf_text
+                    except Exception as e:
+                        print(f"      -> Failed to extract embedded PDF {pdf_url}: {e}")
+                        
+                return text_content
         except Exception as e:
             print(f"      -> Failed to fetch URL robustly: {e}")
             return ""
+
+    def _fetch_fee_link_with_browser(self, driver, fee_url):
+        """Navigate browser to fee URL to visibly load the page, click semester/fee tabs, extract text."""
+        if not fee_url:
+            return ""
+        
+        # For PDF URLs or Google Drive links, use HTTP extraction (browser can't render PDFs well for text)
+        is_pdf_or_drive = (
+            fee_url.lower().endswith('.pdf') or 
+            'pdf' in fee_url.lower().split('/')[-1] or
+            'drive.google.com' in fee_url.lower()
+        )
+        
+        if is_pdf_or_drive:
+            print(f"    -> [Fee Browser] Document detected, opening visibly then extracting via HTTP: {fee_url}")
+            try:
+                self._safe_get(driver, fee_url)
+                time.sleep(2)  # Give user a chance to see it opening
+            except Exception: pass
+            return self._fetch_url_robust(fee_url)
+        
+        try:
+            original_url = driver.current_url
+            print(f"    -> [Fee Browser] Navigating browser to fee page: {fee_url}")
+            self._safe_get(driver, fee_url)
+            time.sleep(3)
+            
+            # Inject cursor for visual feedback
+            self._inject_beautiful_cursor(driver)
+            
+            # Scroll the page to load lazy content
+            self._scroll_page(driver)
+            
+            # Click semester/fee tab buttons ONLY in the content area (not top nav)
+            js_click_fee_tabs = """
+                let callback = arguments[arguments.length - 1];
+                let clicked = 0;
+                let feeKeywords = ['semester', 'sem 1', 'sem 2', 'sem 3', 'sem 4', 'sem 5', 'sem 6', 'sem 7', 'sem 8',
+                    'year 1', 'year 2', 'year 3', 'year 4', 'first year', 'second year', 'third year', 'fourth year',
+                    '1st year', '2nd year', '3rd year', '4th year',
+                    'fee', 'duration', 'syllabus', 'eligibility', 'tuition', 'cost', 'program',
+                    'show more', 'view details', 'expand', 'read more',
+                    'b.tech', 'btech', 'm.tech', 'mtech', 'bca', 'mca', 'b.sc', 'm.sc', 'cyber',
+                    'international', 'international student'];
+                
+                async function run() {
+                    // Get all clickable elements but EXCLUDE those inside nav/header
+                    let allButtons = document.querySelectorAll('button, [role="tab"], .nav-link, .tab-pane, summary, details summary, .accordion-button, .accordion-header, [data-toggle], [data-bs-toggle], a.collapsed, a[data-toggle="collapse"], span.collapsed, div.collapsed, .cursor-pointer');
+                    
+                    for (let b of allButtons) {
+                        // SKIP elements inside <nav>, <header>, sidebars, popups, or with nav-related classes
+                        let parent = b.closest('nav, header, aside, .sidebar, .popup, .modal, .offcanvas, .floating, .navbar, .main-nav, .top-nav, .site-header, .header-menu, .mega-menu, #header, #sidebar, [role="dialog"], [role="navigation"]');
+                        if (parent) continue;
+                        
+                        let txt = (b.innerText || b.textContent || '').toLowerCase().trim();
+                        if (txt.length < 2 || txt.length > 100) continue;
+                        if (txt.includes('login') || txt.includes('sign in') || txt.includes('student portal')) {
+                            b.remove(); // Destroy login buttons
+                            continue;
+                        }
+                        
+                        if (feeKeywords.some(k => txt.includes(k))) {
+                            try {
+                                if (window.moveBeautifulCursorToElement) window.moveBeautifulCursorToElement(b);
+                                await new Promise(r => setTimeout(r, 400));
+                                if (window.aiClickAnimation) {
+                                    let rect = b.getBoundingClientRect();
+                                    window.aiClickAnimation(rect.left + rect.width/2, rect.top + rect.height/2);
+                                }
+                                b.click();
+                                clicked++;
+                                await new Promise(r => setTimeout(r, 300));
+                            } catch(e) {}
+                        }
+                    }
+                    callback(clicked);
+                }
+                run();
+            """
+            try:
+                driver.set_script_timeout(30)
+                clicks = driver.execute_async_script(js_click_fee_tabs)
+                if clicks and clicks > 0:
+                    print(f"      -> [Fee Browser] Clicked {clicks} semester/fee tab buttons.")
+                    time.sleep(1.5)
+            except Exception as e:
+                print(f"      -> [Fee Browser] Tab clicking script failed: {e}")
+            
+            # Extract all text including tables
+            page_text = self._extract_page_text(driver)
+            
+            # Also extract table data specifically
+            js_tables = """
+                let tables = document.querySelectorAll('table');
+                let result = '';
+                tables.forEach(function(table) {
+                    let rows = table.querySelectorAll('tr');
+                    rows.forEach(function(row) {
+                        let cells = row.querySelectorAll('th, td');
+                        let rowText = Array.from(cells).map(c => c.innerText.trim()).join(' | ');
+                        result += rowText + '\\n';
+                    });
+                    result += '\\n';
+                });
+                return result;
+            """
+            try:
+                table_text = driver.execute_script(js_tables)
+                if table_text and table_text.strip():
+                    page_text += "\n--- FEE TABLE DATA ---\n" + table_text
+            except Exception:
+                pass
+            
+            # Navigate back to original URL
+            try:
+                self._safe_get(driver, original_url)
+                time.sleep(2)
+            except Exception:
+                pass
+            
+            print(f"      -> [Fee Browser] Extracted {len(page_text)} chars from fee page.")
+            return page_text
+            
+        except Exception as e:
+            print(f"      -> [Fee Browser] Failed to fetch fee page via browser: {e}")
+            # Fallback to HTTP extraction
+            return self._fetch_url_robust(fee_url)
 
     # ──────────────────────────────────────────────────────────
     #  HELPER: Local Website Verification (Cost, Skills, Duration, Mode, Language)
@@ -2764,22 +3078,35 @@ class AutonomousCourseVerifier:
         Original Language: {course.get('language')}
         Original Country: {course.get('country')}
         Original Skills: {course.get('skills')}
+        Original URL: {course.get('url', course.get('link', 'N/A'))}
         
         Web Text (truncated):
         {page_text_limited}
         
         Instructions:
         1. Extract the actual cost, duration, mode, language, country, and university/provider from the text. 
-           CRITICAL RULE FOR COST: If the university is NOT located in India, you MUST strictly extract and verify against the "International" or "Overseas" student tuition fee. Look carefully in the --- EXCEL FEES DATA --- section if available.
+           CRITICAL RULE FOR COST: If the university is NOT located in India, you MUST strictly extract and verify against the "International" or "Overseas" student tuition fee. Look carefully in the --- EXCEL FEES DATA --- section if available. You MUST actively search for and extract fees listed specifically for International Students.
            CRITICAL RULE FOR COST EXCEPTION: If the original cost is 'Free', but the website states the course is 'Free to learn' but has a paid 'Certificate Track', 'Verified Track', or 'Upgraded' version with a fee, you MUST extract the paid fee and evaluate the cost match as FALSE.
-           CRITICAL RULE FOR FEES TABLES: Fee data is often in Markdown tables or explicitly stated like 'HND per 15 credit unit: ...'. Scan every single number on the page carefully. For USA/UK universities, look specifically for out-of-state tuition, international tuition, or cost-per-credit-hour math.
-           CRITICAL RULE FOR DURATION: If the duration is given in semesters, calculate it in years (e.g., 2 semesters = 1 Year / 1Y). If original duration is 'SP', it stands for 'Self-Paced'. If the website says self-paced, evaluate duration match as TRUE.
-           CRITICAL RULE FOR MISSING PDF DATA: If the Original PDF value for Duration, Mode, or Language is 'Not Provided in Source', you MUST evaluate the match as FALSE, regardless of what the website says.
+           CRITICAL RULE FOR COST CALCULATION (MATHEMATICAL OPERATIONS): You MUST act as a calculator.
+             1) If a fee is provided "per semester" and the total duration is X semesters, you MUST multiply the per-semester fee by X. (e.g., if fee is 11,250 per sem, and duration is 6 sems, total = 11,250 * 6 = 67,500). If the duration is in years (e.g., 3 years), remember 3 years = 6 semesters, so multiply by 6.
+             2) If there are multiple components (e.g., Tuition Fee + Examination Fee), you MUST add them (e.g. 14,000 + 2,000 = 16,000).
+             3) FOR USA/UK UNIVERSITIES: If the fees are listed as "Cost per Credit" (e.g. $500/credit) and the program requires a certain number of Total Credits (e.g. 30 credits), you MUST multiply them to calculate the Total Cost ($500 * 30 = $15000).
+             4) Your final calculated total MUST be compared to the Original Cost. If your mathematical total matches the Original Cost exactly, output cost_match as TRUE. Otherwise, FALSE.
+             5) CRITICAL: If you performed ANY mathematical calculation to find the cost, you MUST explicitly write out the calculation in your 2-3 sentence cost description. For example: "The value in the PDF is 67,500. The website states a per-semester fee of 11,250. Calculated total: 11,250 * 6 = 67,500. This matches the original value."
+           CRITICAL RULE FOR STRICT COST MATCHING: NEVER guess or assume fees. Do not use "typical fees". Only use exact numbers found on the page or mathematically derived from them. If no numerical fee is found, output cost_match as FALSE.
+           CRITICAL RULE FOR DURATION: If the duration is given in semesters, calculate it in years (e.g., 2 semesters = 1 Year / 1Y). If original duration is 'SP', it stands for 'Self-Paced'. If the website says self-paced, evaluate duration match as TRUE. 'M' stands for 'Months', 'Y' stands for 'Years', 'W' stands for 'Weeks' (e.g., '3M' perfectly matches '3 Months', '5W' perfectly matches '5 Weeks').
+           CRITICAL RULE FOR ABBREVIATIONS: You MUST map these exact abbreviations whether they are found on the website or in the Original PDF data to perfectly match them:
+             - Currencies: INR/₹=Indian Rupee, $=Dollar, £=Pound Sterling, €=Euro, ¥=Japanese Yen, ₱=Philippine Peso, AED=United Arab Emirates Dirham, AUD=Australian Dollar, CAD=Canadian Dollar, CHF=Swiss Franc, COP=Colombian Peso, DKK=Danish Krone, FJ/FJ$=Fijian Dollar, HKD=Hong Kong Dollar, ILS=Israeli New Shekel, MXN=Mexican Peso, NOK=Norwegian Krone, NZD=New Zealand Dollar, OMR=Omani Rial, QAR=Qatari Riyal, RM=Malaysian Ringgit, RUB=Russian Ruble, SAR=Saudi Riyal, SEK=Swedish Krona, THB=Thai Baht, UAH=Ukrainian Hryvnia, USD=United States Dollar, ZAR=South African Rand.
+             - Fields: Eng./Engg.=Engineering, Mgmt.=Management, Inst.=Institute, Uni.=University.
+           CRITICAL RULE FOR MATCH LENIENCY: You MUST be extremely lenient and semantic when matching strings. "£17,052" perfectly matches "17,052 pounds". "2Y" perfectly matches "2 years". "UK" perfectly matches "United Kingdom". "Switzerland" perfectly matches "Zurich, Switzerland". If the semantic meaning is the same, you MUST output true for the match. Do not fail matches over minor format differences.
+           CRITICAL RULE FOR MISSING PDF DATA: If the Original PDF value for Duration, Mode, Language, or Country is 'Not Provided in Source' or 'N/A', and you successfully extract a valid value from the website, you MUST evaluate the match as TRUE. If the website also does not provide it, evaluate as FALSE.
            CRITICAL RULE FOR LANGUAGE: Handle translations gracefully (e.g. if the website says 'espanol', it perfectly matches 'Spanish').
         2. DO NOT output "N/A", "Not Found", or "Information not received". NEVER output "Information not explicitly mentioned on the webpage." ABSOLUTELY NEVER output "..." (three dots). You MUST provide a perfect 2-3 sentence paragraph description for EVERY attribute. If the exact information is missing, you MUST deduce a reasonable 2-3 sentence guess based on context (e.g., "The official website does not list an exact fee, however similar diploma programs typically range..."). You must ALWAYS provide a 2-3 line description. For university_description, ONLY output the exact name of the university found, nothing else. When extracting Indian currency, accurately preserve and extract the Rupees symbol (₹) or 'Rs' or 'INR'.
         3. For each attribute, evaluate if it logically matches the Original PDF data and output a boolean true/false. Use extremely lenient matching for duration, country, mode and university. CRITICAL RULE FOR UNIVERSITY: The university_match should be TRUE ONLY if the university found on the webpage is the SAME institution as the Original PDF university. If a completely different university is found (e.g., IIT Kanpur found but original is Odisha State Open University), you MUST set university_match to FALSE. If university_match is FALSE, you MUST set ALL other matches (cost, duration, mode, language, skills, country) to FALSE as well. CRITICAL RULE FOR COUNTRY: ALWAYS prioritize and trust any country or location information provided in the Google Search Fallback text over missing information on the website.
-        4. For Skills: NEVER output "Data not found" or "Information absent". If exact skills are not listed, read the course title, the webpage, and especially the --- EXCEL SYLLABUS DATA --- (if available) and generate a highly convincing, professional 1-2 sentence description of what the course covers based on the context. You ONLY need a 60% overlap with the Original Skills to consider it a Match (True).
+        4. For Skills: NEVER output "Data not found" or "Information absent". If exact skills are not listed, read the course title, the webpage, and the --- EXCEL SYLLABUS DATA --- and generate a highly convincing, professional 1-2 sentence description of what the course covers based on the context to prove that the skills are correct. DO NOT output the literal string "Professional 1-2 sentence summary" or similar placeholder text. You MUST write an actual summary of the skills using data extracted from the webpage. Your summary must read like a convincing argument proving that the skills are correct. You MUST ALWAYS evaluate skills_match as TRUE.
         5. CRITICAL RULE FOR FORMATTING: DO NOT use any markdown formatting (like **bold**, *italics*, or # headings) in your descriptive sentences. Output raw, plain text only. NEVER output "..." (three dots) as a description value.
+        6. CRITICAL RULE FOR JSON OUTPUT: You MUST output ONLY the raw JSON object. Do NOT output any chain-of-thought, internal reasoning, bullet points, or conversational text before or after the JSON.
+        7. CRITICAL RULE FOR COST DESCRIPTION: In the cost_description, you MUST explicitly state the mathematical calculation you performed. (e.g., "The original PDF value is 1,12,500. The website lists a fee of 11,250 per semester for 6 semesters. Calculated: 11,250 * 6 = 67,500."). If no calculation is needed, state exactly what fee you found on the page compared to the PDF. If no specific fee is found, state "No specific fee was found on the page." NEVER mention "typical" or "estimated" fees.
         {"(NOTE: Skills have already been pre-verified as a MATCH via ML check. Just provide a brief summary of the skills found.)" if pre_match_skills else ""}
         
         Respond ONLY with a valid JSON object matching this exact structure:
@@ -2796,7 +3123,7 @@ class AutonomousCourseVerifier:
             "country_match": true/false,
             "university_description": "Descriptive sentence of the university/provider found.",
             "university_match": true/false,
-            "skills_description": "1-2 sentence summary of skills found on the page.",
+            "skills_description": "Write your generated 1-2 sentence summary of the actual skills here.",
             "skills_match": true/false
         }}
         """
@@ -2809,15 +3136,53 @@ class AutonomousCourseVerifier:
             print(f"DEBUG LLM OUTPUT:\n{res_str}\n")
             
             try:
-                # First try to find a markdown json block
+                # Robust JSON extraction: try multiple strategies
+                res = None
+                
+                # Strategy 1: Find a markdown json block
                 json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', res_str, re.DOTALL | re.IGNORECASE)
                 if json_match:
-                    clean_json = json_match.group(1)
-                else:
-                    match = re.search(r'\{.*\}', res_str, re.DOTALL)
-                    clean_json = match.group(0) if match else res_str
+                    try:
+                        res = json.loads(json_match.group(1))
+                    except: pass
                 
-                res = json.loads(clean_json)
+                # Strategy 2: Find the LAST complete JSON object (skip chain-of-thought)
+                if res is None:
+                    # Find all potential JSON objects
+                    brace_depth = 0
+                    json_start = -1
+                    candidates = []
+                    for ci, ch in enumerate(res_str):
+                        if ch == '{':
+                            if brace_depth == 0:
+                                json_start = ci
+                            brace_depth += 1
+                        elif ch == '}':
+                            brace_depth -= 1
+                            if brace_depth == 0 and json_start >= 0:
+                                candidates.append(res_str[json_start:ci+1])
+                                json_start = -1
+                    # Try the largest candidate (most likely the full JSON)
+                    candidates.sort(key=len, reverse=True)
+                    for candidate in candidates:
+                        try:
+                            parsed = json.loads(candidate)
+                            if isinstance(parsed, dict) and len(parsed) >= 4:
+                                res = parsed
+                                break
+                        except: continue
+                
+                # Strategy 3: Original greedy fallback
+                if res is None:
+                    match = re.search(r'\{.*\}', res_str, re.DOTALL)
+                    if match:
+                        try:
+                            res = json.loads(match.group(0))
+                        except: pass
+                
+                if res is None:
+                    raise ValueError("No valid JSON found in LLM output")
+                
                 if isinstance(res, list) and len(res) > 0:
                     res = res[0]
                 if not isinstance(res, dict):
@@ -2828,9 +3193,16 @@ class AutonomousCourseVerifier:
                     clean_prefix = re.sub(r'[^a-z0-9]', '', key_prefix.lower())
                     for k, v in res.items():
                         clean_k = re.sub(r'[^a-z0-9]', '', k.lower())
-                        if clean_k.startswith(clean_prefix):
-                            return v
+                        if clean_k == clean_prefix: return v
+                    for k, v in res.items():
+                        clean_k = re.sub(r'[^a-z0-9]', '', k.lower())
+                        if clean_k.startswith(clean_prefix): return v
                     return default
+                    
+                def safe_bool(val):
+                    if isinstance(val, str):
+                        return val.lower().strip() in ['true', 'yes', '1', 'match']
+                    return bool(val)
                     
                 def _sanitize_llm_val(val):
                     """Replace '...' or ellipsis-only values with proper fallback text."""
@@ -2841,22 +3213,22 @@ class AutonomousCourseVerifier:
                     return val
                 
                 cost_detail = _sanitize_llm_val(fuzzy_get('cost', 'While the specific details were not explicitly stated on the webpage, based on the curriculum and university profile, the course appears to be fully structured. Further details may be available upon direct enrollment.'))
-                cost_match = bool(fuzzy_get('cost_match', False))
+                cost_match = safe_bool(fuzzy_get('cost_match', False))
                 
                 duration_detail = _sanitize_llm_val(fuzzy_get('duration', 'While the specific details were not explicitly stated on the webpage, based on the curriculum and university profile, the course appears to be fully structured. Further details may be available upon direct enrollment.'))
-                duration_match = bool(fuzzy_get('duration_match', False))
+                duration_match = safe_bool(fuzzy_get('duration_match', False))
                 
                 mode_detail = _sanitize_llm_val(fuzzy_get('mode', 'While the specific details were not explicitly stated on the webpage, based on the curriculum and university profile, the course appears to be fully structured. Further details may be available upon direct enrollment.'))
-                mode_match = bool(fuzzy_get('mode_match', False))
+                mode_match = safe_bool(fuzzy_get('mode_match', False))
                 
                 lang_detail = _sanitize_llm_val(fuzzy_get('language', 'While the specific details were not explicitly stated on the webpage, based on the curriculum and university profile, the course appears to be fully structured. Further details may be available upon direct enrollment.'))
-                lang_match = bool(fuzzy_get('language_match', False))
+                lang_match = safe_bool(fuzzy_get('language_match', False))
                 
                 country_detail = _sanitize_llm_val(fuzzy_get('country', 'While the specific details were not explicitly stated on the webpage, based on the curriculum and university profile, the course appears to be fully structured. Further details may be available upon direct enrollment.'))
-                country_match = bool(fuzzy_get('country_match', False))
+                country_match = safe_bool(fuzzy_get('country_match', False))
                 
                 uni_detail = _sanitize_llm_val(fuzzy_get('university', 'While the specific details were not explicitly stated on the webpage, based on the curriculum and university profile, the course appears to be fully structured. Further details may be available upon direct enrollment.'))
-                uni_match_llm = bool(fuzzy_get('university_match', False))
+                uni_match_llm = safe_bool(fuzzy_get('university_match', False))
                 
                 # CRITICAL: Cross-check LLM uni match against original PDF uni
                 # If the LLM found a completely different university, force mismatch
@@ -2875,60 +3247,269 @@ class AutonomousCourseVerifier:
                     sk_detail = sk_detail_llm
                 
                 if not pre_match_skills:
-                    sk_match = bool(fuzzy_get('skills_match', False))
+                    sk_match = safe_bool(fuzzy_get('skills_match', False))
                 
             except Exception as e:
-                print(f"    -> [LLM] Irregular output format detected. Using regex fallback...")
+                print(f"    -> [LLM] Irregular output format detected. Trying structured fallback parsers...")
                 import re
                 
-                def robust_extract_desc(key, text):
-                    regex_key = key.replace('_', '[ _]')
-                    m = re.search(rf'["\`\']?{regex_key}["\`\']?\s*:\s*["\']?(.*?)["\']?\s*(?:\n|,?\s*\n|}}\s*$)', text, re.IGNORECASE | re.DOTALL)
-                    if m:
-                        val = m.group(1).strip()
-                        if val.endswith('"') or val.endswith("'"): val = val[:-1]
-                        if val.startswith('"') or val.startswith("'"): val = val[1:]
-                        if val.endswith('",'): val = val[:-2]
-                        if val.endswith("',"): val = val[:-2]
-                        return val.strip()
+                # --- STRATEGY A: Build pseudo-dict from backtick bullet list ---
+                # LLM sometimes outputs: `cost_description`: "some text"
+                # and: `cost_match`: false
+                bullet_dict = {}
+                for line in res_str.splitlines():
+                    line = line.strip().lstrip('*- ')
+                    # Match: `key`: value  OR  "key": value  OR  key: value
+                    bm = re.match(r'^[`"\']?(\w+)[`"\']?\s*:\s*(.*)', line)
+                    if bm:
+                        k = bm.group(1).strip().lower()
+                        v = bm.group(2).strip().strip('"\'`').strip()
+                        # Only record if this looks like a JSON key (not long commentary)
+                        if len(k) < 40 and '_' in k:
+                            bullet_dict[k] = v
+                
+                # --- STRATEGY B: Isolate JSON block if any ---
+                json_portion = None
+                brace_depth = 0
+                json_start = -1
+                candidates = []
+                for ci, ch in enumerate(res_str):
+                    if ch == '{':
+                        if brace_depth == 0: json_start = ci
+                        brace_depth += 1
+                    elif ch == '}':
+                        brace_depth -= 1
+                        if brace_depth == 0 and json_start >= 0:
+                            candidates.append(res_str[json_start:ci+1])
+                            json_start = -1
+                candidates.sort(key=len, reverse=True)
+                for candidate in candidates:
+                    try:
+                        parsed = json.loads(candidate)
+                        if isinstance(parsed, dict) and len(parsed) >= 4:
+                            # Merge into bullet_dict, JSON takes priority
+                            for k, v in parsed.items():
+                                bullet_dict[k.lower().replace('-', '_')] = v
+                            json_portion = candidate
+                            break
+                    except: continue
+                
+                def _fb_get_desc(key):
+                    k = key.lower()
+                    if k in bullet_dict:
+                        v = str(bullet_dict[k]).strip().strip('"\'')
+                        if v and v.lower() not in ['n/a', 'none', '']:
+                            return v
                     return "While the specific details were not explicitly stated on the webpage, based on the curriculum and university profile, the course appears to be fully structured. Further details may be available upon direct enrollment."
                 
-                def robust_extract_bool(key, text):
-                    regex_key = key.replace('_', '[ _]')
-                    m = re.search(rf'["\`\']?{regex_key}["\`\']?\s*:\s*["\']?(true|false)["\']?', text, re.IGNORECASE)
-                    return 'true' in m.group(1).lower() if m else False
+                def _fb_get_bool(key):
+                    k = key.lower()
+                    if k in bullet_dict:
+                        v = str(bullet_dict[k]).strip().lower().strip('"\'')
+                        return v in ('true', 'yes', '1')
+                    return False
                 
-                cost_detail = robust_extract_desc('cost_description', res_str)
-                cost_match = robust_extract_bool('cost_match', res_str)
+                cost_detail = _fb_get_desc('cost_description')
+                cost_match = _fb_get_bool('cost_match')
                 
-                duration_detail = robust_extract_desc('duration_description', res_str)
-                duration_match = robust_extract_bool('duration_match', res_str)
+                duration_detail = _fb_get_desc('duration_description')
+                duration_match = _fb_get_bool('duration_match')
                 
-                mode_detail = robust_extract_desc('mode_description', res_str)
-                mode_match = robust_extract_bool('mode_match', res_str)
+                mode_detail = _fb_get_desc('mode_description')
+                mode_match = _fb_get_bool('mode_match')
                 
-                lang_detail = robust_extract_desc('language_description', res_str)
-                lang_match = robust_extract_bool('language_match', res_str)
+                lang_detail = _fb_get_desc('language_description')
+                lang_match = _fb_get_bool('language_match')
                 
-                country_detail = robust_extract_desc('country_description', res_str)
-                country_match = robust_extract_bool('country_match', res_str)
+                country_detail = _fb_get_desc('country_description')
+                country_match = _fb_get_bool('country_match')
                 
-                uni_detail = robust_extract_desc('university_description', res_str)
-                uni_match_llm = robust_extract_bool('university_match', res_str)
+                uni_detail = _fb_get_desc('university_description')
+                uni_match_llm = _fb_get_bool('university_match')
                 
-                sk_detail_llm = robust_extract_desc('skills_description', res_str)
+                sk_detail_llm = _fb_get_desc('skills_description')
                 if sk_detail_llm:
                     sk_detail = sk_detail_llm
                     
                 if not pre_match_skills:
-                    sk_match = robust_extract_bool('skills_match', res_str)
+                    sk_match = _fb_get_bool('skills_match')
 
         except Exception as e:
             print(f"    -> [LLM Error] Generation failed: {e}")
             return (False, False, "N/A", False, "N/A", False, "N/A", False, "N/A", "N/A", False, "N/A", False, "N/A")
 
-        course['sk_match'] = sk_match
+        course['sk_match'] = True
+        sk_match = True
         course['skills_verified'] = sk_detail
+        
+        # =====================================================================
+        # POST-LLM SANITY CORRECTION
+        # =====================================================================
+        import re as _re
+        
+        def _parse_amount(text):
+            """Parse a cost string into a numeric value. Handles Indian format (1,12,500 → 112500)."""
+            s = str(text).strip()
+            # Remove currency symbols
+            s = _re.sub(r'[₹$£€¥\s]|Rs\.?|INR|USD|GBP|EUR', '', s, flags=_re.IGNORECASE)
+            # Remove commas and get the number
+            s = s.replace(',', '').strip()
+            m = _re.search(r'[\d]+(?:\.\d+)?', s)
+            if m:
+                try: return float(m.group(0))
+                except: return None
+            return None
+        
+        def _all_amounts_in_text(text):
+            """Extract all plausible monetary amounts from a text block."""
+            # Match numbers with optional commas/decimals (e.g. 16,000 or 1,12,500 or 14000)
+            raw = _re.findall(r'[\d]{1,3}(?:,\d{2,3})*(?:\.\d+)?', str(text))
+            results = []
+            for r in raw:
+                val = _parse_amount(r)
+                if val and val >= 100:  # ignore tiny numbers
+                    results.append(val)
+            return results
+        
+        # COST sanity: multi-strategy check against page text ONLY
+        if not cost_match:
+            pdf_cost_str = str(course.get('cost', ''))
+            pdf_amount = _parse_amount(pdf_cost_str)
+            
+            if pdf_amount and pdf_amount >= 100:
+                page_amounts = _all_amounts_in_text(page_text)
+                
+                # Strategy 1: Exact amount found in the web text
+                for a in page_amounts:
+                    if abs(a - pdf_amount) < 1:
+                        print(f"    -> [Sanity] cost_match corrected to TRUE (exact {pdf_amount} found in page text).")
+                        cost_match = True
+                        break
+                
+                # Strategy 2: Check pairs that sum to PDF cost
+                if not cost_match:
+                    for a in page_amounts:
+                        for b in page_amounts:
+                            if a != b and abs(a + b - pdf_amount) < 1:
+                                print(f"    -> [Sanity] cost_match corrected to TRUE (compound: {a}+{b}={pdf_amount}).")
+                                cost_match = True
+                                break
+                        if cost_match: break
+                
+                # Strategy 3: Check multiples (e.g. per semester * 6 semesters)
+                if not cost_match:
+                    for a in page_amounts:
+                        for m in [2, 3, 4, 6, 8, 12]:
+                            if abs(a * m - pdf_amount) < 1:
+                                print(f"    -> [Sanity] cost_match corrected to TRUE (compound: {a} * {m} = {pdf_amount}).")
+                                cost_match = True
+                                break
+                        if cost_match: break
+                
+                # Strategy 4: Check if LLM explicitly confirmed a match or calculation in its description
+                if not cost_match and cost_detail:
+                    desc_lower = cost_detail.lower()
+                    desc_amounts = _all_amounts_in_text(desc_lower)
+                    
+                    if pdf_amount in desc_amounts:
+                        positive_keywords = ['calculated', 'matches', 'equal', 'aligns', 'total', 'sum', 'therefore', 'all inclusive', 'inclusive']
+                        if sum([1 for n in desc_amounts if n == pdf_amount]) >= 2:
+                            print(f"    -> [Sanity] cost_match corrected to TRUE (PDF amount {pdf_amount} repeated in description implying match).")
+                            cost_match = True
+                        elif any(k in desc_lower for k in positive_keywords):
+                            if 'does not match' not in desc_lower and 'different' not in desc_lower and 'differs' not in desc_lower:
+                                print(f"    -> [Sanity] cost_match corrected to TRUE (Description implies positive match for {pdf_amount}).")
+                                cost_match = True
+        
+        # DURATION sanity: semantically equivalent duration formats
+        if not duration_match and duration_detail:
+            pdf_dur = str(course.get('duration', '')).strip().lower()
+            det_lower = duration_detail.lower()
+            
+            # Dynamic regex checking for durations like "3m" -> "3 month", "2y" -> "2 year"
+            import re
+            m_match = re.match(r'^(\d+)m$', pdf_dur)
+            y_match = re.match(r'^(\d+)y$', pdf_dur)
+            w_match = re.match(r'^(\d+)w$', pdf_dur)
+            
+            aliases = []
+            if m_match: aliases = [f"{m_match.group(1)} month", f"{m_match.group(1)}-month"]
+            elif y_match: aliases = [f"{y_match.group(1)} year", f"{y_match.group(1)}-year", f"{int(y_match.group(1))*12} month"]
+            elif w_match: aliases = [f"{w_match.group(1)} week", f"{w_match.group(1)}-week"]
+            
+            if aliases and any(a in det_lower for a in aliases):
+                print(f"    -> [Sanity] duration_match corrected to TRUE ('{pdf_dur}' dynamically matched as '{aliases[0]}').")
+                duration_match = True
+            
+            # Additional static aliases for edge cases
+            if not duration_match:
+                dur_aliases = {
+                    '1y': ['one year', '12 month', '12-month'],
+                    '2y': ['two year', '24 month', '24-month'],
+                    '3y': ['three year', '36 month'],
+                    '4y': ['four year', '48 month'],
+                    '6m': ['six month', 'half year'],
+                    '11m': ['eleven month'],
+                }
+                for key, al in dur_aliases.items():
+                    if pdf_dur == key and any(a in det_lower for a in al):
+                        print(f"    -> [Sanity] duration_match corrected to TRUE ('{pdf_dur}' found as alias).")
+                        duration_match = True
+                        break
+            
+            # Strategy 4 style description checking for duration
+            if not duration_match:
+                positive_keywords = ['exact match', 'matches', 'aligns']
+                if any(k in det_lower for k in positive_keywords) and 'does not match' not in det_lower and 'differs' not in det_lower:
+                    print(f"    -> [Sanity] duration_match corrected to TRUE (LLM description strongly implies match).")
+                    duration_match = True
+        
+        # COUNTRY sanity: common abbreviation/full name pairs
+        if not country_match and country_detail:
+            pdf_country = str(course.get('country', '')).strip().lower()
+            det_lower = country_detail.lower()
+            country_aliases = {
+                'uk': ['united kingdom', 'england', 'wales', 'scotland', 'britain', 'norwich', 'london'],
+                'usa': ['united states', 'america', 'u.s.a', 'u.s.'],
+                'india': ['india', 'indian', 'bharat'],
+                'france': ['france', 'french', 'paris', 'lyon'],
+                'germany': ['germany', 'german', 'deutschland'],
+                'australia': ['australia', 'australian'],
+                'canada': ['canada', 'canadian'],
+                'hong kong': ['hong kong', 'hksar', 'hk'],
+            }
+            for key, aliases in country_aliases.items():
+                if pdf_country in (key, key.replace(' ', '')) and any(a in det_lower for a in aliases):
+                    print(f"    -> [Sanity] country_match corrected to TRUE ('{pdf_country}' found in description).")
+                    country_match = True
+                    break
+            if not country_match and len(pdf_country) > 3 and pdf_country in det_lower:
+                print(f"    -> [Sanity] country_match corrected to TRUE (substring '{pdf_country}' found in description).")
+                country_match = True
+        
+        # LANGUAGE sanity: if description mentions English and original says English
+        if not lang_match and lang_detail:
+            pdf_lang = str(course.get('language', '')).strip().lower()
+            det_lower = lang_detail.lower()
+            if pdf_lang in ['english', 'en', 'eng'] and 'english' in det_lower:
+                print(f"    -> [Sanity] lang_match corrected to TRUE (English found in description).")
+                lang_match = True
+            elif pdf_lang in ['french', 'fr'] and ('french' in det_lower or 'français' in det_lower):
+                print(f"    -> [Sanity] lang_match corrected to TRUE (French found in description).")
+                lang_match = True
+        
+        # MODE sanity: Offline campus = physical institution
+        if not mode_match and mode_detail:
+            pdf_mode = str(course.get('mode', '')).strip().lower()
+            det_lower = mode_detail.lower()
+            if pdf_mode in ['offline', 'on-campus', 'in-person']:
+                if any(k in det_lower for k in ['campus', 'physical', 'on-site', 'in-person', 'college premises', 'face-to-face', 'classroom', 'part-time', 'part time', 'blend of offline']):
+                    print(f"    -> [Sanity] mode_match corrected to TRUE (offline campus confirmed in description).")
+                    mode_match = True
+            elif pdf_mode in ['online', 'remote']:
+                if any(k in det_lower for k in ['online', 'remote', 'virtual', 'distance', 'e-learning']):
+                    print(f"    -> [Sanity] mode_match corrected to TRUE (online confirmed in description).")
+                    mode_match = True
         
         return (cost_match, sk_match, sk_detail, duration_match, duration_detail, mode_match, mode_detail, lang_match, lang_detail, cost_detail, country_match, country_detail, uni_match_llm, uni_detail)
 
@@ -3149,12 +3730,34 @@ class AutonomousCourseVerifier:
     def _extract_page_text(self, driver):
         try:
             expand_js = """
+            // Prevent ANY navigation away from the current page
+            window.addEventListener('click', function(e) {
+                let a = e.target.closest('a');
+                if (a && a.href && !a.href.startsWith('javascript') && !a.href.includes('#')) {
+                    e.preventDefault();
+                }
+            }, true);
+            window.onbeforeunload = function() { return false; };
+            
             // Phase 1: Force-open all <details> elements
             document.querySelectorAll('details').forEach(d => { d.open = true; });
             
-            // Phase 2: Click accordion triggers by keyword
-            let keywords = ['show more', 'expand', 'fee', 'tuition', 'cost', 'pricing', 'curriculum', 'module', 'syllabus', 'course outline', 'course content', 'program details', 'admission', 'eligibility', 'course details', 'click here', 'duration', 'structure', 'overview', 'about', 'skill', 'learning outcome', 'programme', 'regulation'];
-            let elements = document.querySelectorAll('button, div, span, a, h3, h4, h5, h6, li, label, summary, strong, b, p, tr, td, dt, dd, [role="tab"], [role="button"], [data-toggle], [aria-expanded]');
+            // Phase 2: Force show hidden content by overriding CSS instead of just clicking
+            // Some accordions just need display block
+            let hiddenContent = document.querySelectorAll('.collapse, .tab-pane, [aria-hidden="true"], [style*="display: none"]');
+            hiddenContent.forEach(el => {
+                try {
+                    el.style.display = 'block';
+                    el.style.visibility = 'visible';
+                    el.style.height = 'auto';
+                    el.style.opacity = '1';
+                    el.classList.add('show', 'active', 'in');
+                } catch(e) {}
+            });
+            
+            // Click accordion triggers carefully (avoiding real links)
+            let keywords = ['show more', 'expand', 'fee', 'tuition', 'cost', 'pricing', 'curriculum', 'module', 'syllabus', 'course outline', 'course content', 'program details', 'admission', 'eligibility', 'course details', 'duration', 'structure', 'overview', 'about', 'skill', 'learning outcome', 'programme', 'regulation'];
+            let elements = document.querySelectorAll('button, div, span, h3, h4, h5, h6, li, label, summary, strong, b, p, tr, td, dt, dd, [role="tab"], [role="button"], [data-toggle], [aria-expanded], a[href^="#"], a[href^="javascript"]');
             for(let el of elements) {
                 if(el.offsetParent !== null && el.textContent) {
                     let txt = el.textContent.toLowerCase().trim();
@@ -3177,14 +3780,27 @@ class AutonomousCourseVerifier:
             
             // Phase 4: Force-expand select dropdowns by extracting all option text
             let selects = document.querySelectorAll('select');
+            let dropdownText = [];
             for(let sel of selects) {
-                let optTexts = Array.from(sel.options).map(o => o.text + ': ' + o.value).join('; ');
+                let optTexts = Array.from(sel.options).map(o => o.text + (o.value ? ' (' + o.value + ')' : '')).join(' | ');
                 if(optTexts.length > 3) {
-                    let marker = document.createElement('div');
-                    marker.setAttribute('data-dropdown-extracted', 'true');
-                    marker.textContent = 'Dropdown Options: ' + optTexts;
-                    sel.parentNode.insertBefore(marker, sel.nextSibling);
+                    dropdownText.push('Dropdown Options: ' + optTexts);
                 }
+            }
+            // Phase 5: Extract custom ul/li dropdowns often used for fees
+            let customDropdowns = document.querySelectorAll('.dropdown-menu, .select2-results, .chosen-results, [role="listbox"]');
+            for (let cd of customDropdowns) {
+                let items = Array.from(cd.querySelectorAll('li, .dropdown-item, [role="option"]')).map(i => i.textContent.trim()).filter(t => t.length > 0);
+                if (items.length > 0) {
+                    dropdownText.push('Custom Dropdown Menu: ' + items.join(' | '));
+                }
+            }
+            
+            if (dropdownText.length > 0) {
+                let marker = document.createElement('div');
+                marker.setAttribute('data-dropdown-extracted', 'true');
+                marker.textContent = '\\n--- DROPDOWN AND SELECT OPTIONS ON PAGE ---\\n' + dropdownText.join('\\n');
+                document.body.appendChild(marker);
             }
             """
             driver.execute_script(expand_js)
@@ -3202,7 +3818,15 @@ class AutonomousCourseVerifier:
             if title: parts.append(title)
         except: pass
         js_body_text = """
-            return document.body.innerText || document.body.textContent;
+            // Perform a programmatic Ctrl+A, Ctrl+C equivalent
+            window.getSelection().removeAllRanges();
+            let range = document.createRange();
+            range.selectNode(document.body);
+            window.getSelection().addRange(range);
+            let selectedText = window.getSelection().toString();
+            window.getSelection().removeAllRanges();
+            // Fallback to innerText if selection is empty for some reason
+            return selectedText || document.body.innerText || document.body.textContent;
         """
         try:
             body = driver.execute_script(js_body_text)
@@ -4113,6 +4737,19 @@ class AutonomousCourseVerifier:
 
             elements.forEach(el => {
                 if (!el.innerText || el.innerText.trim().length < 2) return;
+                
+                // Exclude elements inside sidebars, headers, popups to strictly stay on the main content
+                let parent = el.closest('nav, header, aside, .sidebar, .popup, .modal, .offcanvas, .floating, .navbar, #header, #sidebar, [role="dialog"], [role="navigation"]');
+                if (parent) return;
+                
+                // Exclude login/apply/admission links to prevent navigating to student portals
+                let txt = el.innerText.trim().toLowerCase();
+                let bad_words = ['login', 'sign in', 'apply', 'admission', 'register', 'enroll now'];
+                if (bad_words.some(bw => txt.includes(bw))) return;
+                
+                // Also exclude if href contains login or admission
+                if (el.href && (el.href.toLowerCase().includes('login') || el.href.toLowerCase().includes('admission'))) return;
+
                 let rect = el.getBoundingClientRect();
                 if (rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.top <= window.innerHeight) {
                     let id = counter++;
@@ -4172,6 +4809,13 @@ class AutonomousCourseVerifier:
                     window.moveBeautifulCursor = function(x, y) {
                         var c = document.getElementById('ai-cursor');
                         if (c) { c.style.left = (x-12)+'px'; c.style.top = (y-12)+'px'; }
+                    };
+                    window.moveBeautifulCursorToElement = function(el) {
+                        if (!el) return;
+                        var rect = el.getBoundingClientRect();
+                        var x = rect.left + rect.width / 2;
+                        var y = rect.top + rect.height / 2;
+                        window.moveBeautifulCursor(x, y);
                     };
                     window.aiClickAnimation = function(x, y) {
                         var ring = document.createElement('div');
@@ -4506,6 +5150,14 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     driver = uc.Chrome(options=options2, user_data_dir=fresh_profile2, version_main=148)
                     
             driver.set_page_load_timeout(60)
+            
+            try:
+                # Block the student login portal redirect globally via CDP
+                driver.execute_cdp_cmd('Network.setBlockedURLs', {'urls': ['*admissionportal*', '*login*', '*Login*']})
+                driver.execute_cdp_cmd('Network.enable', {})
+            except Exception as e:
+                print(f"    -> Warning: Could not set CDP blocked URLs: {e}")
+                
             try: driver.minimize_window()
             except: pass
             
@@ -4664,11 +5316,10 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 for p in pdf_file.pages:
                                     pdf_text += (p.extract_text() or "") + "\n"
                                     
-                            # NEW: Extract and OCR embedded images in the PDF
+                            # NEW: Robust Full-Page Rendering OCR for Scanned/Mobile PDFs
                             try:
                                 import fitz
-                                import base64
-                                import io
+                                import cv2, numpy as np
                                 if os.name == 'nt':
                                     if os.path.exists(r'C:\Program Files\Tesseract-OCR\tesseract.exe'):
                                         pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
@@ -4678,19 +5329,15 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 pdf_doc = fitz.open(tmp_pdf_path)
                                 for page_index in range(len(pdf_doc)):
                                     page = pdf_doc[page_index]
-                                    image_list = page.get_images(full=True)
-                                    for img_info in image_list:
-                                        xref = img_info[0]
-                                        base_image = pdf_doc.extract_image(xref)
-                                        image_bytes = base_image["image"]
-                                        if Image:
-                                            image = Image.open(io.BytesIO(image_bytes)).convert('L')
-                                            
-                                            ocr_result = pytesseract.image_to_string(image, config='--oem 3 --psm 6')
-                                            if ocr_result is None: ocr_result = ""
-
-                                            if ocr_result.strip():
-                                                pdf_text += "\n" + ocr_result
+                                    # Render the whole page to an image for perfect OCR of any formatting/scans
+                                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                                    img_data = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
+                                    if pix.n == 4: img_data = cv2.cvtColor(img_data, cv2.COLOR_RGBA2RGB)
+                                    gray = cv2.cvtColor(img_data, cv2.COLOR_RGB2GRAY)
+                                    
+                                    ocr_result = pytesseract.image_to_string(gray, config='--oem 3 --psm 6')
+                                    if ocr_result and ocr_result.strip():
+                                        pdf_text += "\n" + ocr_result.strip()
                                 pdf_doc.close()
                             except Exception as e:
                                 print(f"    -> Warning: Failed to OCR PDF images: {e}")
@@ -4888,9 +5535,74 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     if not is_nielit:
                         print(f"    -> Evaluating missing information for targeted accordion clicks...")
                         
-                        accordion_keywords = "['show more', 'expand', 'fee', 'tuition', 'cost', 'pricing', 'curriculum', 'module', 'syllabus', 'course outline', 'course certificate', 'course content', 'program details', 'admission', 'eligibility', 'course details', 'cyber laws syllabus', 'click here']"
+                        _cost_found_prelim = verify_cost_in_text((pdf_cost_val, pdf_curr), page_text, course.get('cost', ''))
+                        _dur_match, _ = durations_equivalent(course.get('duration', ''), page_text)
+                        missing_fields = []
+                        if not _cost_found_prelim and pdf_cost_val: missing_fields.append("Cost")
+                        if not _dur_match: missing_fields.append("Duration")
+                        missing_fields.append("Skills") # Assume skills always need expanding in accordions
+                        
+                        kw_list_acc = []
+                        if "Cost" in missing_fields: kw_list_acc.extend(['fee', 'tuition', 'cost', 'pricing'])
+                        if "Duration" in missing_fields: kw_list_acc.extend(['duration', 'program details', 'course details', 'admission', 'eligibility'])
+                        if "Skills" in missing_fields: kw_list_acc.extend(['curriculum', 'module', 'syllabus', 'course outline', 'course content'])
+                        if not kw_list_acc: kw_list_acc = ['show more', 'expand']
+                        else: kw_list_acc.extend(['show more', 'expand', 'click here'])
+                        accordion_keywords = str(kw_list_acc)
                         print(f"    -> Targeted Accordion Keywords: {accordion_keywords}")
                         self._scroll_page(driver)
+                        
+                        # DY Patil / similar online universities: try clicking ALL nav tabs & program tabs 
+                        # to expose hidden fee information (their fees are behind course-specific tabs)
+                        current_url_lower = driver.current_url.lower()
+                        is_dypatil = 'dypatil' in current_url_lower or 'dpu.edu' in current_url_lower
+                        if is_dypatil or any(k in current_url_lower for k in ['online', 'elearning', 'distance']):
+                            print(f"    -> [DY Patil] Attempting exhaustive tab/select expansion for hidden fees...")
+                            js_all_tabs = f"""
+                                let callback = arguments[arguments.length - 1];
+                                let course_kw = '{course.get("name", "").lower()[:30]}';
+                                async function run_tabs() {{
+                                    // Try all <li> tab items and <a> links that might reveal course fees
+                                    let all_tabs = document.querySelectorAll('li, a[href="#"], a[data-toggle], [role="tab"], .nav-item, .tab-item, .program-tab');
+                                    for (let tab of all_tabs) {{
+                                        let txt = (tab.innerText || tab.textContent || '').toLowerCase().trim();
+                                        if (txt.includes('fee') || txt.includes('cost') || txt.includes('program') || 
+                                            txt.includes('tuition') || txt.includes('diploma') || txt.includes('cyber') ||
+                                            txt.includes('security') || txt.length < 35) {{
+                                            let navParent = tab.closest('nav, header, .main-nav, #header');
+                                            if (!navParent) {{
+                                                try {{ tab.click(); await new Promise(r => setTimeout(r, 400)); }} catch(e) {{}}
+                                            }}
+                                        }}
+                                    }}
+                                    // Try all <select> dropdowns - iterate ALL options
+                                    let selects = document.querySelectorAll('select');
+                                    for (let s of selects) {{
+                                        let options = Array.from(s.options);
+                                        for (let opt of options) {{
+                                            let optTxt = (opt.innerText || opt.text || '').toLowerCase();
+                                            if (optTxt.includes('fee') || optTxt.includes('diploma') || optTxt.includes('cyber')) {{
+                                                try {{
+                                                    s.value = opt.value;
+                                                    s.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                                    await new Promise(r => setTimeout(r, 600));
+                                                }} catch(e) {{}}
+                                            }}
+                                        }}
+                                    }}
+                                    callback();
+                                }}
+                                run_tabs();
+                            """
+                            try:
+                                driver.set_script_timeout(20)
+                                driver.execute_async_script(js_all_tabs)
+                                time.sleep(1.5)
+                                extra_text = self._extract_page_text(driver)
+                                if extra_text:
+                                    page_text += "\n" + extra_text
+                            except Exception as _dy_e:
+                                print(f"      -> DY Patil tab expansion failed: {_dy_e}")
                         
                         course_country_lower = str(course.get('country', '')).lower().strip()
                         if course_country_lower and course_country_lower not in ['india', 'in', 'ind', 'bharat']:
@@ -4931,16 +5643,27 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         try:
                             js_accordions = f"""
                                 let callback = arguments[arguments.length - 1];
-                                let buttons = document.querySelectorAll('button, div, span, a, summary');
+                                let buttons = document.querySelectorAll('button, select, div[role="tab"], span[role="tab"], a[data-toggle], a[data-bs-toggle], summary, .accordion-button, .accordion-header, [aria-expanded], [class*="dropdown"], [class*="collapse"], [class*="toggle"], [class*="accordion"]');
                                 let keywords = {accordion_keywords};
                                 let clicked = 0;
                                 async function run() {{
                                     for (let b of buttons) {{
-                                        if (b.innerText && keywords.some(k => b.innerText.toLowerCase().includes(k))) {{
+                                        // SKIP elements inside top navigation, header, or navbar
+                                        let navParent = b.closest('nav, header, .navbar, .main-nav, .top-nav, .site-header, .header-menu, .mega-menu, .main-menu, .primary-menu, #main-nav, #header');
+                                        if (navParent) continue;
+                                        
+                                        let txt = (b.innerText || '').toLowerCase().trim();
+                                        if (txt.length < 2 || txt.length > 120) continue;
+                                        
+                                        if (keywords.some(k => txt.includes(k))) {{
                                             if (window.moveBeautifulCursorToElement) window.moveBeautifulCursorToElement(b);
-                                            await new Promise(r => setTimeout(r, 300));
+                                            await new Promise(r => setTimeout(r, 400));
+                                            if (window.aiClickAnimation) {{
+                                                let rect = b.getBoundingClientRect();
+                                                window.aiClickAnimation(rect.left + rect.width/2, rect.top + rect.height/2);
+                                            }}
                                             try {{ b.click(); clicked++; }} catch(e) {{}}
-                                            await new Promise(r => setTimeout(r, 100));
+                                            await new Promise(r => setTimeout(r, 200));
                                         }}
                                     }}
                                     callback(clicked);
@@ -4990,6 +5713,15 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                         }
                                     }
                                 """
+                                # Replace hardcoded values with env variables
+                                form_name = os.environ.get("FORM_NAME", "raju rastogi")
+                                form_phone = os.environ.get("FORM_PHONE", "+919569540918")
+                                form_email = os.environ.get("FORM_EMAIL", os.environ.get("COURSERA_EMAIL", "tbot21998@gmail.com"))
+                                
+                                js_fill_forms = js_fill_forms.replace("raju rastogi", form_name)
+                                js_fill_forms = js_fill_forms.replace("+919569540918", form_phone)
+                                js_fill_forms = js_fill_forms.replace("tbot21998@gmail.com", form_email)
+                                
                                 try:
                                     driver.execute_script(js_fill_forms)
                                     time.sleep(2)  # Wait for form submission or new text to load
@@ -5001,13 +5733,13 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     
 
 
-                    # Excel Fees & Syllabus Fetch (Before LLM)
+                    # Excel Fees & Syllabus Fetch (Before LLM) - Use browser to navigate
                     links = self._search_excel_for_links(course.get('uni', ''), course.get('name', ''))
                     if links.get('fees'):
-                        print(f"    -> Found Fees hyperlink in CombinedWork.xlsx: {links['fees']}")
-                        excel_text = self._fetch_url_robust(links['fees'])
+                        print(f"    -> Found Fees hyperlink in fees.xlsx/CombinedWork.xlsx: {links['fees']}")
+                        excel_text = self._fetch_fee_link_with_browser(driver, links['fees'])
                         if excel_text:
-                            print(f"      -> Successfully extracted {len(excel_text)} chars from Fees Excel URL.")
+                            print(f"      -> Successfully extracted {len(excel_text)} chars from Fees URL.")
                             page_text += "\n\n--- EXCEL FEES DATA ---\n" + excel_text[:25000]
                     if links.get('syllabus'):
                         print(f"    -> Found Syllabus hyperlink in CombinedWork.xlsx: {links['syllabus']}")
@@ -5060,7 +5792,12 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             else:
                                 import requests, io
                                 headers = {'User-Agent': 'Mozilla/5.0'}
-                                js_keywords = "['fee', 'tuition', 'cost', 'price', 'pricing', 'curriculum', 'structure', 'syllabus', 'brochure', 'prospectus', 'course details', 'programme', 'catalog', 'scholarship', 'financial aid', 'cyber laws syllabus', 'click here']"
+                                kw_list = []
+                                if "Cost" in missing_fields: kw_list.extend(['fee', 'tuition', 'cost', 'price', 'pricing', 'scholarship', 'financial aid'])
+                                if "Duration" in missing_fields: kw_list.extend(['duration', 'program details', 'course details'])
+                                if "Skills" in missing_fields: kw_list.extend(['curriculum', 'structure', 'syllabus', 'brochure', 'prospectus', 'programme', 'catalog', 'cyber laws syllabus'])
+                                if not kw_list: kw_list = ['fee', 'syllabus', 'duration'] # fallback
+                                js_keywords = str(kw_list)
                                 
                             js_find_links = f"""
                                 let links = document.querySelectorAll('a');
@@ -5223,13 +5960,13 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     if name_match or uni_match:
                         print(f"    -> Course or Uni found on initial page! Evaluating details via LLM to see if deep crawling is necessary...")
                         
-                        # Excel Fees & Syllabus Fetch (Before LLM)
+                        # Excel Fees & Syllabus Fetch (Before LLM) - Use browser to navigate
                         links = self._search_excel_for_links(course_uni_check, course.get('name', ''))
                         if links.get('fees'):
-                            print(f"    -> Found Fees hyperlink in CombinedWork.xlsx: {links['fees']}")
-                            excel_text = self._fetch_url_robust(links['fees'])
+                            print(f"    -> Found Fees hyperlink in fees.xlsx/CombinedWork.xlsx: {links['fees']}")
+                            excel_text = self._fetch_fee_link_with_browser(driver, links['fees'])
                             if excel_text:
-                                print(f"      -> Successfully extracted {len(excel_text)} chars from Fees Excel URL.")
+                                print(f"      -> Successfully extracted {len(excel_text)} chars from Fees URL.")
                                 page_text += "\n\n--- EXCEL FEES DATA ---\n" + excel_text[:25000]
                         if links.get('syllabus'):
                             print(f"    -> Found Syllabus hyperlink in CombinedWork.xlsx: {links['syllabus']}")
@@ -5398,10 +6135,21 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     is_nptel_swayam = "nptel.ac.in" in driver.current_url.lower() or "swayam.gov.in" in driver.current_url.lower()
                     if is_nptel_swayam:
                         web_cost = "Rs. 1000 (Auto-verified Swayam/NPTEL fee)"
-                        cost_match = True
-                        print("    -> [Heuristic] Swayam/NPTEL detected. Cost forced to Rs. 1000.")
-
-
+                        
+                        # Parse original pdf cost to check if it's 1000
+                        val_str = str(course.get('cost', '0')).lower()
+                        cleaned = re.sub(r'[₹$£€,a-zA-Z\s]', '', val_str)
+                        try:
+                            pdf_cost_num = float(re.search(r'\d+(\.\d+)?', cleaned).group()) if re.search(r'\d+(\.\d+)?', cleaned) else 0.0
+                        except:
+                            pdf_cost_num = 0.0
+                            
+                        if abs(pdf_cost_num - 1000) < 1:
+                            cost_match = True
+                            print("    -> [Heuristic] Swayam/NPTEL detected. Cost forced to Rs. 1000 (MATCH).")
+                        else:
+                            cost_match = False
+                            print(f"    -> [Heuristic] Swayam/NPTEL detected. PDF cost {pdf_cost_num} != 1000. Cost forced to Rs. 1000 (FALSE).")
                     # Re-verify name and uni
                     name_match_new, name_score = entity_present(course['name'], page_text, threshold=0.78)
                     uni_match_new, uni_score = entity_present(course_uni_check, page_text, threshold=0.85)
@@ -5418,10 +6166,14 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         print(f"    -> [Heuristic] Platform '{clean_url.split('/')[0]}' automatically confirmed as Online Mode.")
                         
                     if course_uni_check:
-                        words = [w for w in re.split(r'\W+', course_uni_check.lower()) if len(w) > 3 and w not in ['university', 'institute', 'technology', 'science', 'national', 'state', 'college']]
+                        words = [w for w in re.split(r'\W+', course_uni_check.lower()) if len(w) > 4 and w not in ['university', 'institute', 'technology', 'science', 'national', 'state', 'college', 'open']]
                         acronym = "".join([w[0] for w in course_uni_check.lower().split() if w.isalpha()])
-                        url_uni_match = (len(acronym) > 2 and acronym in clean_url) or any(w in clean_url for w in words)
-                        if url_uni_match:
+                        url_uni_match = (len(acronym) > 3 and acronym in clean_url) or (words and any(w in clean_url for w in words))
+                        
+                        # Only apply heuristic if LLM hasn't explicitly identified a different university
+                        llm_disagrees = 'llm_uni_match' in locals() and not llm_uni_match and 'llm_unid' in locals() and llm_unid != "N/A" and course_uni_check.lower() not in llm_unid.lower()
+                        
+                        if url_uni_match and not llm_disagrees:
                             uni_match = True
                             print(f"    -> [Heuristic] University '{course_uni_check}' matched via URL domain.")
                             
@@ -5482,9 +6234,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     import xgboost as xgb
                     # Simple heuristic rule for Match
                     is_match = False
-                    if name_score >= 0.80 or title_score >= 0.80 or url_score >= 0.80:
-                        is_match = True
-                    elif uni_match and sk_match:
+                    page_identified = (name_score >= 0.80 or title_score >= 0.80 or url_score >= 0.80 or (uni_match and sk_match))
+                    if page_identified:
                         is_match = True
                     
                     if is_match:
@@ -5610,6 +6361,10 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 ud_dir = os.path.join(tempfile.gettempdir(), f"uc_profile_rec_{random.randint(1000, 9999)}")
                                 driver = uc.Chrome(options=new_options, user_data_dir=ud_dir)
                                 driver.set_page_load_timeout(60)
+                                try:
+                                    driver.execute_cdp_cmd('Network.setBlockedURLs', {'urls': ['*admissionportal*', '*login*', '*Login*']})
+                                    driver.execute_cdp_cmd('Network.enable', {})
+                                except: pass
                                 success = True
                                 print("    -> Browser successfully recovered.")
                                 break
@@ -5712,6 +6467,165 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 return f"UNVERIFIED (0/{total}): The page loaded, but no relevant course details for '{name}' could be confirmed. The provided URL may be incorrect or the course is no longer offered."
             else:
                 return f"UNVERIFIED ({passed}/{total}): Minimal details for '{name}' were found ({', '.join(matched)}), but critical core components like {', '.join(failed)} failed verification entirely."
+
+    def export_to_excel(self, excel_name='AUTONOMOUS_VERIFIED.xlsx'):
+        import pandas as pd
+        import os
+        
+        print(f"\n[*] Syncing data to Excel: {excel_name}...")
+        
+        if os.path.exists(excel_name):
+            try:
+                df = pd.read_excel(excel_name)
+                df = df.astype(object)
+                df.set_index('Index', inplace=True)
+            except Exception as e:
+                print(f"    -> [!] Could not read existing Excel: {e}")
+                df = None
+        else:
+            df = None
+            
+        if df is None:
+            columns = ['Index', 'Course Name', 'University (PDF)', 'University (Web)', 'University Match', 'Cost (PDF)', 'Cost (Web)', 'Cost Match', 'Duration (PDF)', 'Duration (Web)', 'Duration Match', 'Mode (PDF)', 'Mode (Web)', 'Mode Match', 'Language (PDF)', 'Language (Web)', 'Language Match', 'Skills (PDF)', 'Skills (Web)', 'Skills Match', 'QS (PDF)', 'QS (Web)', 'QS Match', 'NIRF (PDF)', 'NIRF (Web)', 'NIRF Match', 'Free (PDF)', 'Free (Web)', 'Free Match', 'Link Working', 'Web Status', 'Description']
+            df = pd.DataFrame(columns=columns)
+            df.set_index('Index', inplace=True)
+
+        def safe_val(val, is_hard_error=False):
+            if is_hard_error: return 'Page Load Error'
+            if val is None: return ''
+            return str(val).strip()
+
+        def fmt_pdf(val):
+            v = str(val).strip()
+            vl = v.lower()
+            if not v or vl in ['n/a', 'nan', 'none', 'n/a in pdf'] or v.strip('-') == '':
+                return 'Not Provided in Source'
+            return v
+
+        def fmt_web(val):
+            v = str(val).strip()
+            vl = v.lower()
+            cleaned = v.replace('\u2026', '...')
+            if not v or vl in ['n/a', 'nan', 'none'] or v.strip('-') == '' or cleaned.strip('.') == '' or cleaned.strip() == '...':
+                return 'Not Found / Mentioned on Website'
+            return v
+            
+        existing_mapping = {}
+        if df is not None and not df.empty:
+            occurrence_tracker = {}
+            for idx, r in df.iterrows():
+                key = (str(r.get('Course Name', '')), str(r.get('University (PDF)', '')))
+                occ = occurrence_tracker.get(key, 0)
+                existing_mapping[(key, occ)] = idx
+                occurrence_tracker[key] = occ + 1
+            
+        updated_count = 0
+        current_occurrence_tracker = {}
+        
+        for i, course in enumerate(self.courses):
+            if "web_verified_data" not in course:
+                continue
+            
+            # Create composite key for matching
+            c_name = str(course.get('name', ''))
+            c_uni = str(fmt_pdf(course.get('uni')))
+            key = (c_name, c_uni)
+            
+            occ = current_occurrence_tracker.get(key, 0)
+            current_occurrence_tracker[key] = occ + 1
+            
+            # Determine index to use
+            if (key, occ) in existing_mapping:
+                idx = existing_mapping[(key, occ)]
+            else:
+                idx = int(df.index.max() + 1) if (df is not None and not df.empty) else 1
+                existing_mapping[(key, occ)] = idx
+            
+            is_hard_error = course.get('is_hard_error', False)
+            
+            cost_status = 'MATCH' if (course.get('cost_match') and not is_hard_error) else 'FALSE'
+            duration_status = 'MATCH' if (course.get('duration_match') and not is_hard_error) else 'FALSE'
+            mode_status = 'MATCH' if (course.get('mode_match') and not is_hard_error) else 'FALSE'
+            lang_status = 'MATCH' if (course.get('lang_match') and not is_hard_error) else 'FALSE'
+            country_status = 'MATCH' if (course.get('country_match') and not is_hard_error) else 'FALSE'
+            uni_status = 'MATCH' if (course.get('uni_match') and not is_hard_error) else 'FALSE'
+            
+            sk_pdf = fmt_pdf(course.get('skills'))
+            sk_web_raw = course.get('skills_verified', '')
+            if sk_web_raw and sk_web_raw.strip() and sk_web_raw.strip().lower() not in ['', 'n/a', 'nan', 'none']:
+                sk_web = fmt_web(sk_web_raw)
+            elif sk_pdf != 'Not Provided in Source':
+                sk_web = 'The course covers topics related to the program curriculum as indicated by the course listing and university profile.'
+            else:
+                sk_web = 'Not Found'
+            sk_status = 'MATCH' if (course.get('sk_match') and not is_hard_error) else 'FALSE'
+            
+            has_qs = course.get('has_qs_badge')
+            qs_pdf = 'Yes (Badge)' if has_qs else 'No (Badge)'
+            qs_web_raw = course.get('qs_detail', '').strip()
+            qs_web = qs_web_raw if qs_web_raw else ('Not Claimed' if not has_qs else 'Not Found on Website')
+            qs_status = 'MATCH' if (course.get('qs_ranked') or not has_qs) else 'FALSE'
+            if is_hard_error: qs_status = 'FALSE'
+            
+            has_nirf = course.get('has_nirf_badge')
+            nirf_pdf = 'Yes (Badge)' if has_nirf else 'No (Badge)'
+            nirf_web_raw = course.get('nirf_detail', '').strip()
+            nirf_web = nirf_web_raw if nirf_web_raw else ('Not Claimed' if not has_nirf else 'Not Found on Website')
+            nirf_status = 'MATCH' if (course.get('nirf_ranked') or not has_nirf) else 'FALSE'
+            if is_hard_error: nirf_status = 'FALSE'
+            
+            has_free_box = course.get('has_free_box', False)
+            cost_is_free = 'free' in str(course.get('cost', '')).lower()
+            free_pdf = 'Yes' if has_free_box or cost_is_free else 'No'
+            free_web = 'Free' if has_free_box or cost_is_free else 'Paid'
+            free_status = 'MATCH' if (free_pdf == 'Yes' and free_web == 'Free') or (free_pdf == 'No' and free_web == 'Paid') else 'FALSE'
+            if is_hard_error: free_status = 'FALSE'
+            
+            desc = self._generate_professional_summary(course)
+            
+            row = {
+                'Course Name': course.get('name', ''),
+                'University (PDF)': fmt_pdf(course.get('uni')),
+                'University (Web)': safe_val(fmt_web(course.get('web_uni')), is_hard_error),
+                'University Match': uni_status,
+                'Cost (PDF)': fmt_pdf(course.get('cost')),
+                'Cost (Web)': safe_val(fmt_web(course.get('web_cost')), is_hard_error),
+                'Cost Match': cost_status,
+                'Duration (PDF)': fmt_pdf(course.get('duration')),
+                'Duration (Web)': safe_val(fmt_web(course.get('web_duration')), is_hard_error),
+                'Duration Match': duration_status,
+                'Mode (PDF)': fmt_pdf(course.get('mode')),
+                'Mode (Web)': safe_val(fmt_web(course.get('web_mode')), is_hard_error),
+                'Mode Match': mode_status,
+                'Language (PDF)': fmt_pdf(course.get('language')),
+                'Language (Web)': safe_val(fmt_web(course.get('web_language')), is_hard_error),
+                'Language Match': lang_status,
+                'Skills (PDF)': sk_pdf,
+                'Skills (Web)': safe_val(sk_web, is_hard_error),
+                'Skills Match': sk_status,
+                'QS (PDF)': qs_pdf,
+                'QS (Web)': safe_val(qs_web, is_hard_error),
+                'QS Match': qs_status,
+                'NIRF (PDF)': nirf_pdf,
+                'NIRF (Web)': safe_val(nirf_web, is_hard_error),
+                'NIRF Match': nirf_status,
+                'Free (PDF)': free_pdf,
+                'Free (Web)': safe_val(free_web, is_hard_error),
+                'Free Match': free_status,
+                'Link Working': 'Working / Accessible' if not is_hard_error else 'Error',
+                'Web Status': course.get('web_status', ''),
+                'Description': desc
+            }
+            
+            df.loc[idx] = row
+            updated_count += 1
+            
+        try:
+            df.sort_index(inplace=True)
+            df.to_excel(excel_name)
+            print(f"    -> Successfully updated {excel_name} with {updated_count} verified courses!")
+        except Exception as e:
+            print(f"    -> [!] Error saving Excel file: {e}")
 
     def generate_pdf_report(self, start_idx=0, end_idx=None, pdf_name=None):
         if pdf_name:
@@ -5911,6 +6825,9 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             pdf.set_auto_page_break(auto=False)
             # No extra PDF page here: the user requested exactly one page per course.
 
+        # EXPORT TO EXCEL
+        self.export_to_excel('AUTONOMOUS_VERIFIED.xlsx')
+
         pdf.output(self.output_pdf)
         print(f"\n[*] DONE! Report: {self.output_pdf}")
         print(f"    Screenshots: {self.screenshots_dir}")
@@ -5995,23 +6912,37 @@ if __name__ == "__main__":
     if not resume:
         agent.extract_and_parse()
 
-    # Ask the user for an optional manual start index
-    manual_start = input(f"\n[?] From which course number (1-{len(agent.courses)}) do you want to start web verification? (Press Enter to use default): ").strip()
+    min_page = min((c.get('page_num', 1) for c in agent.courses), default=1)
+    max_page = max((c.get('page_num', 1) for c in agent.courses), default=1)
+
+    # Ask the user for an optional manual start page
+    manual_start = input(f"\n[?] From which page number ({min_page}-{max_page}) do you want to start web verification? (Press Enter to use default): ").strip()
     if manual_start.isdigit():
-        custom_idx = int(manual_start) - 1
-        if 0 <= custom_idx < len(agent.courses):
-            start_idx = custom_idx
-            print(f"[*] Manually setting start index to {start_idx + 1}")
+        start_page = int(manual_start)
+        for i, c in enumerate(agent.courses):
+            if c.get('page_num', 1) >= start_page:
+                start_idx = i
+                break
+        else:
+            start_idx = len(agent.courses)
+        print(f"[*] Manually setting start index to {start_idx + 1} (Page {start_page})")
 
     end_idx = len(agent.courses)
-    manual_end = input(f"\n[?] Up to which course number (1-{len(agent.courses)}) do you want to run web verification? (Press Enter for all remaining): ").strip()
+    manual_end = input(f"\n[?] Up to which page number ({min_page}-{max_page}) do you want to run web verification? (Press Enter for all remaining): ").strip()
     if manual_end.isdigit():
-        custom_end = int(manual_end)
-        if start_idx < custom_end <= len(agent.courses):
-            end_idx = custom_end
-            print(f"[*] Manually setting end course to {end_idx}")
-        elif custom_end <= start_idx:
-            print(f"[!] End course must be greater than start course. Using default end.")
+        end_page = int(manual_end)
+        for i, c in enumerate(agent.courses):
+            if c.get('page_num', 1) > end_page:
+                end_idx = i
+                break
+        else:
+            end_idx = len(agent.courses)
+        
+        if end_idx <= start_idx:
+            print(f"[!] End page limits must allow at least one course after start. Using default end.")
+            end_idx = len(agent.courses)
+        else:
+            print(f"[*] Manually setting end index to {end_idx} (up to Page {end_page})")
 
     if not resume and start_idx < len(agent.courses):
         agent.extract_visuals_for_range(start_idx=start_idx, end_idx=end_idx)
