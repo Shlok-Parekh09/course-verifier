@@ -14,4 +14,3 @@ selenium
 undetected-chromedriver
 streamlit
 openpyxl
-thefuzz

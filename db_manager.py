@@ -1,11 +1,12 @@
 """
 Database Manager for Course Verifier
-Handles SQLite operations for ranking data and course information
+Handles SQLite operations for ranking membership lists (simple existence checks)
+Simple schema: Just check if university exists in ranking system (no rank positions needed)
 """
 
 import sqlite3
 import os
-from typing import Optional, List, Tuple
+from typing import Optional
 import threading
 
 class DatabaseManager:
@@ -37,168 +38,128 @@ class DatabaseManager:
         conn = cls.get_connection()
         cursor = conn.cursor()
         
-        # QS Rankings table
+        # QS Rankings table - simple membership list (just university names)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS qs_rankings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 university_name TEXT NOT NULL UNIQUE,
-                rank_position INTEGER,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         
-        # Create index on university_name for fast lookups
+        # Create index on university_name for O(log n) lookup
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_qs_university_name 
             ON qs_rankings(university_name)
         ''')
         
-        # NIRF Rankings table
+        # NIRF Rankings table - simple membership list (just university names)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS nirf_rankings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 university_name TEXT NOT NULL UNIQUE,
-                rank_position INTEGER,
-                rank_category TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         
-        # Create index on university_name for fast lookups
+        # Create index on university_name for O(log n) lookup
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_nirf_university_name 
             ON nirf_rankings(university_name)
-        ''')
-        
-        # Course data table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS course_data (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                course_title TEXT NOT NULL,
-                university_name TEXT NOT NULL,
-                fee REAL,
-                duration_months INTEGER,
-                mode TEXT,
-                skills TEXT,
-                url TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Create index on course_title and university_name
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_course_university 
-            ON course_data(course_title, university_name)
         ''')
         
         conn.commit()
         print("[✓] Database schema initialized successfully")
     
     @classmethod
-    def insert_qs_ranking(cls, university_name: str, rank_position: Optional[int] = None):
-        """Insert or update QS ranking"""
+    def insert_qs_ranking(cls, university_name: str):
+        """Insert university into QS rankings list"""
         conn = cls.get_connection()
         cursor = conn.cursor()
         
         try:
             cursor.execute('''
-                INSERT OR REPLACE INTO qs_rankings (university_name, rank_position)
-                VALUES (?, ?)
-            ''', (university_name, rank_position))
+                INSERT OR IGNORE INTO qs_rankings (university_name)
+                VALUES (?)
+            ''', (university_name,))
             conn.commit()
         except Exception as e:
             print(f"[!] Error inserting QS ranking: {e}")
     
     @classmethod
-    def insert_nirf_ranking(cls, university_name: str, rank_position: Optional[int] = None, rank_category: Optional[str] = None):
-        """Insert or update NIRF ranking"""
+    def insert_nirf_ranking(cls, university_name: str):
+        """Insert university into NIRF rankings list"""
         conn = cls.get_connection()
         cursor = conn.cursor()
         
         try:
             cursor.execute('''
-                INSERT OR REPLACE INTO nirf_rankings (university_name, rank_position, rank_category)
-                VALUES (?, ?, ?)
-            ''', (university_name, rank_position, rank_category))
+                INSERT OR IGNORE INTO nirf_rankings (university_name)
+                VALUES (?)
+            ''', (university_name,))
             conn.commit()
         except Exception as e:
             print(f"[!] Error inserting NIRF ranking: {e}")
     
     @classmethod
-    def lookup_qs_ranking(cls, university_name: str) -> Optional[Tuple]:
-        """Fast lookup for QS ranking using indexed query - O(log n)"""
+    def is_qs_ranked(cls, university_name: str) -> bool:
+        """Check if university exists in QS rankings - O(log n) indexed lookup"""
         conn = cls.get_connection()
         cursor = conn.cursor()
         
         try:
-            # Exact match first (fastest)
+            # Exact match using index (fastest)
             cursor.execute('''
-                SELECT rank_position FROM qs_rankings 
+                SELECT 1 FROM qs_rankings 
                 WHERE LOWER(university_name) = LOWER(?)
                 LIMIT 1
             ''', (university_name,))
             
-            row = cursor.fetchone()
-            if row:
-                return row[0]
+            if cursor.fetchone():
+                return True
             
-            # Partial match if exact match fails (still indexed)
+            # Partial match if exact match fails (still uses index for LIKE)
             cursor.execute('''
-                SELECT rank_position FROM qs_rankings 
+                SELECT 1 FROM qs_rankings 
                 WHERE LOWER(university_name) LIKE LOWER(?)
                 LIMIT 1
             ''', (f'%{university_name}%',))
             
-            row = cursor.fetchone()
-            return row[0] if row else None
+            return cursor.fetchone() is not None
             
         except Exception as e:
             print(f"[!] Error looking up QS ranking: {e}")
-            return None
+            return False
     
     @classmethod
-    def lookup_nirf_ranking(cls, university_name: str) -> Optional[Tuple]:
-        """Fast lookup for NIRF ranking using indexed query - O(log n)"""
+    def is_nirf_ranked(cls, university_name: str) -> bool:
+        """Check if university exists in NIRF rankings - O(log n) indexed lookup"""
         conn = cls.get_connection()
         cursor = conn.cursor()
         
         try:
-            # Exact match first (fastest)
+            # Exact match using index (fastest)
             cursor.execute('''
-                SELECT rank_position, rank_category FROM nirf_rankings 
+                SELECT 1 FROM nirf_rankings 
                 WHERE LOWER(university_name) = LOWER(?)
                 LIMIT 1
             ''', (university_name,))
             
-            row = cursor.fetchone()
-            if row:
-                return dict(row) if row else None
+            if cursor.fetchone():
+                return True
             
-            # Partial match if exact match fails (still indexed)
+            # Partial match if exact match fails (still uses index for LIKE)
             cursor.execute('''
-                SELECT rank_position, rank_category FROM nirf_rankings 
+                SELECT 1 FROM nirf_rankings 
                 WHERE LOWER(university_name) LIKE LOWER(?)
                 LIMIT 1
             ''', (f'%{university_name}%',))
             
-            row = cursor.fetchone()
-            return dict(row) if row else None
+            return cursor.fetchone() is not None
             
         except Exception as e:
             print(f"[!] Error looking up NIRF ranking: {e}")
-            return None
-    
-    @classmethod
-    def is_qs_ranked(cls, university_name: str) -> bool:
-        """Check if university is in QS rankings"""
-        result = cls.lookup_qs_ranking(university_name)
-        return result is not None
-    
-    @classmethod
-    def is_nirf_ranked(cls, university_name: str) -> bool:
-        """Check if university is in NIRF rankings"""
-        result = cls.lookup_nirf_ranking(university_name)
-        return result is not None
+            return False
     
     @classmethod
     def get_table_count(cls, table_name: str) -> int:

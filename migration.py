@@ -1,6 +1,7 @@
 """
-Migration script to convert CSV and Excel files to SQLite database
-Run this once to initialize the database from existing data files
+Migration script to convert CSV files to SQLite database (simple membership lists)
+Handles UTF-16 and UTF-8 encoded CSV files
+Run this once to initialize the database from existing CSV files
 """
 
 import os
@@ -8,7 +9,7 @@ import sys
 from db_manager import DatabaseManager
 
 def migrate_qs_rankings():
-    """Load QS rankings from CSV to SQLite"""
+    """Load QS rankings from CSV to SQLite (membership list only)"""
     csv_file = "qs_ranked.csv"
     
     if not os.path.exists(csv_file):
@@ -19,7 +20,16 @@ def migrate_qs_rankings():
     count = 0
     
     try:
-        with open(csv_file, 'r', encoding='utf-8', errors='ignore') as f:
+        # Detect encoding: UTF-16 (Excel default) or UTF-8
+        encoding = 'utf-8'
+        with open(csv_file, 'rb') as f:
+            raw = f.read(2)
+            if raw == b'\xff\xfe' or raw == b'\xfe\xff':
+                encoding = 'utf-16'
+        
+        print(f"  -> Detected encoding: {encoding}")
+        
+        with open(csv_file, 'r', encoding=encoding, errors='ignore') as f:
             for i, line in enumerate(f):
                 if i == 0:  # Skip header
                     continue
@@ -28,18 +38,15 @@ def migrate_qs_rankings():
                 if not line:
                     continue
                 
-                # Parse line: "Rank,University Name" or just "University Name"
+                # Extract university name (ignore rank position if present)
                 parts = line.split(',', 1)
                 university_name = parts[-1].strip()
-                rank_position = None
                 
-                if len(parts) > 1 and parts[0].isdigit():
-                    rank_position = int(parts[0])
+                if university_name:
+                    DatabaseManager.insert_qs_ranking(university_name)
+                    count += 1
                 
-                DatabaseManager.insert_qs_ranking(university_name, rank_position)
-                count += 1
-                
-                if count % 100 == 0:
+                if count % 500 == 0:
                     print(f"  ✓ Inserted {count} QS rankings...")
         
         print(f"[✓] Successfully migrated {count} QS rankings to SQLite")
@@ -49,7 +56,7 @@ def migrate_qs_rankings():
 
 
 def migrate_nirf_rankings():
-    """Load NIRF rankings from CSV to SQLite"""
+    """Load NIRF rankings from CSV to SQLite (membership list only)"""
     csv_file = "nirf_ranked.csv"
     
     if not os.path.exists(csv_file):
@@ -60,7 +67,16 @@ def migrate_nirf_rankings():
     count = 0
     
     try:
-        with open(csv_file, 'r', encoding='utf-8', errors='ignore') as f:
+        # Detect encoding: UTF-16 (Excel default) or UTF-8
+        encoding = 'utf-8'
+        with open(csv_file, 'rb') as f:
+            raw = f.read(2)
+            if raw == b'\xff\xfe' or raw == b'\xfe\xff':
+                encoding = 'utf-16'
+        
+        print(f"  -> Detected encoding: {encoding}")
+        
+        with open(csv_file, 'r', encoding=encoding, errors='ignore') as f:
             for i, line in enumerate(f):
                 if i == 0:  # Skip header
                     continue
@@ -69,28 +85,15 @@ def migrate_nirf_rankings():
                 if not line:
                     continue
                 
-                # Parse line: "Rank,University Name,Category" or variants
+                # Extract university name (ignore rank position and category)
                 parts = [p.strip() for p in line.split(',')]
-                
                 university_name = parts[0] if len(parts) > 0 else ""
-                rank_position = None
-                rank_category = None
-                
-                if len(parts) > 1:
-                    # Try to parse second column as rank
-                    if parts[1].isdigit():
-                        rank_position = int(parts[1])
-                    else:
-                        university_name = f"{parts[0]}, {parts[1]}"
-                
-                if len(parts) > 2:
-                    rank_category = parts[2]
                 
                 if university_name:
-                    DatabaseManager.insert_nirf_ranking(university_name, rank_position, rank_category)
+                    DatabaseManager.insert_nirf_ranking(university_name)
                     count += 1
                 
-                if count % 100 == 0:
+                if count % 500 == 0:
                     print(f"  ✓ Inserted {count} NIRF rankings...")
         
         print(f"[✓] Successfully migrated {count} NIRF rankings to SQLite")
@@ -99,78 +102,11 @@ def migrate_nirf_rankings():
         print(f"[!] Error migrating NIRF rankings: {e}")
 
 
-def migrate_combined_work_excel():
-    """Load CombinedWork.xlsx into SQLite"""
-    excel_file = "CombinedWork.xlsx"
-    
-    if not os.path.exists(excel_file):
-        print(f"[!] {excel_file} not found, skipping...")
-        return
-    
-    print(f"[→] Migrating course data from {excel_file}...")
-    
-    try:
-        import openpyxl
-        from openpyxl import load_workbook
-    except ImportError:
-        print("[!] openpyxl not installed. Install with: pip install openpyxl")
-        return
-    
-    try:
-        workbook = load_workbook(excel_file)
-        sheet = workbook.active
-        
-        count = 0
-        for row_idx, row in enumerate(sheet.iter_rows(values_only=True), 1):
-            if row_idx == 1:  # Skip header
-                continue
-            
-            if not any(row):  # Skip empty rows
-                continue
-            
-            try:
-                # Adjust column indices based on your Excel structure
-                course_title = row[0] if len(row) > 0 else None
-                university_name = row[1] if len(row) > 1 else None
-                fee = row[2] if len(row) > 2 else None
-                duration = row[3] if len(row) > 3 else None
-                mode = row[4] if len(row) > 4 else None
-                skills = row[5] if len(row) > 5 else None
-                url = row[6] if len(row) > 6 else None
-                
-                # Convert fee to float if possible
-                if fee and isinstance(fee, str):
-                    fee = float(''.join(c for c in fee if c.isdigit() or c == '.'))
-                
-                # Convert duration to int if possible
-                if duration and isinstance(duration, str):
-                    duration = int(''.join(c for c in duration if c.isdigit()))
-                
-                conn = DatabaseManager.get_connection()
-                cursor = conn.cursor()
-                cursor.execute('''
-                    INSERT INTO course_data (course_title, university_name, fee, duration_months, mode, skills, url)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (course_title, university_name, fee, duration, mode, skills, url))
-                conn.commit()
-                
-                count += 1
-                if count % 50 == 0:
-                    print(f"  ✓ Inserted {count} course records...")
-            
-            except Exception as e:
-                print(f"  [!] Error on row {row_idx}: {e}")
-        
-        print(f"[✓] Successfully migrated {count} course records to SQLite")
-    
-    except Exception as e:
-        print(f"[!] Error migrating CombinedWork.xlsx: {e}")
-
-
 def main():
     """Run all migrations"""
     print("\n" + "="*60)
     print("   Course Verifier Database Migration")
+    print("   (Simple membership lists for ranking verification)")
     print("="*60 + "\n")
     
     # Initialize database schema
@@ -183,20 +119,15 @@ def main():
     print("\n[PHASE 2] Migrating NIRF Rankings...")
     migrate_nirf_rankings()
     
-    print("\n[PHASE 3] Migrating Course Data...")
-    migrate_combined_work_excel()
-    
     # Print summary
     print("\n" + "="*60)
     print("   Migration Summary")
     print("="*60)
     qs_count = DatabaseManager.get_table_count('qs_rankings')
     nirf_count = DatabaseManager.get_table_count('nirf_rankings')
-    course_count = DatabaseManager.get_table_count('course_data')
     
-    print(f"QS Rankings:      {qs_count:,} records")
-    print(f"NIRF Rankings:    {nirf_count:,} records")
-    print(f"Course Data:      {course_count:,} records")
+    print(f"QS Rankings:      {qs_count:,} universities")
+    print(f"NIRF Rankings:    {nirf_count:,} universities")
     print("="*60 + "\n")
     
     print("[✓] Migration complete! Database is ready for use.")

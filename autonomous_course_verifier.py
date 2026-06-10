@@ -2309,6 +2309,18 @@ class AutonomousCourseVerifier:
      self._qs_cache[uni] = result
      return result
 
+    def _offline_nirf_lookup(self, uni):
+     if not uni or uni == "Unknown": 
+        return None
+     if not hasattr(self, '_nirf_cache'):
+        self._nirf_cache = {}
+     if uni in self._nirf_cache:
+        return self._nirf_cache[uni]
+     is_ranked = DatabaseManager.is_nirf_ranked(uni)
+     result = "Ranked" if is_ranked else "Not Ranked"
+     self._nirf_cache[uni] = result
+     return result
+
 
     def extract_visuals_for_range(self, start_idx=0, end_idx=None):
         print(f"\n[*] Step 1.5/4: Extracting visual badges (OCR) for selected courses ({start_idx+1} to {end_idx if end_idx else len(self.courses)})...")
