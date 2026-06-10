@@ -10,6 +10,7 @@ import colorsys
 from difflib import SequenceMatcher
 from urllib.parse import quote_plus, urljoin, urlparse
 from datetime import datetime
+from db_manager import DatabaseManager
 
 try:
     import requests
@@ -2297,73 +2298,16 @@ class AutonomousCourseVerifier:
         return pred == 1 and (ratio >= threshold or overlap >= threshold)
 
     def _offline_qs_lookup(self, uni):
-        if not uni or uni == "Unknown": return None
-        if not hasattr(self, '_qs_fast_cache'):
-            self._qs_fast_cache = {}
-            import pandas as pd
-            import os
-            try:
-                if os.path.exists('qs_ranked.csv'):
-                    names = []
-                    with open('qs_ranked.csv', 'r', encoding='utf-8', errors='ignore') as f:
-                        for i, line in enumerate(f):
-                            if i == 0 and 'University' in line: continue
-                            if line.strip(): names.append(line.strip())
-                    self._qs_csv_names = "\n".join(names)
-                else:
-                    self._qs_csv_names = ""
-            except Exception as e:
-                self._qs_csv_names = ""
-                print(f"      -> Failed to load qs_ranked.csv: {e}")
-
-        if uni in self._qs_fast_cache:
-            return self._qs_fast_cache[uni]
-
-        if not self._qs_csv_names:
-            return None
-
-        for line in self._qs_csv_names.split('\n'):
-            if not line.strip(): continue
-            if fuzzy_match(uni, line.strip(), 0.70)[0]:
-                self._qs_fast_cache[uni] = "Ranked"
-                return "Ranked"
-        
-        self._qs_fast_cache[uni] = "Not Ranked"
-        return "Not Ranked"
-
-    def _offline_nirf_lookup(self, uni):
-        if not uni or uni == "Unknown": return None
-        if not hasattr(self, '_nirf_fast_cache'):
-            self._nirf_fast_cache = {}
-            import pandas as pd
-            import os
-            try:
-                if os.path.exists('nirf_ranked.csv'):
-                    names = []
-                    with open('nirf_ranked.csv', 'r', encoding='utf-8', errors='ignore') as f:
-                        for i, line in enumerate(f):
-                            if i == 0 and 'University' in line: continue
-                            if line.strip(): names.append(line.strip())
-                    self._nirf_csv_names = "\n".join(names)
-                else:
-                    self._nirf_csv_names = ""
-            except Exception as e:
-                self._nirf_csv_names = ""
-
-        if uni in self._nirf_fast_cache:
-            return self._nirf_fast_cache[uni]
-
-        if not self._nirf_csv_names:
-            return None
-
-        for line in self._nirf_csv_names.split('\n'):
-            if not line.strip(): continue
-            if fuzzy_match(uni, line.strip(), 0.70)[0]:
-                self._nirf_fast_cache[uni] = "Ranked"
-                return "Ranked"
-        
-        self._nirf_fast_cache[uni] = "Not Ranked"
-        return "Not Ranked"
+     if not uni or uni == "Unknown": 
+        return None
+     if not hasattr(self, '_qs_cache'):
+        self._qs_cache = {}
+     if uni in self._qs_cache:
+        return self._qs_cache[uni]
+     is_ranked = DatabaseManager.is_qs_ranked(uni)
+     result = "Ranked" if is_ranked else "Not Ranked"
+     self._qs_cache[uni] = result
+     return result
 
 
     def extract_visuals_for_range(self, start_idx=0, end_idx=None):

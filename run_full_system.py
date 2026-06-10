@@ -1,6 +1,7 @@
 import subprocess
 import sys
 import threading
+from db_manager import DatabaseManager
 
 def run_legacy_verifier():
     print("[Legacy System] Starting Autonomous Course Verifier...")
@@ -14,6 +15,11 @@ def run_fee_engine():
 
 if __name__ == "__main__":
     print("=== Enterprise AI Verification System ===")
+    
+    # Initialize database on startup
+    print("[→] Initializing database...")
+    DatabaseManager.initialize_db()
+    
     print("Launching Main Verifier and Fee Engine in parallel...")
     
     t1 = threading.Thread(target=run_legacy_verifier)
