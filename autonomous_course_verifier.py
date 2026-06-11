@@ -6849,6 +6849,8 @@ if __name__ == "__main__":
             print(f"[*] Manually setting start index to {start_idx + 1}")
 
     end_idx = len(agent.courses)
+    min_page = min((c.get('page_num', 1) for c in agent.courses), default=1)
+    max_page = max((c.get('page_num', 1) for c in agent.courses), default=1)
     manual_end = input(f"\n[?] Up to which page number ({min_page}-{max_page}) do you want to run web verification? (Press Enter for all remaining): ").strip()
     if manual_end.isdigit():
         end_page = int(manual_end)
