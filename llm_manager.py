@@ -12,6 +12,7 @@ class LLMManager:
     def __init__(self):
         self.openrouter_keys = [os.environ.get(f"OPENROUTER_KEY_{i}") for i in range(1, 7) if os.environ.get(f"OPENROUTER_KEY_{i}")]
         self.gemini_keys = [os.environ.get(f"GEMINI_KEY_{i}") for i in range(1, 7) if os.environ.get(f"GEMINI_KEY_{i}")]
+        self.nvidia_keys = [os.environ.get(f"NVIDIA_KEY_{i}") for i in range(1, 7) if os.environ.get(f"NVIDIA_KEY_{i}")]
         
         # Track last call time per provider to enforce rate limits
         # Track last call time per key to enforce rate limits individually
@@ -38,8 +39,10 @@ class LLMManager:
         if worker_id is not None:
             # DEDICATED KEY LOGIC for Multithreading
             gemini_idx = worker_id % max(1, len(self.gemini_keys))
+            nvidia_idx = worker_id % max(1, len(self.nvidia_keys)) if self.nvidia_keys else 0
             openrouter_idx = worker_id % max(1, len(self.openrouter_keys))
             
+            # Chain: Gemini → NVIDIA → OpenRouter
             if self.gemini_keys and provider in ["auto", "gemini"]:
                 g_key = self.gemini_keys[gemini_idx]
                 key_id = f"gemini_{gemini_idx}"
@@ -47,7 +50,16 @@ class LLMManager:
                 self._rate_limit(key_id)
                 res = self._call_gemini(g_key, prompt, system, format, temperature)
                 if res: return res
-                print(f"      -> [LLM Manager] Worker {worker_id+1}'s Gemini Key {gemini_idx+1} failed. Failing over to OpenRouter...")
+                print(f"      -> [LLM Manager] Worker {worker_id+1}'s Gemini Key {gemini_idx+1} failed. Failing over to NVIDIA...")
+            
+            if self.nvidia_keys and provider in ["auto", "nvidia"]:
+                n_key = self.nvidia_keys[nvidia_idx]
+                key_id = f"nvidia_{nvidia_idx}"
+                print(f"      -> [LLM Manager] Worker {worker_id+1} using dedicated NVIDIA Key {nvidia_idx+1}...")
+                self._rate_limit(key_id, min_interval=1.0)
+                res = self._call_nvidia(n_key, prompt, system, format, temperature)
+                if res: return res
+                print(f"      -> [LLM Manager] Worker {worker_id+1}'s NVIDIA Key {nvidia_idx+1} failed. Failing over to OpenRouter...")
                 
             if self.openrouter_keys and provider in ["auto", "openrouter"]:
                 o_key = self.openrouter_keys[openrouter_idx]
@@ -77,8 +89,16 @@ class LLMManager:
             result = self._call_gemini(key, prompt, system, format, temperature)
             if result: return result
             print(f"      -> [LLM Manager] Gemini Key {idx+1} failed. Failing over...")
+        
+        # Provider 2: NVIDIA
+        for idx, key in enumerate(self.nvidia_keys):
+            print(f"      -> [LLM Manager] Trying NVIDIA Key {idx+1}/{len(self.nvidia_keys)}...")
+            self._rate_limit(f"nvidia_{idx}", min_interval=1.0)
+            result = self._call_nvidia(key, prompt, system, format, temperature)
+            if result: return result
+            print(f"      -> [LLM Manager] NVIDIA Key {idx+1} failed. Failing over...")
             
-        # Provider 2: OPENROUTER
+        # Provider 3: OPENROUTER
         for idx, key in enumerate(self.openrouter_keys):
             print(f"      -> [LLM Manager] Trying OpenRouter Key {idx+1}/{len(self.openrouter_keys)}...")
             self._rate_limit(f"openrouter_{idx}", min_interval=1.0)
@@ -86,7 +106,7 @@ class LLMManager:
             if result: return result
             print(f"      -> [LLM Manager] OpenRouter Key {idx+1} failed. Failing over...")
             
-        print("      -> [LLM Manager] CRITICAL ERROR: All API keys for Gemini and OpenRouter failed!")
+        print("      -> [LLM Manager] CRITICAL ERROR: All API keys for Gemini, NVIDIA, and OpenRouter failed!")
         return None
 
     def generate_with_image(self, prompt: str, base64_image: str, system: Optional[str] = None, worker_id: int = None) -> Optional[str]:
@@ -125,9 +145,29 @@ class LLMManager:
             return None
         except Exception: return None
 
+    def _call_nvidia(self, api_key: str, prompt: str, system: Optional[str], format: str, temperature: float) -> Optional[str]:
+        """Call NVIDIA NIM API with Gemma 4 31B."""
+        url = "https://integrate.api.nvidia.com/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        messages = []
+        if system: messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        
+        payload = {"model": "google/gemma-4-31b-it", "messages": messages, "temperature": temperature, "max_tokens": 4096}
+        if format == "json": payload["response_format"] = {"type": "json_object"}
+            
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=120)
+            if resp.status_code == 200: return resp.json()["choices"][0]["message"]["content"]
+            print(f"      -> [LLM Manager] NVIDIA API Error {resp.status_code}: {resp.text[:200]}")
+            return None
+        except Exception as e:
+            print(f"      -> [LLM Manager] NVIDIA API Exception: {e}")
+            return None
+
     def _call_gemini(self, api_key: str, prompt: str, system: Optional[str], format: str, temperature: float) -> Optional[str]:
-        # User requested Gemma 4 26B for summarization
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemma-4-26b-a4b-it:generateContent?key={api_key}"
+        # Gemma 4 31B for all tasks
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemma-4-31b-it:generateContent?key={api_key}"
         headers = {"Content-Type": "application/json"}
         
         parts = []

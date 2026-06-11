@@ -289,6 +289,14 @@ def generate_pdf_report():
         for c in correct_courses:
             render_course(c, str(counter))
             counter += 1
+    try:
+        from autonomous_course_verifier import AutonomousCourseVerifier
+        # We initialize it just to call export_to_excel
+        verifier = AutonomousCourseVerifier("link_compile.pdf")
+        verifier.courses = courses
+        verifier.export_to_excel('AUTONOMOUS_VERIFIED.xlsx')
+    except Exception as e:
+        print(f"[*] Could not export to Excel: {e}")
 
     pdf.output(output_pdf)
     print(f"\n[*] DONE! Re-rendered Report: {output_pdf}")
