@@ -6780,7 +6780,11 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             # No extra PDF page here: the user requested exactly one page per course.
 
         # EXPORT TO EXCEL
-        self.export_to_excel('AUTONOMOUS_VERIFIED.xlsx')
+        try:
+            from excel_exporter import export_courses_to_excel
+            export_courses_to_excel(self.courses, 'AUTONOMOUS_VERIFIED.xlsx')
+        except Exception as e:
+            print(f"[*] Could not export to Excel: {e}")
 
         pdf.output(self.output_pdf)
         print(f"\n[*] DONE! Report: {self.output_pdf}")

@@ -2,6 +2,7 @@ import os
 import json
 import requests
 import time
+import threading
 from typing import Optional
 from dotenv import load_dotenv
 
@@ -17,19 +18,21 @@ class LLMManager:
         # Track last call time per provider to enforce rate limits
         # Track last call time per key to enforce rate limits individually
         self.last_call = {}
+        self.lock = threading.Lock()
 
     def _rate_limit(self, key_identifier: str, min_interval: float = 4.29):
         """Enforces a minimum interval (in seconds) between API calls for a given key."""
-        now = time.time()
-        if key_identifier not in self.last_call:
-            self.last_call[key_identifier] = 0.0
-            
-        elapsed = now - self.last_call[key_identifier]
-        if elapsed < min_interval:
-            wait_time = min_interval - elapsed
-            print(f"      -> [Rate Limit] Sleeping for {wait_time:.1f}s for key {key_identifier} (14 req/min)...")
-            time.sleep(wait_time)
-        self.last_call[key_identifier] = time.time()
+        with self.lock:
+            now = time.time()
+            if key_identifier not in self.last_call:
+                self.last_call[key_identifier] = 0.0
+                
+            elapsed = now - self.last_call[key_identifier]
+            if elapsed < min_interval:
+                wait_time = min_interval - elapsed
+                print(f"      -> [Rate Limit] Sleeping for {wait_time:.1f}s for key {key_identifier} (14 req/min)...")
+                time.sleep(wait_time)
+            self.last_call[key_identifier] = time.time()
 
     def generate(self, prompt: str, system: Optional[str] = None, format: str = "text", temperature: float = 0.0, provider: str = "auto", worker_id: int = None) -> Optional[str]:
         if not self.gemini_keys and not self.openrouter_keys:
