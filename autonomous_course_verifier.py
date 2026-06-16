@@ -2347,6 +2347,14 @@ class AutonomousCourseVerifier:
         name = name.replace("Mgmt.", "Management").replace("Mgmt", "Management")
         name = name.replace("Inst.", "Institute").replace("Inst", "Institute")
         name = name.replace("Uni.", "University").replace("Uni ", "University ")
+        
+        # Specific University Expansions
+        name_lower = name.lower()
+        if "gitam" in name_lower:
+            name = name + " university gandhi institute of technology and management"
+        if "graphic era" in name_lower:
+            name = name + " deemed to be university dehradun"
+            
         # Also clean up common commas and extra spaces
         return re.sub(' +', ' ', name).strip()
 
@@ -7143,10 +7151,12 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 existing_row = row_data.iloc[0] if isinstance(row_data, pd.DataFrame) else row_data
             
             def get_web_val(key, new_val):
-                if existing_row is not None and key in existing_row and pd.notna(existing_row[key]):
-                    # Preserve if the new_val is empty or if we didn't do web scraping properly
-                    if not new_val or new_val == '' or new_val == 'Not Found / Mentioned on Website':
-                        return existing_row[key]
+                if existing_row is not None and key in existing_row:
+                    val = existing_row[key]
+                    if isinstance(val, pd.Series): val = val.iloc[0]
+                    if pd.notna(val):
+                        if not new_val or new_val == '' or new_val == 'Not Found / Mentioned on Website':
+                            return val
                 return new_val
 
             row = {
