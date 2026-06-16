@@ -46,7 +46,7 @@ class LLMManager:
         
         # 0. OLLAMA PRIMARY
         if provider in ["auto", "ollama"]:
-            print(f"      -> [LLM Manager] Trying Ollama (localhost:11434)...")
+            print(f"      -> [LLM Manager] Trying Ollama ({self.ollama_api_url} | {self.ollama_model})...")
             res = self._call_ollama(prompt, system, format, 0.0)
             if res: return res
             print("      -> [LLM Manager] Ollama failed or unavailable. Failing over...")
@@ -443,5 +443,17 @@ _llm_manager = None
 def get_llm_manager():
     global _llm_manager
     if _llm_manager is None:
+        _llm_manager = LLMManager()
+    return _llm_manager
+")
+        return None
+# Global Singleton for easy import
+_llm_manager = None
+def get_llm_manager():
+    global _llm_manager
+    if _llm_manager is None:
+        _llm_manager = LLMManager()
+    return _llm_manager
+llm_manager is None:
         _llm_manager = LLMManager()
     return _llm_manager
