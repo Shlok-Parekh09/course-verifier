@@ -11,6 +11,7 @@ import threading
 from difflib import SequenceMatcher
 from urllib.parse import quote_plus, urljoin, urlparse
 from datetime import datetime
+from db_manager import DatabaseManager
 
 
 try:
@@ -7502,6 +7503,8 @@ if __name__ == "__main__":
         print(f"[*] Set start index to {start_idx} (from Page {start_page} / checkpoint)")
 
     end_idx = len(agent.courses)
+    min_page = min((c.get('page_num', 1) for c in agent.courses), default=1)
+    max_page = max((c.get('page_num', 1) for c in agent.courses), default=1)
     manual_end = input(f"\n[?] Up to which page number ({min_page}-{max_page}) do you want to run web verification? (Press Enter for all remaining): ").strip()
     if manual_end.isdigit():
         end_page = int(manual_end)
@@ -7571,6 +7574,12 @@ if __name__ == "__main__":
             print(f"[*] Detected page range in filename '{pdf_name}'. Filtering PDF report from page {sp} to {ep} (Courses {report_start_idx+1} to {report_end_idx}).")
             
     agent.generate_pdf_report(start_idx=report_start_idx, end_idx=report_end_idx, pdf_name=pdf_name)
+    
+    # --- SAVE PERMANENT DASHBOARD RESULTS ---
+    import shutil
+    if os.path.exists("autonomous_verified_data.json"):
+        shutil.copy("autonomous_verified_data.json", "master_dashboard_results.json")
+        print("\n[*] Saved permanent dashboard results to master_dashboard_results.json")
     
     # Prevent undetected_chromedriver from spamming WinError 6 during Python teardown
     import os

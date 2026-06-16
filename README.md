@@ -13,34 +13,31 @@ The **Autonomous Course Verifier** is a robust, local-first Python application d
 - **Offline Data:** Leverages local ranking data (`rankings.db`) to verify university standings without external API calls.
 - **Semantic Normalization:** Employs `difflib` for semantic name matching to ensure accuracy across different naming conventions.
 
-### 3. Autonomous Web Verification
-- **Anti-Bot Navigation:** Uses `undetected_chromedriver` to bypass bot protections (like Cloudflare).
-- **Persistent Sessions:** Saves cookies and sessions in local Chrome profiles to maintain logins for platforms like Coursera and NDU.
-- **Smart Scraped Caching:** For specific platforms like NDU, it scrapes multiple course cards in one pass to minimize redundant page loads.
+3. **Autonomous Web Verification & Smart Browsing**
+   - Uses `undetected_chromedriver` (uc) to bypass standard bot protections (Cloudflare).
+   - **Persistent Chrome Profiles:** Automatically saves your cookies and sessions inside the `chrome_profile` directory, ensuring you stay logged in to platforms like Coursera and NDU without triggering captchas.
+   - **NDU Batch Caching:** For NDU (National Institute of Electronics and Information Technology) courses, it efficiently navigates to "Browse by Category", scrapes all pages of course cards into memory, and verifies multiple courses rapidly without redundant page loads.
+   - Executes precise Google Search queries using `site:` operators if internal site search fails.
 
-### 4. Local LLM & NLP Engine
-- **Hybrid Verification:** Analyzes scraped text against PDF data using local semantic verification.
-- **Resilient Routing:** Attempts OpenRouter or Gemini first, with an automatic fallback to **Local Ollama** (e.g., `llama3.2`) or a custom **spaCy NLP engine** if offline.
+4. **Local LLM Verification Engine**
+   - Analyzes scraped web text against PDF details using **local semantic verification**.
+   - Attempts to query a fast API (OpenRouter, Gemini), and automatically falls back to **Local Ollama** (e.g., `llama3.2`) if the network is down or APIs fail.
+   - If no LLM is available, falls back to a custom `spaCy` NLP Regex Engine to perform sentence-level context parsing.
 
-### 5. Professional Reporting
-- **Visual Output:** Generates a detailed PDF report (`_AUTONOMOUS_VERIFIED.pdf`) with color-coded results (matches in green, discrepancies in red).
-- **Audit Trail:** Saves screenshots of both the original PDF quadrants and the scraped websites for manual verification.
+5. **Report Generation**
+   - Generates a beautifully formatted output PDF (`_AUTONOMOUS_VERIFIED.pdf`) detailing each course, highlighting discrepancies in red and matches in green.
+   - Preserves visual proof by saving screenshots of the original PDF quadrants and the scraped websites into the `verification_screenshots/` folder.
 
-## 🛠️ Setup & Installation
+## Setup
 
-1. **Clone the Repository:**
-   ```bash
-   git clone https://github.com/Shlok-Parekh09/course-verifier.git
-   cd course-verifier
-   ```
-
-2. **Environment Configuration:**
+1. **Environment Variables**
    - Copy `.env.example` to `.env`.
    - Add your API keys (OpenRouter/Gemini) and platform credentials (Coursera/NDU).
 
 3. **Install Dependencies:**
    ```bash
    pip install -r requirements.txt
+   playwright install chromium
    ```
 
 4. **Prepare Data:**
@@ -48,7 +45,7 @@ The **Autonomous Course Verifier** is a robust, local-first Python application d
 
 ## 💻 Usage
 
-Run the main verification engine:
+Run the main verifier script on a target PDF:
 ```bash
 python autonomous_course_verifier.py
 ```
