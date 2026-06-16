@@ -3,95 +3,286 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Anomaly Detection Platform - Course Verifier</title>
+    <title>Course Verifier Dashboard</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="/static/style.css?v=3">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/chartjs-chart-geo@4.2.8/build/index.umd.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 </head>
 <body>
-    <div class="main-content">
-        <header>
-            <div class="header-content">
-                <h1>Course Verifier Dashboard</h1>
-                <p>Live Anomaly Detection Platform</p>
-            </div>
-            <div class="user-profile">
-                <span class="user-badge">SP</span>
-            </div>
-        </header>
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <nav class="sidebar-nav">
+                <ul id="nav-tabs">
+                    <li class="active"><a href="#" data-target="tab-dashboard">Dashboard</a></li>
+                    <li><a href="#" data-target="tab-verification">Verification</a></li>
+                    <li><a href="#" data-target="tab-courses">Courses</a></li>
+                    <li><a href="#" data-target="tab-analytics">Country Wise Courses</a></li>
+                </ul>
+            </nav>
+        </aside>
 
-        <div class="top-cards">
-            <div class="card">
-                <h2 id="total-count">0</h2>
-                <p>Total Processed</p>
-            </div>
-            <div class="card success">
-                <h2 id="verified-count">0</h2>
-                <p>Perfect Matches</p>
-            </div>
-            <div class="card warning">
-                <h2 id="discrepancy-count">0</h2>
-                <p>Discrepancies</p>
-            </div>
-            <div class="card danger">
-                <h2 id="error-count">0</h2>
-                <p>Errors (Missing/404)</p>
-            </div>
-            <div class="card info">
-                <h2 id="missing-link-count">0</h2>
-                <p>Missing Links</p>
-            </div>
-        </div>
+        <main class="main-content">
+            <header>
+                <div class="header-content" id="header-text">
+                    <h1>Course Verifier Dashboard</h1>
+                    <p>Live Anomaly Detection Platform</p>
+                </div>
+                <div class="header-actions" style="display: flex; align-items: center; gap: 15px;">
+                    <input type="file" id="pdf-upload-global" multiple accept=".pdf" style="display: none;">
+                    <label for="pdf-upload-global" class="upload-btn" id="upload-label-global" style="padding: 8px 16px; font-size: 0.9rem; border-radius: 6px; margin: 0; background-color: #f46a22; color: white; cursor: pointer; transition: background-color 0.2s;">Upload PDFs</label>
+                </div>
+            </header>
 
-        <div class="dashboard-grid">
-            <div class="panel chart-panel">
-                <h3>Verification Status Distribution</h3>
-                <div class="chart-container">
-                    <canvas id="statusChart"></canvas>
+            <div id="tab-dashboard" class="tab-content active">
+                <div class="top-cards">
+                    <div class="card">
+                        <h2 id="total-count">0</h2>
+                        <p>Total Courses</p>
+                    </div>
+                    <div class="card success">
+                        <h2 id="verified-count">0</h2>
+                        <p>Perfect Matches</p>
+                    </div>
+                    <div class="card warning">
+                        <h2 id="discrepancy-count">0</h2>
+                        <p>Discrepancies</p>
+                    </div>
+                    <div class="card danger">
+                        <h2 id="error-count">0</h2>
+                        <p>Errors / Unverified</p>
+                    </div>
+                </div>
+
+                <div class="dashboard-grid-2x2">
+                    <!-- Top Left: Line Chart (Country wise line graph of courses) -->
+                    <div class="panel chart-panel">
+                        <h3 id="country-wise-heading" style="cursor: pointer; display: inline-block; border-bottom: 1px dashed #ccc; color: var(--text-main);" title="Click to view full list">Country wise Courses</h3>
+                        <div class="chart-container" id="country-chart-container">
+                            <canvas id="countryLineChart"></canvas>
+                        </div>
+                        <div id="country-list-container" style="display: none; height: 100%; max-height: 250px; overflow-y: auto; padding: 10px; font-size: 0.95rem; color: var(--text-main); background: #f9fafb; border-radius: 6px; margin-top: 10px; border: 1px solid var(--border-color);">
+                            <!-- populated by JS -->
+                        </div>
+                    </div>
+
+                    <!-- Top Right: Pie Chart (Discrepancies) -->
+                    <div class="panel chart-panel">
+                        <h3>Discrepancies / Verifications</h3>
+                        <div class="chart-container">
+                            <canvas id="statusPieChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Bottom Left: Horizontal Bar Chart (Replaces Top Products) -->
+                    <div class="panel chart-panel">
+                        <div class="panel-header">
+                            <h3>Courses Count Details</h3>
+                            <select id="bar-sort-toggle" class="modern-select">
+                                <option value="domain">Sort by Domain</option>
+                                <option value="country">Sort by Country</option>
+                            </select>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="coursesBarChart"></canvas>
+                        </div>
+                        <p class="hint">Click a bar to filter tables below</p>
+                    </div>
+
+                    <!-- Bottom Right: Geo Map -->
+                    <div class="panel chart-panel">
+                        <h3>Course Distribution Map</h3>
+                        <div class="chart-container map-container">
+                            <canvas id="countryMapChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Dynamic Course Details Table -->
+                <div id="course-details-panel" class="panel" style="display: none; margin-top: 2rem;">
+                    <div class="panel-header">
+                        <h3>Course Details <span id="active-filter-badge" class="badge"></span></h3>
+                        <button id="clear-filter" class="btn-clear">Clear Filter</button>
+                    </div>
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>University</th>
+                                    <th>Domain</th>
+                                    <th>Country</th>
+                                    <th>Cost</th>
+                                    <th>Duration</th>
+                                    <th>QS</th>
+                                    <th>NIRF</th>
+                                </tr>
+                            </thead>
+                            <tbody id="course-details-body">
+                                <!-- Populated by JS -->
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
 
-            <div class="panel exceptions-panel">
-                <h3>Discrepancies / Exceptions</h3>
-                <div class="table-container">
-                    <table id="discrepancy-table">
-                        <thead>
-                            <tr>
-                                <th>Course Name</th>
-                                <th>Entity (University)</th>
-                                <th>Status</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <!-- Discrepancy rows injected here -->
-                        </tbody>
-                    </table>
+            <div id="tab-verification" class="tab-content">
+
+                <div class="panel" style="margin-top: 2rem;">
+                    <div class="panel-header">
+                        <h3>Recent Verifications</h3>
+                        <div class="pagination-controls">
+                            <button id="recent-prev-page" class="btn-clear">Previous</button>
+                            <span id="recent-page-info">Page 1</span>
+                            <button id="recent-next-page" class="btn-clear">Next</button>
+                        </div>
+                    </div>
+                    <div class="table-container" style="max-height: 700px; overflow-y: auto;">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>University</th>
+                                    <th>Status</th>
+                                    <th>Reason</th>
+                                    <th>Page No.</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recent-verifications-body">
+                                <!-- Populated by JS -->
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
 
-            <div class="panel wide-panel">
-                <h3>Recent Verification Requests (Live)</h3>
-                <div class="table-container">
-                    <table id="recent-table">
-                        <thead>
-                            <tr>
-                                <th>Idx</th>
-                                <th>Course Name</th>
-                                <th>University</th>
-                                <th>Cost Match</th>
-                                <th>Duration Match</th>
-                                <th>Overall Status</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <!-- Recent rows injected here -->
-                        </tbody>
-                    </table>
+            <div id="tab-analytics" class="tab-content">
+                <div class="panel" style="margin-top: 2rem;">
+                    <div class="panel-header">
+                        <h3>Analytics & Breakdown</h3>
+                    </div>
+                    
+                    <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+                        <div style="flex: 1; min-width: 300px;">
+                            <h4>Course Category</h4>
+                            <table class="data-table" id="course-category-table">
+                                <thead><tr><th>Category</th><th>Count</th></tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                        <div style="flex: 1; min-width: 300px;">
+                            <h4>Variant Category</h4>
+                            <table class="data-table" id="variant-category-table">
+                                <thead><tr><th>Category</th><th>Count</th></tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                        <div style="flex: 1; min-width: 300px;">
+                            <h4>For All Category</h4>
+                            <table class="data-table" id="pricing-category-table">
+                                <thead><tr><th>Category</th><th>Count</th></tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 30px;">
+                        <h4>Domain Pivot Table</h4>
+                        <div class="table-container" style="overflow-x: auto;">
+                            <table class="data-table" id="domain-pivot-table">
+                                <thead>
+                                    <tr>
+                                        <th>Domain</th>
+                                        <th>Total</th>
+                                        <th>Indian</th>
+                                        <th>International</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 30px;">
+                        <h4>Country Pivot Table</h4>
+                        <div class="table-container" style="overflow-x: auto;">
+                            <table class="data-table" id="country-pivot-table">
+                                <thead>
+                                    <tr>
+                                        <th>Country</th>
+                                        <th>Total Courses</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
             </div>
-        </div>
+
+
+            <div id="tab-courses" class="tab-content">
+                <div class="panel">
+                    <div class="panel-header">
+                        <h3>All Master Database Courses</h3>
+                        <div class="pagination-controls">
+                            <button id="prev-page" class="btn-clear">Previous</button>
+                            <span id="page-info">Page 1</span>
+                            <button id="next-page" class="btn-clear">Next</button>
+                        </div>
+                    </div>
+                    <div class="table-container" style="max-height: 700px; overflow-y: auto;">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Name</th>
+                                    <th>University</th>
+                                    <th>Domain</th>
+                                    <th>Country</th>
+                                    <th>QS</th>
+                                    <th>NIRF</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="all-courses-body">
+                                <!-- Populated by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+        </main>
     </div>
 
-    <script src="{{ url_for('static', filename='app.js') }}"></script>
+    <div id="course-modal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+        <div class="modal-content" style="background: white; color: var(--text-main); font-family: 'Inter', sans-serif; width: 90%; max-width: 1000px; max-height: 90vh; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 6px; padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.2);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px;">
+                <h3 id="modal-course-title" style="margin: 0; color: var(--primary-color); font-size: 1.4rem;">Course Name</h3>
+                <div>
+                    <button id="delete-course-btn" style="background: #f44336; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; margin-right: 15px; font-weight: bold; font-family: 'Inter', sans-serif;">Delete Course</button>
+                    <span id="close-modal" style="cursor: pointer; font-size: 1.5rem; font-weight: bold; color: var(--text-muted);">&times;</span>
+                </div>
+            </div>
+            <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.95rem;" id="modal-table">
+                <thead>
+                    <tr style="border-bottom: 1px solid var(--border-color); color: var(--text-secondary);">
+                        <th style="padding: 12px; font-weight: normal;">Attribute</th>
+                        <th style="padding: 12px; font-weight: normal;">Original (PDF)</th>
+                        <th style="padding: 12px; font-weight: normal;">Verified (Web)</th>
+                        <th style="padding: 12px; font-weight: normal; text-align: center;">Status</th>
+                    </tr>
+                </thead>
+                <tbody id="modal-table-body">
+                    <!-- Data injected via JS -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <script src="/static/app.js?v=4"></script>
 </body>
 </html>

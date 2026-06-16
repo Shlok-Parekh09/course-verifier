@@ -23,3 +23,7 @@ verification_screenshots/
 # Virtual environment
 venv/
 .venv/
+
+# Secrets
+serviceAccountKey.json
+1.json

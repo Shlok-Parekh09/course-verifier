@@ -10,7 +10,7 @@ The **Autonomous Course Verifier** is a robust, local-first Python application d
 - **Visual Badge Detection:** Uses OpenCV mask analysis and Tesseract OCR to identify "QS", "NIRF", and "Free/Scholarship" badges.
 
 ### 2. Rank Verification Pipeline
-- **Offline Data:** Leverages local ranking data (`nirf_ranked.csv`, `qs_ranked.csv`) to verify university standings without external API calls.
+- **Offline Data:** Leverages local ranking data (`rankings.db`) to verify university standings without external API calls.
 - **Semantic Normalization:** Employs `difflib` for semantic name matching to ensure accuracy across different naming conventions.
 
 ### 3. Autonomous Web Verification
@@ -44,7 +44,7 @@ The **Autonomous Course Verifier** is a robust, local-first Python application d
    ```
 
 4. **Prepare Data:**
-   Ensure `qs_ranked.csv` and `nirf_ranked.csv` are in the root directory.
+   Ensure `rankings.db` is in the root directory.
 
 ## 💻 Usage
 
@@ -63,7 +63,7 @@ python autonomous_course_verifier.py
 - `llm_manager.py`: LLM routing and fallback management.
 - `dashboard.py`: (Optional) Web dashboard for viewing results.
 - `CombinedWork.xlsx`: Supplemental verification data.
-- `*.csv`: Offline university ranking databases.
+- `rankings.db`: Offline university ranking database.
 
 ---
 *Developed for autonomous educational data verification.*

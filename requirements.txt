@@ -12,3 +12,6 @@ numpy
 pytesseract
 selenium
 undetected-chromedriver
+Flask
+Werkzeug
+firebase-admin

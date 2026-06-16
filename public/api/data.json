@@ -1,0 +1,1360 @@
+{
+  "status": "success",
+  "stats": {
+    "total": 3727,
+    "verified": 221,
+    "discrepancies": 215,
+    "errors": 0,
+    "unverified": 3291
+  },
+  "domain_counts": {
+    "Free": 25,
+    "Free to Audit": 23,
+    "High Value Low Cost": 52,
+    "DIPLOMA": 89,
+    "BACHELORS DEGREE": 1783,
+    "MASTERS DEGREE": 1228,
+    "POST GRADUATE DIPLOMA": 107,
+    "Unknown Domain": 420
+  },
+  "country_counts": {
+    "India": 1938,
+    "Australia": 189,
+    "South Africa": 6,
+    "Italy": 16,
+    "United Kingdom": 354,
+    "United States of America": 704,
+    "Belgium": 7,
+    "Colombia": 11,
+    "Spain": 31,
+    "Canada": 64,
+    "Austria": 1,
+    "Hong Kong": 9,
+    "Switzerland": 20,
+    "France": 86,
+    "Qatar": 6,
+    "Fiji": 4,
+    "Malaysia": 16,
+    "Thailand": 13,
+    "United Arab Emirates": 24,
+    "New Zealand": 15,
+    "Germany": 29,
+    "Lithuania": 12,
+    "Russia": 6,
+    "Norway": 7,
+    "Oman": 9,
+    "Phillipines": 6,
+    "Denmark": 4,
+    "Sweden": 14,
+    "Turkey": 6,
+    "Ireland": 22,
+    "Saudi Arabia": 23,
+    "Hungary": 7,
+    "Romania": 4,
+    "Portugal": 11,
+    "China": 5,
+    "Netherlands": 16,
+    "Singapore": 10,
+    "Israel": 4,
+    "Mexico": 5,
+    "Poland": 6,
+    "Philippines": 1,
+    "Luxembourg": 2,
+    "English": 1,
+    "CHF": 1,
+    "Brazil": 2
+  },
+  "discrepancy_list": [
+    {
+      "name": "Cryptography And Network Security",
+      "university": "Indian Institute of Technology Kharagpur",
+      "reason": "Mismatch: Cost, Duration, Language, Country, University",
+      "domain": "Free"
+    },
+    {
+      "name": "Cryptography and Cybersecurity",
+      "university": "Indian Institute of Technology Madras",
+      "reason": "Mismatch: Cost, Duration, Language, Country, University",
+      "domain": "Free"
+    },
+    {
+      "name": "Cyber Security",
+      "university": "Avinashilingam Institute for Home Science & Higher Education for Women",
+      "reason": "Mismatch: Duration",
+      "domain": "Free"
+    },
+    {
+      "name": "Cybersecurity for Critical Urban Infrastructure",
+      "university": "Massachusetts Institute of Technology",
+      "reason": "Mismatch: Cost",
+      "domain": "Free"
+    },
+    {
+      "name": "Mobile Payment Security",
+      "university": "New York University",
+      "reason": "Mismatch: Cost",
+      "domain": "Free"
+    },
+    {
+      "name": "Web Security Fundamentals",
+      "university": "KU Leuven",
+      "reason": "Mismatch: Cost",
+      "domain": "Free"
+    },
+    {
+      "name": "Network Security",
+      "university": "Indian Institute of Technology Bombay",
+      "reason": "Mismatch: Duration, Language, Country",
+      "domain": "Free to Audit"
+    },
+    {
+      "name": "CS50's Introduction to Cybersecurity",
+      "university": "Harvard University",
+      "reason": "Mismatch: Cost",
+      "domain": "Free to Audit"
+    },
+    {
+      "name": "CS50 for Lawyers",
+      "university": "Harvard University",
+      "reason": "Mismatch: Cost",
+      "domain": "Free to Audit"
+    },
+    {
+      "name": "Protection of personal data in the digital age",
+      "university": "Ponti\ufb01cia Universidad Javeriana",
+      "reason": "Mismatch: Cost",
+      "domain": "Free to Audit"
+    },
+    {
+      "name": "Introduction to Cybersecurity Principles",
+      "university": "University of Wisconsin - Madison",
+      "reason": "Mismatch: Cost",
+      "domain": "Free to Audit"
+    },
+    {
+      "name": "Web Application Security",
+      "university": "National Institute of Electronics & IT",
+      "reason": "Mismatch: University",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Cloud Computing, Security & Blockchain",
+      "university": "Indian Institute of Technology Roorkee",
+      "reason": "Mismatch: Cost",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Cloud Security Fundamentals",
+      "university": "National Institute of Electronics & IT",
+      "reason": "Mismatch: Cost, Duration, University",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Cyber Security, Tools, Techniques and Counter Measures",
+      "university": "Dr. Babasaheb Ambedkar Open University",
+      "reason": "Mismatch: Cost",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Information Security",
+      "university": "IIIT Tiruchirappalli",
+      "reason": "Mismatch: Cost",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Certificate Course on Network Forensics",
+      "university": "National Forensic Sciences University",
+      "reason": "Mismatch: Cost, Duration, Mode, Language, Country, University, Skills",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Advanced Computer Networks",
+      "university": "National Institute of Technical Teachers Training and Research",
+      "reason": "Mismatch: Cost, Duration",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Cyber Laws",
+      "university": "Punjabi University",
+      "reason": "Mismatch: Cost, Duration, Skills",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Certificate course in Cyber Security",
+      "university": "Rajiv Gandhi University",
+      "reason": "Mismatch: Cost, Duration, Mode, Language",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Information Security",
+      "university": "Thapar Institute of Engineering and Tech.",
+      "reason": "Mismatch: Cost, Duration",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Digital Forensics",
+      "university": "Uttarakhand Open University",
+      "reason": "Mismatch: Cost",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Introduction to Cyber Security",
+      "university": "Uttarakhand Open University",
+      "reason": "Mismatch: Cost",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Cyber Security Certificate Course",
+      "university": "AISECT University",
+      "reason": "Mismatch: Cost",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "AI for Cybersecurity Specialization",
+      "university": "Johns Hopkins University",
+      "reason": "Mismatch: Cost, Skills",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Introduction to Ethical Hacking Specialization",
+      "university": "Johns Hopkins University",
+      "reason": "Mismatch: Cost",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Cybersecurity: Developing a Program for Your Business Specialization",
+      "university": "Kenessaw State University",
+      "reason": "Mismatch: Cost",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Cybersecurity Risk Management Frameworks Specialization",
+      "university": "Kennesaw State University",
+      "reason": "Mismatch: Cost, University",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Managing Cybersecurity Specialization",
+      "university": "Kennesaw State University",
+      "reason": "Mismatch: Cost",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Introduction to Cybersecurity & Risk Management Specialization",
+      "university": "University of California Irvine",
+      "reason": "Mismatch: Cost",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Cybersecurity for Business Specialization",
+      "university": "University of Colorado Boulder",
+      "reason": "Mismatch: Cost",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Fundamentals of Computer Network Security Specialization",
+      "university": "University of Colorado Boulder",
+      "reason": "Mismatch: Cost",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Homeland Security and Cybersecurity Specialization",
+      "university": "University of Colorado Boulder",
+      "reason": "Mismatch: Cost",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Cyber Security: Data & Identity Security Specialization",
+      "university": "Macquarie University",
+      "reason": "Mismatch: Cost",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Cyber Security Manager Certificate Specialization",
+      "university": "Macquarie University",
+      "reason": "Mismatch: Cost",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Security and Ethical Hacking Specialization",
+      "university": "University of Colorado Boulder",
+      "reason": "Mismatch: Cost, Duration",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Networking and Security in iOS Applications",
+      "university": "University of California Irvine",
+      "reason": "Mismatch: Cost",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Data, Security, and Privacy",
+      "university": "University of California Irvine",
+      "reason": "Mismatch: Cost, Duration",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Security Governance & Compliance",
+      "university": "University of California Irvine",
+      "reason": "Mismatch: Cost",
+      "domain": "High Value Low Cost"
+    },
+    {
+      "name": "Diploma In Cyber Threats And Security",
+      "university": "Acharya Nagarjuna University",
+      "reason": "Mismatch: Mode",
+      "domain": "DIPLOMA"
+    },
+    {
+      "name": "Diploma Cyber Security",
+      "university": "DY Patil University",
+      "reason": "Mismatch: Cost, Duration",
+      "domain": "DIPLOMA"
+    },
+    {
+      "name": "Diploma in Cyber Security",
+      "university": "Odisha State Open University",
+      "reason": "Mismatch: Cost, Duration, Language, Country, University",
+      "domain": "DIPLOMA"
+    },
+    {
+      "name": "Cyber forensics & information security",
+      "university": "Govt. Polytechnic College, Mandore (Rajasthan Technical University (RTU))",
+      "reason": "Mismatch: Cost, University",
+      "domain": "DIPLOMA"
+    },
+    {
+      "name": "The Diploma in Cyber Security",
+      "university": "Sunrise university",
+      "reason": "Mismatch: Cost, Duration",
+      "domain": "DIPLOMA"
+    },
+    {
+      "name": "Diploma in Cyber Security and Information Security",
+      "university": "Mata Tripura Sundari Open University",
+      "reason": "Mismatch: Mode",
+      "domain": "DIPLOMA"
+    },
+    {
+      "name": "DAS ETH in Cyber Security",
+      "university": "ETH Zurich",
+      "reason": "Mismatch: Duration, Mode",
+      "domain": "DIPLOMA"
+    },
+    {
+      "name": "Diploma in Cybercrime: Law, Information Security & Digital Forensics",
+      "university": "Universit\u00e9 de Montpellier (UM)",
+      "reason": "Mismatch: Cost, Mode",
+      "domain": "DIPLOMA"
+    },
+    {
+      "name": "BTS Cybersecurity",
+      "university": "ESIIA",
+      "reason": "Mismatch: Cost",
+      "domain": "DIPLOMA"
+    },
+    {
+      "name": "B. Tech CSE \u2013 Cyber Security",
+      "university": "IILM University",
+      "reason": "Mismatch: Cost, Duration, Mode, Language, Country, University, Skills",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.E. Computer Science & Engineering ( Cyber Security )",
+      "university": "P.B. College of Engineering Kancheepuram (Anna University)",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Computer Science and Engineering (Cyber Security)",
+      "university": "G K M College of Engineering and Technology, (Anna University)",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "C.S.E (Cyber Security)",
+      "university": "Asan Memorial College of Engineering and Technology (Anna University)",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "C.S.E (Cyber Security)",
+      "university": "New Prince Shri Bhavani College of Engineering and Technology (Autonomous) (Anna University)",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "BE CSE (Cyber Security)",
+      "university": "Adhiparasakthi College of Engineering, G.B.Nagar, Kalavai, Arcot (Anna University)",
+      "reason": "Mismatch: Duration",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.E. Computer Science And Engineering",
+      "university": "Dhaanish Ahmed Institute of Technology(Anna University)",
+      "reason": "Mismatch: Cost, Duration, Mode, Language, Country, University, Skills",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.Tech Computer Science & Engineering (Cybersecurity)",
+      "university": "Rathinam Technical Campus (Autonomous), (Anna University)",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "BE CSE (Cyber Security)",
+      "university": "Mahendra Engineering College (Autonomous), (Anna University)",
+      "reason": "Mismatch: Cost, Duration, Mode, Language, Country, University, Skills",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Computer Science and Engineering (Cyber Security)",
+      "university": "K S R College of Engineering (Autonomous) (Anna University)",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Computer Science and Engineering [Cyber Security]",
+      "university": "Vidyaa Vikas College of Engineering and Technology (Anna University)",
+      "reason": "Mismatch: Cost, Duration, Mode, Language, Country, University, Skills",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Computer Science and Engineering (Cyber Security)",
+      "university": "Coimbatore Institute of Engineering and Technology (Autonomous), (Anna University)",
+      "reason": "Mismatch: Duration",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.E. Computer Science and Engineering [Cyber Security]",
+      "university": "Sri Eshwar College of Engineering (Autonomous),(Anna University)",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "C.S.E (Cyber Security)",
+      "university": "Dhanalakshmi Srinivasan College of Engineering (CBE) (Autonomous), (Anna University)",
+      "reason": "Mismatch: Cost, University",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.E. Computer Science and Engineering [Cyber Security]",
+      "university": "Surya Engineering College, Anna University)",
+      "reason": "Mismatch: Cost, Duration, Mode, Language, Country, University, Skills",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "C.S.E (Cyber Security)",
+      "university": "Sethu Institute of Technology (Autonomous), (Anna University)",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Computer Science and Engineering (Cyber Security)",
+      "university": "NPR College of Engineering and Technology (Autonomous), (Anna Uni.)",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "C.S.E (Cyber security) Engineering",
+      "university": "P.T.R. College of Engineering and Technology (Anna University)",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "C.S.E (Cyber Security)",
+      "university": "Fatima Michael College of Engineering and Technology, (Anna University)",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Bachelor of Computer Application \u2013 Cyber Security in association with CompTIA",
+      "university": "GD Goenka University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.Tech C.S.E (Cybersecurity)",
+      "university": "Panipat Institute of Engineering & Technology (Kurukshetra University)",
+      "reason": "Mismatch: Cost, Duration, Mode, Language, Country, University, Skills",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.Tech CSE (IoT & Cyber Security including Blockchain Technology)",
+      "university": "Sikkim Manipal University (SMIT)",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.Sc Computer Science with specialisation in Cybersecurity",
+      "university": "VELS Institute of Science Technology & Advanced Studies (VISTAS)",
+      "reason": "Mismatch: Cost, Duration",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B. Tech C.S.E (Cyber-Security)",
+      "university": "Jaypee Institute of Information Technology",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.Voc in Cybersecurity",
+      "university": "Datta Meghe Institute of Higher Education and Research",
+      "reason": "Mismatch: Cost, Duration, Mode, Language, Country, University, Skills",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.Sc. LL.B. (Hons.) (Cyber Security)",
+      "university": "National Law Institute University Bhopal",
+      "reason": "Mismatch: Cost, Duration",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "BCA Honours with Cyber Security Specialization",
+      "university": "KLE Technological University",
+      "reason": "Mismatch: Cost, Duration, Mode, Language, Country, University, Skills",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.E C.S.E (Cyber Security)",
+      "university": "Akash Institute Of Engineering and Technology (Visvesvaraya Technological University)",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "BE in Computer Science and Engineering (IoT and Cybersecurity including Blockchain)",
+      "university": "Alva's Institute of Engineering & Technology,(Visvesvaraya Technological",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.E - IOT Cyber Security and Blockchain Technology",
+      "university": "Brindavan College of Engineering, (Visvesvaraya Technological University)",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "C.S.E (IoT & Cyber Security including Blockchain Technology)",
+      "university": "Dananda Sagar Academy of Technology & Management Technical Campus (Visvesvaraya Technological University)",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.E C.S.E (IOT & Cyber Security Including Blockchain Technology)",
+      "university": "K. S. Institute Of Technology (Visvesvaraya Technological University)",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.E C.S.E (IOT & Cyber Security Including Blockchain Technology)",
+      "university": "P A College of Engineering, (Visvesvaraya Technological University)",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.Tech Computer Science and Engineering (Cyber Security and Forensics)",
+      "university": "Adamas University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Bachelor of Technology- (LT) Cloud Technology & Information Security",
+      "university": "Apex University",
+      "reason": "Mismatch: Cost, Duration",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Bachelor in Cyber Security",
+      "university": "Gandhinagar University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.Sc. in Digital Forensics and Cyber Security",
+      "university": "Institute of Advanced Research",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.Tech in Computer Science Engineering (Cyber Security)",
+      "university": "Rayat Bahra University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B. Tech. Cyber Security & Forensic",
+      "university": "SAGE University Bhopal",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.C.A (Cyber Security)",
+      "university": "Bahra University",
+      "reason": "Mismatch: Duration",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B. Tech C.S.E \u2013 Cyber Security",
+      "university": "IILM University Gurugram",
+      "reason": "Mismatch: Cost, Duration, Mode, Language, Country, University, Skills",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B. Tech CSE \u2013 Cyber Security",
+      "university": "IILM University Greater Noida",
+      "reason": "Mismatch: Cost, Duration, Mode, Language, Country, University, Skills",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.Tech in Cyber Security",
+      "university": "Indus University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.C.A \u2013 Cloud Technology Information Security",
+      "university": "Jharkhand Rai University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.C.A Cyber Security",
+      "university": "K. N. University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.C.A in Cyber Security & Cyber Forensics",
+      "university": "Maganbhai Adenwala Mahagujarat Uni.",
+      "reason": "Mismatch: Duration, University",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.Tech Computer Science and Engineering (Cyber Forensics and Information Security)",
+      "university": "Gyanmanjari Innovative University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.Sc IT (Cyber Security/AI and Data Science)",
+      "university": "Gyanmanjari Innovative University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.Tech Computer Science and Engineering (Cyber Security)",
+      "university": "Gyanmanjari Innovative University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "BE CSE (Cyber Security)",
+      "university": "St. Joseph College of Engineering, Trinity Campus (Anna University)",
+      "reason": "Mismatch: Cost, Duration, Mode, Language, Country, University, Skills",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.E. Computer Science & Engineering ( Cyber Security )",
+      "university": "Tagore Engineering College, Rathinamangalam (Anna University)",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.Tech Computer Science and Engineering (Cyber Security)",
+      "university": "Vidhyadeep University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.Tech Computer Science and Engineering (Cyber Security)",
+      "university": "Sagar Institute of Research & Technology, Bhopal (Rajiv Gandhi Proudyogiki Vishwavidyalaya)",
+      "reason": "Mismatch: Cost, University",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Computer Science (Cybersecurity), B.S.",
+      "university": "Arizona State University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.S in Cybersecurity",
+      "university": "Kansas State University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.S. Cybersecurity",
+      "university": "Rochester Institute of Technology (RIT)",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Cybersecurity B.S.",
+      "university": "University of Cincinnati",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Bachelor of Science in Cybersecurity",
+      "university": "University of Toledo",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Cybersecurity B.S.",
+      "university": "University of Tulsa",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Bachelor of Science in Cybersecurity",
+      "university": "Community College Of Qatar",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Computer Science Bachelor of Science with a concentration in cybersecurity",
+      "university": "Virginia Commonwealth University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Bachelor of Computing (Cyber Security)",
+      "university": "Curtin University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Bachelor of Science (Cyber Security)",
+      "university": "Edith Cowan University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Bachelor of Information Technology (Digital Forensics)",
+      "university": "Flinders University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Bachelor of Cyber Security and Behaviour",
+      "university": "Western Sydney University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Bachelor of Networks & Security",
+      "university": "The University of the South Paci\ufb01c",
+      "reason": "Mismatch: Cost, Duration",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Bachelor Of Computer Science In Cyber Security With Honours",
+      "university": "UCSI University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.Sc (Hons) Computer Science (Cyber Security)",
+      "university": "University of Plymouth",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.Sc (Hons) Software Development with Cyber Security",
+      "university": "University of Stirling",
+      "reason": "Mismatch: Cost, Duration",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Bachelor of Science in Cybersecurity",
+      "university": "AL AIN UNIVERSITY Al Ain",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Networks and Cybersecurity Major - Bachelor of Computer and Information Sciences",
+      "university": "Auckland University of Technology (AUT)",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Cybersecurity Engineer",
+      "university": "Universite Paris Saclay",
+      "reason": "Mismatch: Cost, Duration, Mode, Language, Country, University, Skills",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Professional Bachelor's Degree in Computer Science: System and Network Administration and Security",
+      "university": "Universit\u00e9 de Strasbourg (Unistra)",
+      "reason": "Mismatch: Cost, Language",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Bachelor's Degree in Cybersecurity & Ethical Hacking",
+      "university": "EFREI Paris (Universite Paris-Pantheon-Assas)",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Computer Science (B.S.): Cybersecurity Concentration",
+      "university": "North Carolina State University",
+      "reason": "Mismatch: Cost, Duration, Mode, Language, Country, University, Skills",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.Sc Information Systems & Cyber Security",
+      "university": "Vilnius University",
+      "reason": "Mismatch: Cost, Duration, Mode, Language, Country, University, Skills",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Computer System Security",
+      "university": "Ural Federal University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Cybersecurity B.Sc (Hons)",
+      "university": "University of Gloucestershire",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Bachelors Degree in Cyber Security",
+      "university": "EC-Council University",
+      "reason": "Mismatch: Duration",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Bachelor of Science in Cyber Intelligence and Security",
+      "university": "Embry-Riddle Aeronautical University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Computer Science Cyber Security Bachelor\u2019s Degree",
+      "university": "Liberty University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Cybersecurity, Bachelor of Science",
+      "university": "Sam Houston State University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Computer Science with Cyber Security B.Sc (Hons)",
+      "university": "Birmingham Newman University",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "B.Sc (Hons) Computer Science (Cyber Security and Networks)",
+      "university": "University of Hertfordshire",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Honours Bachelor of Information Sciences (Cyber Security)",
+      "university": "Sherdian College",
+      "reason": "Mismatch: Cost, University",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Bachelor of Information Systems",
+      "university": "Holmesglen Institute",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Bachelor of Information Technology (Honours) In Cyber Security",
+      "university": "Universiti Poly-Tech Malaysia-UPTM",
+      "reason": "Mismatch: Duration",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Bachelor in Cyber Security",
+      "university": "Noro\ufb00",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Bachelor in Cyber Security",
+      "university": "Noro\ufb00 Campus Kristiansand",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Bachelor of Science in Cybersecurity",
+      "university": "De La Salle-College of Saint Benilde (DLS-CSB)",
+      "reason": "Mismatch: Cost, Duration",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Cybersecurity Engineering",
+      "university": "ISEN Ouest",
+      "reason": "Mismatch: Cost, Language",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Bachelor's degree programme Information Security (B.Sc.)",
+      "university": "Technische Hochschule W\u00fcrzburg-Schweinfurt",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Cyber Security and Digital Forensics B.Sc",
+      "university": "Middlesex University",
+      "reason": "Mismatch: Duration, Country",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Computer Science (Cyber Security), B.Sc Hons",
+      "university": "University of Greenwich",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "Cyber Security B.Sc",
+      "university": "University of Warwick",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "IT Security Studies (B.Sc.)",
+      "university": "Hochschule Albstadt-Sigmaringen",
+      "reason": "Mismatch: Cost",
+      "domain": "BACHELORS DEGREE"
+    },
+    {
+      "name": "M.S. in Cyber Security",
+      "university": "University of Alabama at Birmingham",
+      "reason": "Mismatch: Cost, Duration, Country",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Cybersecurity: Master's Degree",
+      "university": "University of Denver",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master\u2019s Degree in Cybersecurity",
+      "university": "University of Nevada",
+      "reason": "Mismatch: Cost, Duration, Country",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "MSc Cyber Security & Human Factors",
+      "university": "Bournemouth University",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Cyber Security MSc",
+      "university": "Newcastle University",
+      "reason": "Mismatch: Duration, Country",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Cyber Security MSc",
+      "university": "Nottingham Trent University",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Cyber Security, MSc",
+      "university": "Swansea University",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Information Security MSc",
+      "university": "UCL",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "MSc Cybersecurity",
+      "university": "University of Liverpool",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Cyber Security MSc",
+      "university": "CITY ST George's University of London",
+      "reason": "Mismatch: Cost, Duration",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "M.S. in Cyber Security and Privacy",
+      "university": "New Jersey Institute of Technology",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "MS Cybersecurity",
+      "university": "New York University",
+      "reason": "Mismatch: Cost, Duration",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master of Science in Cybersecurity",
+      "university": "University of Wisconsin - Madison",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "MSc CYBER SECURITY",
+      "university": "Robert Gordon University",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "MSc Cyber Security",
+      "university": "The University of Manchester",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "MSc Cyber Security (Software Security)",
+      "university": "University of Bristol",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "MSc Cyber Security",
+      "university": "University of East Anglia",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "MSc in Software and System Security",
+      "university": "University of Oxford",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "MSc Information Security",
+      "university": "Royal Holloway University of London",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Cyber Security (MSc)",
+      "university": "University of Southampton",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Professional LLM in Privacy and Cybersecurity Law",
+      "university": "York University",
+      "reason": "Mismatch: Mode",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master of Cyber Security",
+      "university": "Technical University of Denmark",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "MS in Computer Information Systems, Digital Forensics Concentration",
+      "university": "Boston University",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "MS in Computer Information Systems, Cybersecurity Concentration",
+      "university": "Boston University",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "MS in Computer Science, Security Concentration",
+      "university": "Boston University",
+      "reason": "Mismatch: Cost, Duration, Mode",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master's in Computer Science - Major: Cybersecurity",
+      "university": "Institut Polytechnique de Paris",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master CRYPTIS - Information security Computer science",
+      "university": "Universit\u00e9 de Limoges",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master of Science in Cybersecurity",
+      "university": "University of Southern California",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Computer Science (Cybersecurity), MS",
+      "university": "Arizona State University",
+      "reason": "Mismatch: Cost, Country",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Computer Science (Cybersecurity), MCS",
+      "university": "Arizona State University",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master of Cybersecurity and Digital Trust",
+      "university": "The Ohio State University",
+      "reason": "Mismatch: Cost, Country, University",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master of Cybersecurity Management",
+      "university": "Washington University in St. Louis",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "MS in Cybersecurity Engineering",
+      "university": "Washington University in St. Louis",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "M.S. in Cybersecurity Risk Management",
+      "university": "Indiana University Bloomington",
+      "reason": "Mismatch: Cost, Duration",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master of Science in Cybersecurity and Privacy",
+      "university": "University of Georgia",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master of Science in Cybersecurity in Computer Science",
+      "university": "George Washington University",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Computer Science, M.S. Security & Privacy Concentration",
+      "university": "Georgia State University",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "MS in Information Technology (Cybersecurity Management)",
+      "university": "University of Denver",
+      "reason": "Mismatch: Cost, Duration",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "MS in Information Technology (Information System Security)",
+      "university": "University of Denver",
+      "reason": "Mismatch: Cost, Duration",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Cybersecurity Management, Master of Science",
+      "university": "Tulane University",
+      "reason": "Mismatch: Cost, Duration, Mode, Language, Country, University, Skills",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "MSc in Information Security",
+      "university": "King Khalid University",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "MSc Information & IT Security",
+      "university": "Kaunas University of Technology",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Information Security: Computer Systems Information Security",
+      "university": "ITMO University",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master of Science in Cybersecurity",
+      "university": "Fair\ufb01eld University",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master of Science in Computer Science, concentration in Information and Cyber Security",
+      "university": "Purdue Polytechnic",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Cybersecurity M.S.",
+      "university": "Robert Morris University",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master of Science In Cybersecurity",
+      "university": "University of New Haven",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "M.S. in Cybersecurity",
+      "university": "Yeshiva University",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "MSc Cyber Security",
+      "university": "Buckinghamshire New University",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Advanced Cybersecurity (with optional Placement/Project year) MSc",
+      "university": "University of Chester",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master's Degree-IT Architecture and Seurity",
+      "university": "ISEP - Paris Institute of Digital Technology",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Specialized Master's\u00ae in Information System Security Management",
+      "university": "CESI Ecole D'Ing\u00e9nieurs",
+      "reason": "Mismatch: Language",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master of Science in Cybersecurity Management",
+      "university": "Anderson University",
+      "reason": "Mismatch: Cost, Duration",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master's degree in Cybersecurity",
+      "university": "Universitat Polit\u00e8cnica de Catalunya \u00b7 BarcelonaTech (UPC)",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master's Degree in Cybersecurity",
+      "university": "University of Alicante",
+      "reason": "Mismatch: Cost, Language",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "MS Cyber Security",
+      "university": "Curtin University",
+      "reason": "Mismatch: Cost, Duration",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master of Cybersecurity",
+      "university": "La Trobe University",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master of Information Technology in Cyber Security",
+      "university": "Macquarie University",
+      "reason": "Mismatch: Duration, Country",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master of Cybersecurity",
+      "university": "Queensland University of Technology",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master of Cyber Security",
+      "university": "Swinburne University of Technology",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master of Cybersecurity",
+      "university": "University of Sydney",
+      "reason": "Mismatch: Cost, Duration",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master of Computer Science (Security Science)",
+      "university": "Universiti Teknikal Malaysia Melaka",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "MASTERS DEGREE in Cyberspace Security",
+      "university": "Zhejiang University",
+      "reason": "Mismatch: Cost, Duration",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Cybersecurity (M.Sc.)",
+      "university": "Saarland University",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master\u00b4s program IT Security",
+      "university": "Technical University of Darmstadt",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master's Computer Security",
+      "university": "Vrije Universiteit Amsterdam",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master Degree in Cybersecurity",
+      "university": "Sapienza University of Rome",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master in Cybersecurity",
+      "university": "University of Pisa",
+      "reason": "Mismatch: Cost, Duration",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Digital Infrastructure and Cyber Security",
+      "university": "Norwegian University of Science And Technology",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master of Cybersecurity",
+      "university": "KU Leuven",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    },
+    {
+      "name": "Master\u00b4s Programme in Information Security",
+      "university": "Stockholm University",
+      "reason": "Mismatch: Cost",
+      "domain": "MASTERS DEGREE"
+    }
+  ],
+  "recent": []
+}

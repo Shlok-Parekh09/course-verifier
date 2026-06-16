@@ -1,0 +1,377 @@
+:root {
+    --bg-color: #f4f6f8;
+    --sidebar-bg: #222222;
+    --sidebar-text: #a0a0a0;
+    --sidebar-active: #ffffff;
+    --card-bg: #ffffff;
+    --text-main: #333333;
+    --text-muted: #6b7280;
+    
+    --color-orange: #f46a22; /* Matches the PwC accent color */
+    --color-green: #10b981;
+    --color-red: #ef4444;
+    --color-blue: #3b82f6;
+    
+    --border-color: #e5e7eb;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Inter', sans-serif;
+}
+
+body {
+    display: flex;
+    background-color: var(--bg-color);
+    color: var(--text-main);
+    height: 100vh;
+    overflow: hidden;
+}
+
+.app-container {
+    display: flex;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* Sidebar */
+.sidebar {
+    width: 250px;
+    background-color: var(--sidebar-bg);
+    color: var(--sidebar-text);
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border-color);
+}
+
+.sidebar-logo {
+    padding: 30px 20px;
+    border-bottom: 1px solid #333;
+}
+
+.sidebar-logo h2 {
+    color: #fff;
+    font-size: 1.25rem;
+    font-weight: 500;
+}
+
+/* Tabs & Upload UI */
+.tab-content {
+    display: none;
+}
+.tab-content.active {
+    display: block;
+}
+
+.upload-panel {
+    text-align: center;
+    padding: 3rem 2rem;
+}
+.upload-zone {
+    border: 2px dashed var(--border-color);
+    border-radius: 8px;
+    padding: 3rem;
+    background: var(--card-bg);
+    margin-top: 1.5rem;
+    transition: all 0.2s;
+}
+.upload-zone:hover {
+    border-color: var(--primary-color);
+    background: rgba(232, 93, 4, 0.02);
+}
+.upload-btn {
+    display: inline-block;
+    padding: 0.8rem 1.5rem;
+    background: var(--color-orange);
+    color: white;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: background 0.2s;
+}
+.upload-btn:hover {
+    background: #e85d04;
+}
+#upload-status {
+    margin-top: 1rem;
+    color: var(--text-secondary);
+}
+
+.pagination-controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.sidebar-nav {
+    padding: 20px 0;
+}
+
+.sidebar-nav ul {
+    list-style: none;
+}
+
+.sidebar-nav li a {
+    display: block;
+    padding: 15px 20px;
+    color: var(--sidebar-text);
+    text-decoration: none;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.sidebar-nav li a:hover, .sidebar-nav li.active a {
+    background-color: #333;
+    color: var(--sidebar-active);
+    border-left: 4px solid var(--color-orange);
+}
+
+/* Main Content */
+.main-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    background-color: var(--bg-color); /* Original light background */
+    color: var(--text-main);
+}
+
+header {
+    background-color: var(--card-bg);
+    padding: 20px 40px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.header-content h1 {
+    font-size: 1.5rem;
+    color: var(--text-main);
+    margin-bottom: 4px;
+}
+
+.header-content p {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+.user-badge {
+    background-color: var(--color-orange);
+    color: white;
+    width: 35px;
+    height: 35px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 0.9rem;
+}
+
+/* Top Cards */
+.top-cards {
+    display: flex;
+    gap: 20px;
+    padding: 30px;
+    background-color: #333333; /* Keep top cards area dark as requested before, or maybe revert to light? Reverting to original */
+}
+
+.card {
+    flex: 1;
+    background-color: var(--card-bg);
+    padding: 20px;
+    border-radius: 4px;
+    text-align: center;
+    border: none;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.card h2 {
+    font-size: 2.5rem;
+    font-weight: 700;
+    margin-bottom: 5px;
+    color: var(--color-orange); /* Default */
+}
+
+.card p {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.card.success h2 { color: var(--color-green); }
+.card.warning h2 { color: var(--color-orange); }
+.card.danger h2 { color: var(--color-red); }
+.card.info h2 { color: var(--color-blue); }
+
+/* Dashboard Grid Layouts */
+.dashboard-grid-2x2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto;
+    gap: 20px;
+    padding: 10px 30px;
+}
+
+.tables-row {
+    display: grid;
+    grid-template-columns: 1fr 1.5fr;
+    gap: 20px;
+    padding: 10px 30px 30px 30px;
+}
+
+.panel {
+    background-color: var(--card-bg);
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    border: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+}
+
+.panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 10px;
+    margin-bottom: 20px;
+}
+
+.panel-header h3, .panel h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-main);
+}
+.panel > h3 {
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 10px;
+    margin-bottom: 20px;
+}
+
+.hint {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-align: center;
+    margin-top: 10px;
+}
+
+.hidden-badge {
+    display: none;
+    background-color: var(--color-orange);
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    align-items: center;
+}
+
+.hidden-badge.active {
+    display: flex;
+}
+
+.hidden-badge button {
+    background: none;
+    border: none;
+    color: white;
+    margin-left: 6px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.panel h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 20px;
+    color: var(--text-main);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 10px;
+}
+
+.chart-panel {
+    display: flex;
+    flex-direction: column;
+}
+
+.chart-container {
+    flex: 1;
+    position: relative;
+    height: 350px;
+    width: 100%;
+}
+
+.map-container {
+    height: 700px;
+}
+
+.wide-panel {
+    grid-column: span 2;
+}
+
+/* Tables */
+.table-container {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+th, td {
+    padding: 12px 15px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}
+
+th {
+    font-weight: 600;
+    color: #a0a0a0;
+    position: sticky;
+    top: 0;
+    background-color: #16213e;
+}
+
+tbody tr {
+    transition: background-color 0.15s ease;
+}
+
+tbody tr:hover {
+    background-color: #e6f7ff;
+}
+
+.status-badge {
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.badge-open { color: #f46a22; }
+.badge-verified { color: #10b981; }
+.badge-error { color: #ef4444; }
+.badge-discrepancy { color: #f59e0b; }
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}

@@ -1,0 +1,106 @@
+{
+  "data": {
+    "country_pivot": {
+      "Australia": 104,
+      "Belgium": 3,
+      "Brazil": 2,
+      "Canada": 35,
+      "China": 2,
+      "Colombia": 6,
+      "Denmark": 3,
+      "Fiji": 3,
+      "Finland": 2,
+      "France": 40,
+      "Germany": 19,
+      "Hong Kong": 5,
+      "Hungary": 4,
+      "India": 769,
+      "Ireland": 10,
+      "Israel": 3,
+      "Italy": 7,
+      "Lithuania": 6,
+      "Luxembourg": 1,
+      "Malaysia": 6,
+      "Mexico": 3,
+      "Netherlands": 10,
+      "New Zealand": 9,
+      "Norway": 4,
+      "Oman": 4,
+      "Phillipines": 3,
+      "Poland": 2,
+      "Portugal": 6,
+      "Qatar": 3,
+      "Romania": 2,
+      "Russia": 5,
+      "Saudi Arabia": 7,
+      "Singapore": 4,
+      "South Africa": 5,
+      "Spain": 13,
+      "Sweden": 4,
+      "Switzerland": 10,
+      "Thailand": 7,
+      "Turkey": 2,
+      "UAE": 7,
+      "UK": 179,
+      "USA": 380,
+      "Ukraine": 3
+    },
+    "course_category": {
+      "Bachelor's Degrees": 679,
+      "Certificates": 372,
+      "Diplomas": 99,
+      "Indian Programs": 769,
+      "International Programs": 933,
+      "Master's Degrees": 552,
+      "Total Programs": 1702
+    },
+    "domain_pivot": {
+      "BACHELORS DEGREE": {
+        "Indian": 1231,
+        "International": 552,
+        "Total": 1783
+      },
+      "DIPLOMA": {
+        "Indian": 49,
+        "International": 40,
+        "Total": 89
+      },
+      "FREE COURSE": {
+        "Indian": 5,
+        "International": 20,
+        "Total": 25
+      },
+      "FREE TO AUDIT COURSES": {
+        "Indian": 6,
+        "International": 17,
+        "Total": 23
+      },
+      "MASTERS DEGREE": {
+        "Indian": 460,
+        "International": 768,
+        "Total": 1228
+      },
+      "POST GRADUATE DIPLOMA": {
+        "Indian": 80,
+        "International": 27,
+        "Total": 107
+      },
+      "Unknown Domain": {
+        "Indian": 107,
+        "International": 365,
+        "Total": 472
+      }
+    },
+    "pricing_category": {
+      "Affordable": 123,
+      "Free Courses": 1579,
+      "Total Pricing": 1702
+    },
+    "variant_category": {
+      "Indian Variants": 1938,
+      "International Variants": 1789,
+      "Total Variants": 3727
+    }
+  },
+  "status": "success"
+}
