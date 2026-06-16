@@ -1549,15 +1549,17 @@ class AutonomousCourseVerifier:
         # Check if 405 or other WAF errors appear due to injections
         page_source_lower = driver.page_source.lower()
         if "405 " in page_source_lower or ">405<" in page_source_lower or ("405" in page_source_lower and ("not allowed" in page_source_lower or "error" in page_source_lower or "nginx" in page_source_lower or "cloudflare" in page_source_lower)):
-            print("    -> [!] 405 / WAF error detected. Clearing cookies, turning off CDP network blocks, and reloading...")
-            self._injections_disabled = True
-            try:
-                driver.delete_all_cookies()
-                driver.execute_script("window.localStorage.clear(); window.sessionStorage.clear();")
-            except Exception: pass
+            if "coursera.org" not in driver.current_url:
+                print("    -> [!] 405 / WAF error detected. Clearing cookies, turning off CDP network blocks, and reloading...")
+                self._injections_disabled = True
+                try:
+                    driver.delete_all_cookies()
+                    driver.execute_script("window.localStorage.clear(); window.sessionStorage.clear();")
+                except Exception: pass
             try:
                 driver.execute_cdp_cmd('Network.setBlockedURLs', {'urls': []})
-                driver.get(url)
+                if "coursera.org" not in driver.current_url:
+                    driver.get(url)
                 time.sleep(3)
             except Exception as e:
                 print(f"      -> Failed to disable CDP injection: {e}")
@@ -2413,7 +2415,11 @@ class AutonomousCourseVerifier:
                     ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government'}
                     w1_sig = [w for w in check_u.lower().split() if w not in ignore_w]
                     w2_sig = [w for w in line_clean.split() if w not in ignore_w]
-                    if abs(len(w1_sig) - len(w2_sig)) > 0:
+                    if len(w1_sig) == 1 and len(w1_sig[0]) >= 4 and w1_sig[0] in w2_sig:
+                        pass
+                    elif len(w1_sig) >= 2 and all(w in w2_sig for w in w1_sig):
+                        pass
+                    elif abs(len(w1_sig) - len(w2_sig)) > 0:
                         continue
                         
                     self._qs_fast_cache[uni] = "Ranked"
@@ -2486,7 +2492,11 @@ class AutonomousCourseVerifier:
                     ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government'}
                     w1_sig = [w for w in check_u.lower().split() if w not in ignore_w]
                     w2_sig = [w for w in line_clean.split() if w not in ignore_w]
-                    if abs(len(w1_sig) - len(w2_sig)) > 0:
+                    if len(w1_sig) == 1 and len(w1_sig[0]) >= 4 and w1_sig[0] in w2_sig:
+                        pass
+                    elif len(w1_sig) >= 2 and all(w in w2_sig for w in w1_sig):
+                        pass
+                    elif abs(len(w1_sig) - len(w2_sig)) > 0:
                         continue
                         
                     self._nirf_fast_cache[uni] = "Ranked"
@@ -3178,8 +3188,9 @@ class AutonomousCourseVerifier:
             
             if "405 not allowed" in page_text.lower() or "method not allowed" in page_text.lower() or "405 error" in page_text.lower():
                 print("      -> [!] 405 Error detected after JS injection! Clearing cookies and reloading page without JS injection...")
-                try: driver.delete_all_cookies()
-                except Exception: pass
+                if "coursera.org" not in driver.current_url:
+                    try: driver.delete_all_cookies()
+                    except Exception: pass
                 self._safe_get(driver, fee_url)
                 time.sleep(3)
                 page_text = self._extract_page_text(driver)
@@ -3298,6 +3309,7 @@ Text:
 Rules:
 1. COST:
    - Compare Original Cost against both Total fees and Tuition fees from the text. Give a MATCH ONLY when there is an EXACT match after calculation (allowing minor rounding differences). It is a MATCH if it exactly matches EITHER the calculated Tuition fees OR the calculated Total fees.
+   - CRITICAL CALCULATION: You MUST explicitly calculate the total duration cost if fees are given per semester or per year. For example, if the text states "Rs. 2,02,500 per semester" and the duration is 4 years (8 semesters), you MUST show the step-by-step calculation "2,02,500 * 8 = 16,20,000". If this calculated total matches or is very close to the Original Cost, mark it as a MATCH. You MUST output this calculation in the cost_description.
    - For all universities NOT located in India, you MUST ONLY consider International/Overseas costs. DO NOT evaluate domestic, in-state, or national fees. Explicitly state in the description that it is the International student fee.
    - "Free" Exception: If Original Cost is "Free", do NOT match generic terms (e.g., "toll free", "free box"). Must mean "Free Course Tuition". If a Paid Certificate track exists, cost_match = FALSE.
    {anna_univ_rule}
@@ -4413,6 +4425,7 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
 
     def _perform_platform_logins(self, driver):
         """Pre-login to platforms to establish trusted sessions and avoid aggressive bot checks."""
+        import os
         email = os.environ.get("COURSERA_EMAIL")
         coursera_password = os.environ.get("COURSERA_PASSWORD")
         
@@ -4421,7 +4434,6 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
 
         import threading
         import json
-        import os
         
         if not hasattr(self, 'coursera_login_lock'):
             self.coursera_login_lock = threading.Lock()
@@ -5369,6 +5381,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         browser_init_lock = threading.Lock()
         
         def init_browser_parallel(b_idx):
+            import os
             options = uc.ChromeOptions()
             options.page_load_strategy = 'eager'
             options.add_argument('--disable-blink-features=AutomationControlled')
@@ -5448,8 +5461,9 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     b_idx, driver = future.result()
                     browser_pool.put((b_idx, driver, 0))
                 except Exception as e:
+                    import traceback
                     print(f"    -> [Error] Failed to initialize browser: {e}")
-
+                    traceback.print_exc()
         # Setup Thread Local Stdout for Sequential Logging
         import sys
         import threading
@@ -6035,8 +6049,9 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 
                                 if "405 not allowed" in page_text.lower() or "method not allowed" in page_text.lower() or "405 error" in page_text.lower():
                                     print("      -> [!] 405 Error detected after JS injection! Clearing cookies and reloading page without JS injection...")
-                                    try: driver.delete_all_cookies()
-                                    except Exception: pass
+                                    if "coursera.org" not in driver.current_url:
+                                        try: driver.delete_all_cookies()
+                                        except Exception: pass
                                     self._safe_get(driver, course.get('url'))
                                     time.sleep(3)
                                     page_text = self._extract_page_text(driver)
@@ -7033,7 +7048,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             old_link_working = ''
             
             if df is not None and idx in df.index:
-                row = df.loc[idx]
+                row_data = df.loc[idx]
+                row = row_data.iloc[0] if isinstance(row_data, pd.DataFrame) else row_data
                 old_web_uni = str(row.get('University (Web)', ''))
                 old_web_cost = str(row.get('Cost (Web)', ''))
                 old_web_dur = str(row.get('Duration (Web)', ''))
@@ -7121,13 +7137,16 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             desc = self._generate_professional_summary(course)
             
             # Preserve existing Web data if present in df
-            existing_row = df.loc[idx] if (df is not None and idx in df.index) else None
+            existing_row = None
+            if df is not None and idx in df.index:
+                row_data = df.loc[idx]
+                existing_row = row_data.iloc[0] if isinstance(row_data, pd.DataFrame) else row_data
             
             def get_web_val(key, new_val):
-                if existing_row is not None and pd.notna(existing_row.get(key)):
+                if existing_row is not None and key in existing_row and pd.notna(existing_row[key]):
                     # Preserve if the new_val is empty or if we didn't do web scraping properly
                     if not new_val or new_val == '' or new_val == 'Not Found / Mentioned on Website':
-                        return existing_row.get(key)
+                        return existing_row[key]
                 return new_val
 
             row = {
