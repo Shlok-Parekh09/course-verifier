@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="/static/style.css?v=5">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://unpkg.com/chartjs-chart-geo@4.2.8/build/index.umd.min.js"></script>
+    <script src="https://kit.fontawesome.com/997b419143.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
@@ -229,19 +230,20 @@
                     <div class="analytics-icon">📊</div>
                     <div>
                         <h2>Course Analytics</h2>
-                        <p>Strategic Global Portfolio Intelligence</p>
+                        <p>Deep-dive into every dimension of the global portfolio</p>
                     </div>
                 </div>
                 <nav class="analytics-subnav" id="analytics-subnav">
-                    <button class="asubtab active" data-atab="atab-overview">Overview</button>
+                    <button class="asubtab active" data-atab="atab-overview">📋 Overview</button>
                     <button class="asubtab" data-atab="atab-geography">🌍 Geography</button>
                     <button class="asubtab" data-atab="atab-domains">🔬 Specializations</button>
+                    <button class="asubtab" data-atab="atab-verification">✅ Verification</button>
                 </nav>
             </div>
 
             <!-- Analytics KPI Cards (always visible) -->
             <div class="analytics-kpi-row">
-                <div class="a-stat-card a-blue">
+                <div class="a-stat-card a-blue" title="Click to see breakdown" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-overview]').click()">
                     <div class="a-stat-icon">📚</div>
                     <div class="a-stat-body">
                         <div class="a-stat-val" id="an-total">—</div>
@@ -249,7 +251,7 @@
                         <div class="a-stat-sub" id="an-variants-sub">— delivery variants</div>
                     </div>
                 </div>
-                <div class="a-stat-card a-green">
+                <div class="a-stat-card a-green" title="Click to filter" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-geography]').click()">
                     <div class="a-stat-icon">🇮🇳</div>
                     <div class="a-stat-body">
                         <div class="a-stat-val" id="an-indian">—</div>
@@ -257,26 +259,30 @@
                         <div class="a-stat-sub" id="an-indian-pct">—% of total catalog</div>
                     </div>
                 </div>
-                <div class="a-stat-card a-purple">
+                <div class="a-stat-card a-purple" title="Click to see international breakdown" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-geography]').click()">
                     <div class="a-stat-icon">🌐</div>
                     <div class="a-stat-body">
                         <div class="a-stat-val" id="an-intl">—</div>
                         <div class="a-stat-label">International Programs</div>
-                        <div class="a-stat-sub">Spanning global regions</div>
+                        <div class="a-stat-sub" id="an-countries-count">— countries represented</div>
                     </div>
                 </div>
-                <div class="a-stat-card a-orange">
-                    <div class="a-stat-icon">💰</div>
+                <div class="a-stat-card a-orange" title="Click to see verification stats" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-verification]').click()">
+                    <div class="a-stat-icon">✅</div>
                     <div class="a-stat-body">
-                        <div class="a-stat-val" id="an-free">—</div>
-                        <div class="a-stat-label">Free / Affordable</div>
-                        <div class="a-stat-sub" id="an-free-sub">— fully free certifications</div>
+                        <div class="a-stat-val" id="an-matchrate">—%</div>
+                        <div class="a-stat-label">Verification Match Rate</div>
+                        <div class="a-stat-sub" id="an-verified-sub">— courses perfectly verified</div>
                     </div>
                 </div>
             </div>
 
             <!-- ── OVERVIEW sub-tab ── -->
             <div id="atab-overview" class="atab-content active">
+
+                <!-- Auto-computed Insight Cards -->
+                <div class="insight-cards-row" id="insight-cards-row"></div>
+
                 <div class="an-overview-grid">
 
                     <!-- Doughnut: Academic Credential Mix -->
@@ -284,7 +290,7 @@
                         <div class="an-card-hdr">
                             <div>
                                 <div class="an-card-title">Academic Credential Mix</div>
-                                <div class="an-card-sub">Categorization by degree & certification level</div>
+                                <div class="an-card-sub">Categorization by degree & certification level — click a segment</div>
                             </div>
                             <div class="an-badge indigo">Credential Levels</div>
                         </div>
@@ -296,17 +302,18 @@
                         </div>
                     </div>
 
-                    <!-- Top Countries Card -->
+                    <!-- India vs International Split -->
                     <div class="an-card">
                         <div class="an-card-hdr">
                             <div>
-                                <div class="an-card-title">Global Hubs</div>
-                                <div class="an-card-sub">Top contributors by regional volume</div>
+                                <div class="an-card-title">🇮🇳 India vs 🌐 World</div>
+                                <div class="an-card-sub">Portfolio split by origin</div>
                             </div>
                         </div>
-                        <div id="an-top-countries" class="an-hub-list"></div>
+                        <div id="an-split-visual" class="an-split-block"></div>
+                        <div id="an-top-countries" class="an-hub-list" style="margin-top:16px;"></div>
                         <button class="an-cta-btn" onclick="document.querySelector('.asubtab[data-atab=atab-geography]').click()">
-                            View Geographic Report →
+                            View Full Geographic Report →
                         </button>
                     </div>
 
@@ -315,11 +322,11 @@
                         <div class="an-card-hdr">
                             <div>
                                 <div class="an-card-title">Cost-Access Intelligence</div>
-                                <div class="an-card-sub">Subsidized and free learning path availability</div>
+                                <div class="an-card-sub">Subsidized and free learning path availability — click bars to drill down</div>
                             </div>
                             <div class="an-badge rose">Pricing Segments</div>
                         </div>
-                        <div class="an-chart-zone" style="height:320px; position:relative;">
+                        <div class="an-chart-zone" style="height:280px; position:relative;">
                             <canvas id="an-pricing-chart"></canvas>
                         </div>
                     </div>
@@ -332,7 +339,7 @@
                 <div class="an-section-hdr">
                     <div>
                         <div class="an-section-title">Geographic Footprint</div>
-                        <div class="an-section-sub">Course distribution by sovereign region</div>
+                        <div class="an-section-sub">Click any row to see its courses · sorted by volume</div>
                     </div>
                     <div class="an-search-wrap">
                         <span class="an-search-icon">🔍</span>
@@ -341,16 +348,32 @@
                 </div>
 
                 <div class="an-card an-full-width" style="padding:0; overflow:hidden;">
-                    <div class="tbl-wrap" style="max-height:65vh;">
+                    <div class="tbl-wrap" style="max-height:55vh;">
                         <table class="data-table an-geo-table">
                             <thead><tr>
-                                <th style="width:60px;">Rank</th>
+                                <th style="width:56px;">Rank</th>
                                 <th>Country</th>
-                                <th style="text-align:center;">Volume</th>
-                                <th style="text-align:right;">Share %</th>
-                                <th style="width:160px;">Distribution</th>
+                                <th style="text-align:center;">Courses</th>
+                                <th style="text-align:center;">Verified ✅</th>
+                                <th style="text-align:center;">Issues ⚠️</th>
+                                <th style="text-align:right;">Share</th>
+                                <th style="width:120px;">Distribution</th>
                             </tr></thead>
                             <tbody id="an-country-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Drill-down panel for geography -->
+                <div id="geo-drilldown" class="drilldown-panel" style="display:none;">
+                    <div class="drilldown-hdr">
+                        <div id="geo-drilldown-title" class="drilldown-title"></div>
+                        <button class="drilldown-close" onclick="closeDrilldown('geo-drilldown')">✕ Close</button>
+                    </div>
+                    <div class="tbl-wrap" style="max-height:40vh;">
+                        <table class="data-table">
+                            <thead><tr><th>#</th><th>Course Name</th><th>University</th><th>Domain</th><th>Status</th></tr></thead>
+                            <tbody id="geo-drilldown-tbody"></tbody>
                         </table>
                     </div>
                 </div>
@@ -361,33 +384,119 @@
                 <div class="an-section-hdr" style="margin-bottom:20px;">
                     <div>
                         <div class="an-section-title">Domain Intelligence</div>
-                        <div class="an-section-sub">Portfolio segregation by cybersecurity core focus domains</div>
+                        <div class="an-section-sub">Click any row or bar to drill into courses of that specialization</div>
                     </div>
                 </div>
 
                 <!-- Domain bar chart -->
                 <div class="an-card an-full-width">
                     <div class="an-card-hdr">
-                        <div class="an-card-title">📊 Saturation Analysis</div>
+                        <div class="an-card-title">📊 Domain Saturation · click bars to explore</div>
                         <div class="an-badge slate">Unique Offerings</div>
                     </div>
-                    <div class="an-chart-zone" style="height:380px; position:relative;">
+                    <div class="an-chart-zone" style="height:340px; position:relative;">
                         <canvas id="an-domain-chart"></canvas>
                     </div>
                 </div>
 
-                <!-- Domain table (read-only) -->
+                <!-- Domain table -->
                 <div class="an-card an-full-width" style="padding:0; overflow:hidden;">
-                    <div class="tbl-wrap" style="max-height:55vh;">
+                    <div class="tbl-wrap" style="max-height:45vh;">
                         <table class="data-table an-domain-table">
                             <thead><tr>
-                                <th>Specialization Pillar</th>
+                                <th>Specialization</th>
                                 <th style="text-align:center;">Total</th>
-                                <th style="text-align:center; color:var(--green);">Indian 🇮🇳</th>
-                                <th style="text-align:center; color:var(--blue);">International 🌐</th>
-                                <th style="width:120px;">Mix</th>
+                                <th style="text-align:center;">🇮🇳 Indian</th>
+                                <th style="text-align:center;">🌐 Intl</th>
+                                <th style="text-align:center;">✅ Verified</th>
+                                <th style="text-align:center;">⚠️ Issues</th>
+                                <th style="width:100px;">Mix</th>
                             </tr></thead>
                             <tbody id="an-domain-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Drill-down panel for domains -->
+                <div id="dom-drilldown" class="drilldown-panel" style="display:none;">
+                    <div class="drilldown-hdr">
+                        <div id="dom-drilldown-title" class="drilldown-title"></div>
+                        <button class="drilldown-close" onclick="closeDrilldown('dom-drilldown')">✕ Close</button>
+                    </div>
+                    <div class="tbl-wrap" style="max-height:40vh;">
+                        <table class="data-table">
+                            <thead><tr><th>#</th><th>Course Name</th><th>University</th><th>Country</th><th>Status</th><th>Note</th></tr></thead>
+                            <tbody id="dom-drilldown-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── VERIFICATION sub-tab ── -->
+            <div id="atab-verification" class="atab-content">
+                <div class="an-section-hdr" style="margin-bottom:20px;">
+                    <div>
+                        <div class="an-section-title">Verification Intelligence</div>
+                        <div class="an-section-sub">Accuracy rates, discrepancy reasons, and quality signals across the catalog</div>
+                    </div>
+                </div>
+
+                <!-- Verification KPI row -->
+                <div class="verif-kpi-row" id="verif-kpi-row"></div>
+
+                <div class="an-overview-grid" style="margin-top:20px;">
+                    <!-- Verification status doughnut -->
+                    <div class="an-card">
+                        <div class="an-card-hdr">
+                            <div class="an-card-title">Verification Status Breakdown</div>
+                            <div class="an-badge indigo">Live Data</div>
+                        </div>
+                        <div class="an-chart-zone" style="height:280px; position:relative;">
+                            <canvas id="an-status-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Top discrepancy reasons -->
+                    <div class="an-card">
+                        <div class="an-card-hdr">
+                            <div class="an-card-title">⚠️ Top Discrepancy Reasons</div>
+                            <div class="an-badge rose">Quality Flags</div>
+                        </div>
+                        <div id="an-disc-reasons" class="disc-reason-list"></div>
+                    </div>
+
+                    <!-- Verification rate by country (full width) -->
+                    <div class="an-card an-full-width" style="padding:0; overflow:hidden;">
+                        <div style="padding:20px 24px 12px;">
+                            <div class="an-card-title">Verification Rate by Country</div>
+                            <div class="an-card-sub">Countries with verified + discrepant courses — click row to drill down</div>
+                        </div>
+                        <div class="tbl-wrap" style="max-height:45vh;">
+                            <table class="data-table">
+                                <thead><tr>
+                                    <th>Country</th>
+                                    <th style="text-align:center;">Total</th>
+                                    <th style="text-align:center;">✅ Verified</th>
+                                    <th style="text-align:center;">⚠️ Discrepant</th>
+                                    <th style="text-align:center;">❌ Error</th>
+                                    <th>Match Rate</th>
+                                </tr></thead>
+                                <tbody id="an-verif-country-tbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Verification drill-down -->
+                <div id="verif-drilldown" class="drilldown-panel" style="display:none;">
+                    <div class="drilldown-hdr">
+                        <div id="verif-drilldown-title" class="drilldown-title"></div>
+                        <button class="drilldown-close" onclick="closeDrilldown('verif-drilldown')">✕ Close</button>
+                    </div>
+                    <div class="tbl-wrap" style="max-height:40vh;">
+                        <table class="data-table">
+                            <thead><tr><th>#</th><th>Course Name</th><th>University</th><th>Domain</th><th>Status</th><th>Reason</th></tr></thead>
+                            <tbody id="verif-drilldown-tbody"></tbody>
                         </table>
                     </div>
                 </div>
@@ -396,131 +505,7 @@
         </div>
     </div><!-- /tab-analytics -->
 
-    <!-- ══════════ AUTHOR ANALYSIS TAB ══════════ -->
-
-    <div id="tab-author" class="tab-content">
-        <div class="author-page">
-
-            <!-- Hero Card -->
-            <div class="author-hero">
-                <div class="author-avatar-lg">KS</div>
-                <div class="author-info">
-                    <h2>Tumi Khushboo Singh</h2>
-                    <div class="role">Lead Course Verifier &amp; Data Analyst</div>
-                    <div class="author-tags">
-                        <span class="tag">Course Verification</span>
-                        <span class="tag">Data Analysis</span>
-                        <span class="tag">PDF Extraction</span>
-                        <span class="tag">Quality Auditing</span>
-                        <span class="tag">Web Scraping</span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Author KPIs -->
-            <div class="author-kpis">
-                <div class="a-kpi">
-                    <div class="val" style="color:var(--blue);" id="a-total">—</div>
-                    <div class="lbl">Courses Analysed</div>
-                </div>
-                <div class="a-kpi">
-                    <div class="val" style="color:var(--green);" id="a-verified">—</div>
-                    <div class="lbl">Verified by System</div>
-                </div>
-                <div class="a-kpi">
-                    <div class="val" style="color:var(--amber);" id="a-disc">—</div>
-                    <div class="lbl">Discrepancies Flagged</div>
-                </div>
-                <div class="a-kpi">
-                    <div class="val" style="color:var(--purple);" id="a-countries">—</div>
-                    <div class="lbl">Countries Covered</div>
-                </div>
-            </div>
-
-            <!-- Author Charts -->
-            <div class="author-grid">
-
-                <!-- Domain breakdown chart -->
-                <div class="panel">
-                    <div class="panel-hdr">
-                        <div class="panel-title">Domain Coverage</div>
-                    </div>
-                    <div class="chart-wrap chart-h260">
-                        <canvas id="authorDomainChart"></canvas>
-                    </div>
-                </div>
-
-                <!-- Verification accuracy -->
-                <div class="panel">
-                    <div class="panel-hdr">
-                        <div class="panel-title">Verification Accuracy</div>
-                        <div class="panel-sub" style="margin-top:0;">Overall match rate</div>
-                    </div>
-                    <div class="chart-wrap chart-h260">
-                        <canvas id="authorAccuracyChart"></canvas>
-                    </div>
-                </div>
-
-                <!-- Activity Timeline -->
-                <div class="panel">
-                    <div class="panel-hdr">
-                        <div class="panel-title">Verification Activity</div>
-                    </div>
-                    <div class="timeline" id="author-timeline">
-                        <div class="tl-item">
-                            <div class="tl-dot"></div>
-                            <div class="tl-body">
-                                <div class="tl-title">Dashboard Redesigned</div>
-                                <div class="tl-sub">Premium dark/light mode UI shipped — Jun 2026</div>
-                            </div>
-                        </div>
-                        <div class="tl-item">
-                            <div class="tl-dot" style="background:var(--green);box-shadow:0 0 8px var(--green-bg);"></div>
-                            <div class="tl-body">
-                                <div class="tl-title">Excel Exporter Refactored</div>
-                                <div class="tl-sub">Decoupled from monolith — Jun 2026</div>
-                            </div>
-                        </div>
-                        <div class="tl-item">
-                            <div class="tl-dot" style="background:var(--purple);box-shadow:0 0 8px var(--purple-bg);"></div>
-                            <div class="tl-body">
-                                <div class="tl-title">LLM Rate-Limit Fix</div>
-                                <div class="tl-sub">Thread-safe multi-key rotation added — Jun 2026</div>
-                            </div>
-                        </div>
-                        <div class="tl-item">
-                            <div class="tl-dot" style="background:var(--blue);box-shadow:0 0 8px var(--blue-bg);"></div>
-                            <div class="tl-body">
-                                <div class="tl-title">xgboost Classifier Integrated</div>
-                                <div class="tl-sub">ML-based match prediction enabled — Jun 2026</div>
-                            </div>
-                        </div>
-                        <div class="tl-item">
-                            <div class="tl-dot" style="background:var(--amber);box-shadow:0 0 8px var(--amber-bg);"></div>
-                            <div class="tl-body">
-                                <div class="tl-title">Parallel Browser Verification</div>
-                                <div class="tl-sub">6 concurrent Chrome sessions active — Jun 2026</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Top Countries for this author -->
-                <div class="panel">
-                    <div class="panel-hdr">
-                        <div class="panel-title">Top Countries Analysed</div>
-                    </div>
-                    <div id="author-country-list" class="country-list">
-                        <!-- populated by JS -->
-                    </div>
-                </div>
-
-            </div>
-        </div>
-    </div>
-
-</div><!-- /page -->
-
+    
 <!-- ══════════════ COURSE DETAIL MODAL ══════════════ -->
 <div id="course-modal" class="modal-overlay">
     <div class="modal-box">

@@ -71,6 +71,8 @@ function switchTab(targetId) {
     if (link) link.classList.add('active');
     if (targetId === 'tab-courses') loadAllCourses();
     if (targetId === 'tab-author' && globalData) populateAuthorTab(globalData);
+    // Re-fetch analytics every time the tab is opened so data is always fresh
+    if (targetId === 'tab-analytics') fetchAnalytics();
 }
 
 function initTabs() {
@@ -183,8 +185,9 @@ function initCharts() {
                     datasets: [{
                         label: 'Courses',
                         data: countries.map(d => ({ feature: d, value: 0 })),
-                        borderColor: 'rgba(255,255,255,0.07)',
-                        borderWidth: 0.5
+                        // Visible borders so all country outlines show even at 0 courses
+                        borderColor: 'rgba(148,163,184,0.35)',
+                        borderWidth: 1.2
                     }]
                 },
                 options: {
@@ -193,12 +196,38 @@ function initCharts() {
                     layout: { padding: 0 },
                     plugins: { legend: { display: false },
                         tooltip: { callbacks: {
-                            label: ctx => `${ctx.label}: ${ctx.raw.value || 0} courses`
+                            label: ctx => {
+                                const name  = ctx.raw?.feature?.properties?.name || ctx.label || 'Unknown';
+                                const count = ctx.raw?.feature?._realCount ?? 0;
+                                return `${name}: ${Math.round(count)} courses`;
+                            }
                         }}
                     },
                     scales: {
                         projection: { axis: 'x', projection: 'equirectangular' },
-                        color: { axis: 'x', interpolate: 'oranges', missing: 'rgba(255,255,255,0.04)' }
+                        color: {
+                            axis: 'x',
+                            // v = 0..1 (chart-geo normalises our compressed values)
+                            // v=0  → dark slate (country is visible but has no courses)
+                            // v>0  → sky-blue (few) to deep indigo (many)
+                            interpolate: (v) => {
+                                if (v <= 0) {
+                                    // Dark slate — country outline is visible, fill is muted
+                                    return 'rgba(251, 251, 251, 0.7)';
+                                }
+                                // sqrt curve: spreads small values so they get noticeable colour
+                                const t = Math.pow(v, 0.5);
+                                // sky-blue rgb(147,197,253) → deep indigo rgb(67,56,202)
+                                const r = Math.round(147 - t * (147 - 67));
+                                const g = Math.round(197 - t * (197 - 56));
+                                const b = Math.round(253 - t * (253 - 202));
+                                // opacity: 0.45 for fewest courses → 1.0 for most
+                                const a = (0.45 + t * 0.55).toFixed(2);
+                                return `rgba(${r},${g},${b},${a})`;
+                            },
+                            // missing = country not matched at all: same dark slate
+                            missing: 'rgba(254, 2, 2, 0.7)'
+                        }
                     }
                 }
             });
@@ -312,10 +341,21 @@ function updateBarChart() {
     barChart.update();
 }
 
+// ── Shared country name validator ───────────────────────────────
+function isValidCountry(k) {
+    if (!k) return false;
+    const s = String(k).trim().toLowerCase();
+    return s !== '' &&
+           s !== 'undefined' &&
+           s !== 'unknown' &&
+           s !== 'null' &&
+           !s.startsWith('not found');
+}
+
 function updateLineChart(countryCounts) {
     if (!lineChart) return;
     const sorted = Object.entries(countryCounts || {})
-        .filter(([k]) => k && k !== 'Unknown' && k !== 'Not Found / Mentioned on Website')
+        .filter(([k]) => isValidCountry(k))
         .sort((a,b) => b[1]-a[1])
         .slice(0, 20);
     countryDataList = sorted;
@@ -326,6 +366,8 @@ function updateLineChart(countryCounts) {
 
 function updateMapChart(countryCounts) {
     if (!mapChart || !mapChart.data?.datasets?.[0]?.data?.length) return;
+
+    // First pass: collect raw counts and store on feature for tooltip
     mapChart.data.datasets[0].data.forEach(d => {
         const name = d.feature.properties.name;
         let val = 0;
@@ -334,8 +376,21 @@ function updateMapChart(countryCounts) {
                 val += cnt;
             }
         }
+        // Store the real count on the feature so the tooltip can read it
+        d.feature._realCount = val;
         d.value = val;
     });
+
+    // Second pass: sqrt-compress values so dominant countries (e.g. India)
+    // don't bleach out all others on the choropleth color scale.
+    const vals = mapChart.data.datasets[0].data.map(d => d.value).filter(v => v > 0);
+    if (vals.length === 0) { mapChart.update(); return; }
+    const maxSqrt = Math.sqrt(Math.max(...vals));
+    mapChart.data.datasets[0].data.forEach(d => {
+        // Compressed display value, real count preserved in d.feature._realCount
+        d.value = d.value > 0 ? (Math.sqrt(d.value) / maxSqrt) * 100 : 0;
+    });
+
     mapChart.update();
 }
 
@@ -343,7 +398,7 @@ function updateCountryLeaderboard(countryCounts, containerId = 'country-list') {
     const el = document.getElementById(containerId);
     if (!el) return;
     const entries = Object.entries(countryCounts || {})
-        .filter(([k]) => k && k !== 'Unknown' && k !== 'Not Found / Mentioned on Website')
+        .filter(([k]) => isValidCountry(k))
         .sort((a,b) => b[1]-a[1])
         .slice(0, 15);
     const max = entries[0]?.[1] || 1;
@@ -591,16 +646,20 @@ async function fetchData() {
 }
 
 // ================================================================
-//  ANALYTICS TAB  —  Premium Implementation
+//  ANALYTICS TAB  —  Full Enriched Implementation
+//  Uses BOTH globalData (/api/data.json) AND analyticsData (/api/analytics.json)
 // ================================================================
 let anCredentialChart = null;
 let anPricingChart    = null;
 let anDomainChart     = null;
+let anStatusChart     = null;
 let analyticsData     = null;
 let geoTableData      = [];
 
 const PALETTE = ['#6366f1','#818cf8','#f43f5e','#1dda9f','#f59e0b','#06b6d4','#ec4899','#8b5cf6'];
+const STATUS_COLORS = { verified:'#1dda9f', discrepancy:'#f59e0b', error:'#f43f5e', unverified:'#6366f1' };
 
+// ── Sub-tab switching ────────────────────────────────────────────
 function initAnalyticsSubTabs() {
     document.querySelectorAll('.asubtab').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -615,48 +674,173 @@ function initAnalyticsSubTabs() {
         renderGeoTable(e.target.value.toLowerCase()));
 }
 
-function populateAnalyticsKPIs(d, globalStats) {
-    const el = (id, v) => { const e = document.getElementById(id); if(e) e.textContent = v; };
-    const catEntries    = Object.entries(d.course_category || {});
-    const totalPrograms = catEntries.reduce((s,[,v]) => s + (Number(v)||0), 0);
-    const indianPrograms = catEntries
-        .filter(([k]) => k.toLowerCase().includes('indian'))
-        .reduce((s,[,v]) => s + (Number(v)||0), 0);
-    const intlPrograms  = totalPrograms - indianPrograms;
-    const pricingCat    = d.pricing_category || {};
-    const freeCount     = pricingCat['Free Courses'] || 0;
-    const totalFree     = Object.values(pricingCat).reduce((s,v) => s+(Number(v)||0), 0);
-    const tot = totalPrograms || globalStats?.total || 0;
-    const ind = indianPrograms;
-    el('an-total',       tot);
-    el('an-indian',      ind);
-    el('an-intl',        intlPrograms);
-    el('an-free',        totalFree);
-    el('an-variants-sub', `${Object.values(d.variant_category||{}).reduce((s,v)=>s+(Number(v)||0),0)} delivery variants`);
-    el('an-indian-pct',  `${tot ? ((ind/tot)*100).toFixed(1) : '—'}% of total catalog`);
-    el('an-free-sub',    `${freeCount} fully free certifications`);
+// ── Drill-down helpers ───────────────────────────────────────────
+function closeDrilldown(id) {
+    const el = document.getElementById(id);
+    if (el) { el.style.animation = 'slideDown 0.2s ease'; setTimeout(() => el.style.display='none', 180); }
 }
 
+function openDrilldown(panelId, titleId, tbodyId, title, rows) {
+    const panel = document.getElementById(panelId);
+    const titleEl = document.getElementById(titleId);
+    const tbody = document.getElementById(tbodyId);
+    if (!panel || !titleEl || !tbody) return;
+    titleEl.textContent = title;
+    tbody.innerHTML = rows;
+    panel.style.display = 'block';
+    panel.style.animation = 'slideUp 0.25s ease';
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// ── Status badge helper ──────────────────────────────────────────
+function statusBadge(s) {
+    const cls = getBadgeClass(s||'');
+    return `<span class="badge ${cls}">${escHtml(s||'—')}</span>`;
+}
+
+// ── KPI cards ────────────────────────────────────────────────────
+function populateAnalyticsKPIs(d, globalStats, ccOverride) {
+    const el = (id, v) => { const e = document.getElementById(id); if(e) e.textContent = v; };
+
+    // Authoritative total — always from dashboard stats
+    const tot = globalStats?.total || 0;
+
+    // Indian courses: from country_counts passed in or globalData fallback
+    const cc = ccOverride || globalData?.country_counts || {};
+    const indiaCount = Object.entries(cc)
+        .filter(([k]) => k.toLowerCase().includes('india'))
+        .reduce((s,[,v]) => s+(Number(v)||0), 0);
+    const intlCount = Math.max(0, tot - indiaCount);
+
+    // Pricing
+    const pricingCat   = d.pricing_category || {};
+    const freeCount    = pricingCat['Free Courses'] || 0;
+    const pricingTotal = Object.values(pricingCat).reduce((s,v)=>s+(Number(v)||0),0);
+
+    // Country count — from pivot if available, else from country_counts
+    const pivotKeys  = Object.keys(d.country_pivot||{}).filter(k => isValidCountry(k));
+    const countryCnt = pivotKeys.length || Object.keys(cc).filter(k=>isValidCountry(k)).length;
+
+    // Verification match rate
+    const vs        = globalStats || {};
+    const matchRate = vs.total ? ((vs.verified||0) / vs.total * 100).toFixed(1) : '—';
+
+    el('an-total',          tot);
+    el('an-indian',         indiaCount);
+    el('an-intl',           intlCount);
+    el('an-matchrate',      matchRate + (matchRate !== '—' ? '%' : ''));
+    el('an-variants-sub',   `${Object.values(d.variant_category||{}).reduce((s,v)=>s+(Number(v)||0),0)} delivery variants`);
+    el('an-indian-pct',     `${tot ? ((indiaCount/tot)*100).toFixed(1) : '—'}% of total catalog`);
+    el('an-countries-count',`${countryCnt} countries represented`);
+    el('an-verified-sub',   `${vs.verified||'—'} courses perfectly verified`);
+    el('an-free',           pricingTotal);
+    el('an-free-sub',       `${freeCount} fully free certifications`);
+}
+
+
+// ── Auto-insight cards ───────────────────────────────────────────
+function populateInsightCards(d, globalData) {
+    const container = document.getElementById('insight-cards-row');
+    if (!container) return;
+
+    const recent      = globalData?.recent || [];
+    const stats       = globalData?.stats  || {};
+    const countryPivot = d.country_pivot   || {};
+    const domainPivot  = d.domain_pivot    || {};
+
+    // Compute insights
+    const tot     = stats.total    || 1;
+    const matchPct = ((stats.verified||0)/tot*100).toFixed(1);
+    const discPct  = ((stats.discrepancies||0)/tot*100).toFixed(1);
+
+    const topCountry = Object.entries(countryPivot).filter(([k])=>isValidCountry(k))
+        .sort((a,b)=>b[1]-a[1])[0];
+    const topDomain  = Object.entries(domainPivot).filter(([k])=>k&&k!=='Total')
+        .sort((a,b)=>(b[1].Total||0)-(a[1].Total||0))[0];
+
+    // Most problematic country (from recent)
+    const countryIssues = {};
+    recent.forEach(r => {
+        if (isValidCountry(r.country) && (r.status||'').toLowerCase() !== 'verified') {
+            countryIssues[r.country] = (countryIssues[r.country]||0)+1;
+        }
+    });
+    const topIssueCountry = Object.entries(countryIssues).sort((a,b)=>b[1]-a[1])[0];
+
+    // Top university
+    const uniCounts = {};
+    recent.forEach(r => { if(r.university) uniCounts[r.university]=(uniCounts[r.university]||0)+1; });
+    const topUni = Object.entries(uniCounts).sort((a,b)=>b[1]-a[1])[0];
+
+    const insights = [
+        { icon:'🏆', color:'var(--green)',  label:'Match Rate',      value:`${matchPct}%`, sub:'Courses perfectly verified' },
+        { icon:'⚠️', color:'var(--accent)', label:'Discrepancy Rate',value:`${discPct}%`,  sub:'Need manual review' },
+        { icon:'🌍', color:'var(--blue)',   label:'Top Country',     value: topCountry ? getFlag(topCountry[0])+' '+topCountry[0] : '—', sub: topCountry ? `${topCountry[1]} courses` : '' },
+        { icon:'🔬', color:'var(--purple)', label:'Top Domain',      value: topDomain?.[0] || '—',  sub: topDomain ? `${topDomain[1].Total||0} courses` : '' },
+        { icon:'🏛️', color:'var(--blue)',   label:'Top University',  value: topUni?.[0] || '—',     sub: topUni ? `${topUni[1]} courses` : '' },
+        { icon:'🚨', color:'var(--red)',    label:'Most Issues',     value: topIssueCountry ? getFlag(topIssueCountry[0])+' '+topIssueCountry[0] : 'None', sub: topIssueCountry ? `${topIssueCountry[1]} flagged` : 'All clean!' },
+    ];
+
+    container.innerHTML = insights.map(ins => `
+        <div class="insight-card" style="border-top:3px solid ${ins.color};">
+            <div class="insight-icon">${ins.icon}</div>
+            <div class="insight-body">
+                <div class="insight-label">${ins.label}</div>
+                <div class="insight-value" style="color:${ins.color};">${ins.value}</div>
+                <div class="insight-sub">${ins.sub}</div>
+            </div>
+        </div>`).join('');
+}
+
+// ── India vs World split bar ─────────────────────────────────────
+function populateSplitVisual(indianPct) {
+    const el = document.getElementById('an-split-visual');
+    if (!el) return;
+    const intlPct = 100 - indianPct;
+    el.innerHTML = `
+        <div style="margin-bottom:8px;display:flex;justify-content:space-between;">
+            <span style="font-size:0.78rem;font-weight:700;color:var(--green);">🇮🇳 India ${indianPct.toFixed(1)}%</span>
+            <span style="font-size:0.78rem;font-weight:700;color:var(--blue);">🌐 International ${intlPct.toFixed(1)}%</span>
+        </div>
+        <div style="height:16px;border-radius:20px;overflow:hidden;display:flex;">
+            <div style="flex:${Math.round(indianPct)};background:var(--green);border-radius:20px 0 0 20px;"></div>
+            <div style="flex:${Math.round(intlPct)};background:var(--blue);border-radius:0 20px 20px 0;"></div>
+        </div>
+        <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div style="background:var(--green-bg);border-radius:10px;padding:12px;text-align:center;">
+                <div style="font-size:1.4rem;font-weight:900;color:var(--green);">${indianPct.toFixed(1)}%</div>
+                <div style="font-size:0.7rem;color:var(--text-3);font-weight:700;text-transform:uppercase;">Indian Catalog</div>
+            </div>
+            <div style="background:var(--blue-bg);border-radius:10px;padding:12px;text-align:center;">
+                <div style="font-size:1.4rem;font-weight:900;color:var(--blue);">${intlPct.toFixed(1)}%</div>
+                <div style="font-size:0.7rem;color:var(--text-3);font-weight:700;text-transform:uppercase;">International</div>
+            </div>
+        </div>`;
+}
+
+// ── Credential doughnut ──────────────────────────────────────────
 function populateCredentialChart(courseCategory) {
     const ctx = document.getElementById('an-credential-chart');
     if (!ctx) return;
-    const entries = Object.entries(courseCategory || {}).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]);
+    const entries = Object.entries(courseCategory||{}).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]);
     if (anCredentialChart) anCredentialChart.destroy();
     anCredentialChart = new Chart(ctx, {
-        type: 'doughnut',
-        data: {
-            labels: entries.map(e=>e[0]),
-            datasets: [{ data: entries.map(e=>e[1]), backgroundColor: PALETTE,
-                borderColor:'transparent', borderWidth:0, hoverOffset:10 }]
-        },
-        options: {
-            responsive:true, maintainAspectRatio:false, cutout:'70%',
-            plugins: { legend:{display:false}, tooltip:{callbacks:{label:ctx=>` ${ctx.label}: ${ctx.raw} programs`}} }
+        type:'doughnut',
+        data:{ labels:entries.map(e=>e[0]),
+               datasets:[{ data:entries.map(e=>e[1]), backgroundColor:PALETTE, borderColor:'transparent', borderWidth:0, hoverOffset:10 }] },
+        options:{ responsive:true, maintainAspectRatio:false, cutout:'70%',
+                  plugins:{ legend:{display:false},
+                            tooltip:{callbacks:{label:c=>`${c.label}: ${c.raw} programs`}} },
+                  onClick:(e,els) => {
+                      if (!els.length) return;
+                      const label = entries[els[0].index][0];
+                      openAnalyticsDrilldownByCategory(label);
+                  }
         }
     });
     const legend = document.getElementById('an-credential-legend');
     if (legend) legend.innerHTML = entries.map(([label,val],i)=>`
-        <div class="an-legend-item">
+        <div class="an-legend-item" onclick="openAnalyticsDrilldownByCategory('${label.replace(/'/g,"\\'")}')">
             <div class="an-legend-dot" style="background:${PALETTE[i%PALETTE.length]}"></div>
             <div>
                 <div class="an-legend-name">${escHtml(label)}</div>
@@ -665,6 +849,7 @@ function populateCredentialChart(courseCategory) {
         </div>`).join('');
 }
 
+// ── Pricing bar chart ────────────────────────────────────────────
 function populatePricingChart(pricingCategory) {
     const ctx = document.getElementById('an-pricing-chart');
     if (!ctx) return;
@@ -672,25 +857,29 @@ function populatePricingChart(pricingCategory) {
     if (anPricingChart) anPricingChart.destroy();
     anPricingChart = new Chart(ctx, {
         type:'bar',
-        data:{labels:entries.map(e=>e[0]),datasets:[{label:'Courses',data:entries.map(e=>e[1]),
-            backgroundColor:'rgba(241,107,107,0.8)',hoverBackgroundColor:'#f16b6b',borderRadius:8,borderSkipped:false}]},
-        options:{responsive:true,maintainAspectRatio:false,
-            plugins:{legend:{display:false}},
-            scales:{
-                x:{grid:{display:false},ticks:{font:{size:12,weight:'600'},maxRotation:30}},
-                y:{beginAtZero:true,grid:{color:'rgba(255,255,255,0.04)'},ticks:{precision:0}}
-            },animation:{duration:900,easing:'easeOutQuart'}}
+        data:{ labels:entries.map(e=>e[0]),
+               datasets:[{ label:'Courses', data:entries.map(e=>e[1]),
+                   backgroundColor:'rgba(241,107,107,0.8)', hoverBackgroundColor:'#f16b6b',
+                   borderRadius:8, borderSkipped:false }] },
+        options:{ responsive:true, maintainAspectRatio:false,
+            plugins:{ legend:{display:false} },
+            scales:{ x:{grid:{display:false},ticks:{font:{size:12,weight:'600'},maxRotation:30}},
+                     y:{beginAtZero:true,grid:{color:'rgba(255,255,255,0.04)'},ticks:{precision:0}} },
+            animation:{duration:900,easing:'easeOutQuart'},
+            onClick:(e,els) => { if (els.length) alert(`${entries[els[0].index][0]}: ${entries[els[0].index][1]} courses`); }
+        }
     });
 }
 
+// ── Top countries hub list ────────────────────────────────────────
 function populateAnTopCountries(countryPivot) {
     const el = document.getElementById('an-top-countries');
     if (!el) return;
-    const entries = Object.entries(countryPivot||{}).filter(([k])=>k&&k!=='Unknown')
-        .sort((a,b)=>b[1]-a[1]).slice(0,6);
+    const entries = Object.entries(countryPivot||{}).filter(([k])=>isValidCountry(k))
+        .sort((a,b)=>b[1]-a[1]).slice(0,5);
     const max = entries[0]?.[1]||1;
     el.innerHTML = entries.map(([name,cnt],i)=>`
-        <div class="an-hub-row">
+        <div class="an-hub-row" onclick="geoRowDrilldown('${name.replace(/'/g,"\\'")}', ${cnt})" title="Click to see courses">
             <div class="an-hub-rank">${i+1}</div>
             <div class="an-hub-name">${getFlag(name)} ${escHtml(name)}</div>
             <div class="an-hub-bar-wrap"><div class="an-hub-bar" style="width:${Math.round(cnt/max*100)}%"></div></div>
@@ -698,73 +887,302 @@ function populateAnTopCountries(countryPivot) {
         </div>`).join('');
 }
 
+// ── Geography table ──────────────────────────────────────────────
 function renderGeoTable(search='') {
     const tbody = document.getElementById('an-country-tbody');
     if (!tbody) return;
-    const total = geoTableData.reduce((s,[,v])=>s+v,0)||1;
-    const max   = geoTableData[0]?.[1]||1;
-    const rows  = search ? geoTableData.filter(([k])=>k.toLowerCase().includes(search)) : geoTableData;
+    const recent = globalData?.recent || [];
+    const total  = geoTableData.reduce((s,[,v])=>s+v,0)||1;
+    const max    = geoTableData[0]?.[1]||1;
+    const rows   = search ? geoTableData.filter(([k])=>k.toLowerCase().includes(search)) : geoTableData;
+
     tbody.innerHTML = rows.length===0
-        ? `<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:24px;">No results</td></tr>`
-        : rows.map(([name,cnt],i)=>`
-            <tr>
+        ? `<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:24px;">No results</td></tr>`
+        : rows.map(([name,cnt],i) => {
+            // Compute verified / issues from recent data
+            const matching = recent.filter(r => (r.country||'').toLowerCase().includes(name.toLowerCase())
+                                              || name.toLowerCase().includes((r.country||'').toLowerCase()));
+            const verified = matching.filter(r=>(r.status||'').toLowerCase()==='verified').length;
+            const issues   = matching.filter(r=>(r.status||'').toLowerCase()!=='verified' && r.status).length;
+            return `<tr class="clickable-row" onclick="geoRowDrilldown('${name.replace(/'/g,"\\'")}', ${cnt})" title="Click to see courses">
                 <td><span class="geo-rank">${(i+1).toString().padStart(2,'0')}</span></td>
                 <td><span style="font-size:1.1rem;margin-right:8px;">${getFlag(name)}</span><strong>${escHtml(name)}</strong></td>
-                <td style="text-align:center;"><span class="geo-volume-badge">${cnt} Courses</span></td>
-                <td style="text-align:right;"><span class="geo-share">${((cnt/total)*100).toFixed(2)}%</span></td>
+                <td style="text-align:center;"><span class="geo-volume-badge">${cnt}</span></td>
+                <td style="text-align:center;"><span style="color:var(--green);font-weight:700;">${verified||'—'}</span></td>
+                <td style="text-align:center;"><span style="color:var(--accent);font-weight:700;">${issues||'—'}</span></td>
+                <td style="text-align:right;"><span class="geo-share">${((cnt/total)*100).toFixed(1)}%</span></td>
                 <td><div class="geo-prog-wrap"><div class="geo-prog-bar" style="width:${Math.round(cnt/max*100)}%"></div></div></td>
-            </tr>`).join('');
+            </tr>`;
+        }).join('');
 }
 
+function geoRowDrilldown(countryName, cnt) {
+    const recent = globalData?.recent || [];
+    const matches = recent.filter(r =>
+        (r.country||'').toLowerCase().includes(countryName.toLowerCase()) ||
+        countryName.toLowerCase().includes((r.country||'').toLowerCase())
+    );
+    const rows = matches.length ? matches.map((r,i) => `<tr>
+        <td style="color:var(--text-3);">${i+1}</td>
+        <td style="font-weight:600;">${escHtml(r.name||r.course_name||'—')}</td>
+        <td style="color:var(--text-2);">${escHtml(r.university||'—')}</td>
+        <td>${escHtml(r.domain||'—')}</td>
+        <td>${statusBadge(r.status)}</td>
+    </tr>`).join('')
+    : `<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:20px;">No course-level data yet — run verification first</td></tr>`;
+
+    openDrilldown('geo-drilldown','geo-drilldown-title','geo-drilldown-tbody',
+        `${getFlag(countryName)} ${countryName} — ${cnt} Courses`, rows);
+}
+
+// ── Domain tab ───────────────────────────────────────────────────
 function populateDomainTab(domainPivot) {
-    const ctx = document.getElementById('an-domain-chart');
+    const ctx     = document.getElementById('an-domain-chart');
+    const recent  = globalData?.recent || [];
     const entries = Object.entries(domainPivot||{}).filter(([k])=>k&&k!=='Total')
         .sort((a,b)=>(b[1].Total||0)-(a[1].Total||0));
+
     if (ctx) {
         if (anDomainChart) anDomainChart.destroy();
         anDomainChart = new Chart(ctx, {
             type:'bar',
-            data:{labels:entries.map(([k])=>k),datasets:[{label:'Total Courses',
-                data:entries.map(([,v])=>v.Total||0),backgroundColor:'rgba(99,102,241,0.75)',
-                hoverBackgroundColor:'#6366f1',borderRadius:8,borderSkipped:false}]},
-            options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
-                scales:{x:{grid:{display:false},ticks:{font:{size:11,weight:'600'},maxRotation:30}},
-                    y:{beginAtZero:true,grid:{color:'rgba(255,255,255,0.04)'},ticks:{precision:0}}},
-                animation:{duration:900,easing:'easeOutQuart'}}
+            data:{ labels:entries.map(([k])=>k),
+                   datasets:[{ label:'Total Courses', data:entries.map(([,v])=>v.Total||0),
+                       backgroundColor:'rgba(99,102,241,0.75)', hoverBackgroundColor:'#6366f1',
+                       borderRadius:8, borderSkipped:false }] },
+            options:{ responsive:true, maintainAspectRatio:false,
+                plugins:{ legend:{display:false} },
+                scales:{ x:{grid:{display:false},ticks:{font:{size:11,weight:'600'},maxRotation:30}},
+                         y:{beginAtZero:true,grid:{color:'rgba(255,255,255,0.04)'},ticks:{precision:0}} },
+                animation:{duration:900,easing:'easeOutQuart'},
+                onClick:(e,els) => {
+                    if (els.length) domainRowDrilldown(entries[els[0].index][0]);
+                }
+            }
         });
     }
+
     const tbody = document.getElementById('an-domain-tbody');
-    if (tbody) tbody.innerHTML = entries.map(([name,v])=>{
-        const total=v.Total||0,indian=v.Indian||0,intl=v.International||0;
-        const ip=total?Math.round(indian/total*100):50;
-        return `<tr>
+    if (tbody) tbody.innerHTML = entries.map(([name,v]) => {
+        const total=v.Total||0, indian=v.Indian||0, intl=v.International||0;
+        const ip = total ? Math.round(indian/total*100) : 50;
+        // Compute from recent
+        const domRecent  = recent.filter(r => (r.domain||'').toLowerCase().includes(name.toLowerCase()));
+        const domVerif   = domRecent.filter(r=>(r.status||'').toLowerCase()==='verified').length;
+        const domIssues  = domRecent.filter(r=>(r.status||'').toLowerCase()==='discrepancy').length;
+        return `<tr class="clickable-row" onclick="domainRowDrilldown('${name.replace(/'/g,"\\'")}')">
             <td><div style="font-weight:800;color:var(--text-1);">${escHtml(name)}</div>
-                <div style="font-size:0.7rem;color:var(--text-3);text-transform:uppercase;letter-spacing:0.06em;margin-top:2px;">Specialization</div></td>
+                <div style="font-size:0.68rem;color:var(--text-3);text-transform:uppercase;letter-spacing:0.06em;margin-top:2px;">Click to explore</div></td>
             <td style="text-align:center;"><span class="dom-total">${total}</span></td>
             <td style="text-align:center;"><span class="dom-indian">${indian}</span></td>
             <td style="text-align:center;"><span class="dom-intl">${intl}</span></td>
-            <td><div class="dom-mix-bar"><div class="dom-mix-in" style="flex:${ip}"></div>
-                <div class="dom-mix-out" style="flex:${100-ip}"></div></div></td>
+            <td style="text-align:center;"><span style="color:var(--green);font-weight:700;">${domVerif||'—'}</span></td>
+            <td style="text-align:center;"><span style="color:var(--accent);font-weight:700;">${domIssues||'—'}</span></td>
+            <td><div class="dom-mix-bar"><div class="dom-mix-in" style="flex:${ip}"></div><div class="dom-mix-out" style="flex:${100-ip}"></div></div></td>
         </tr>`;
     }).join('');
 }
 
+function domainRowDrilldown(domainName) {
+    const recent = globalData?.recent || [];
+    const matches = recent.filter(r =>
+        (r.domain||'').toLowerCase().includes(domainName.toLowerCase()));
+    const rows = matches.length ? matches.map((r,i) => `<tr>
+        <td style="color:var(--text-3);">${i+1}</td>
+        <td style="font-weight:600;">${escHtml(r.name||r.course_name||'—')}</td>
+        <td>${escHtml(r.university||'—')}</td>
+        <td>${escHtml(r.country||'—')}</td>
+        <td>${statusBadge(r.status)}</td>
+        <td style="color:var(--text-3);font-size:0.78rem;">${escHtml(r.disc_reason||r.reason||'—')}</td>
+    </tr>`).join('')
+    : `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:20px;">No course-level data yet — run verification first</td></tr>`;
+
+    openDrilldown('dom-drilldown','dom-drilldown-title','dom-drilldown-tbody',
+        `🔬 ${domainName} — Domain Deep-Dive`, rows);
+}
+
+// ── Category drill-down (credential doughnut click) ──────────────
+function openAnalyticsDrilldownByCategory(catLabel) {
+    const recent = globalData?.recent || [];
+    const matches = recent.filter(r =>
+        (r.category||r.level||r.type||'').toLowerCase().includes(catLabel.toLowerCase()) ||
+        catLabel.toLowerCase().includes((r.category||r.level||r.type||'').toLowerCase())
+    );
+    alert(`Category "${catLabel}": ${matches.length} courses in live data.\nFilter via the All Courses tab for full details.`);
+}
+
+// ── Verification tab ─────────────────────────────────────────────
+function populateVerificationTab(stats, recent) {
+    // KPI row
+    const kpiRow = document.getElementById('verif-kpi-row');
+    if (kpiRow) {
+        const tot  = stats.total||1;
+        const verKpis = [
+            { label:'Verified',     val: stats.verified||0,      pct: (stats.verified||0)/tot, color:'var(--green)' },
+            { label:'Discrepancies',val: stats.discrepancies||0, pct: (stats.discrepancies||0)/tot, color:'var(--accent)' },
+            { label:'Errors',       val: stats.errors||0,        pct: (stats.errors||0)/tot, color:'var(--red)' },
+            { label:'Unverified',   val: stats.unverified||0,    pct: (stats.unverified||0)/tot, color:'var(--purple)' },
+        ];
+        kpiRow.innerHTML = verKpis.map(k => `
+            <div class="verif-kpi-card" style="border-left:4px solid ${k.color};">
+                <div style="font-size:1.8rem;font-weight:900;color:${k.color};">${k.val}</div>
+                <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);">${k.label}</div>
+                <div style="margin-top:8px;height:4px;background:var(--bg-hover);border-radius:20px;overflow:hidden;">
+                    <div style="height:4px;width:${(k.pct*100).toFixed(1)}%;background:${k.color};border-radius:20px;"></div>
+                </div>
+                <div style="font-size:0.72rem;color:var(--text-2);margin-top:4px;">${(k.pct*100).toFixed(1)}% of total</div>
+            </div>`).join('');
+    }
+
+    // Status doughnut
+    const ctx = document.getElementById('an-status-chart');
+    if (ctx) {
+        if (anStatusChart) anStatusChart.destroy();
+        anStatusChart = new Chart(ctx, {
+            type:'doughnut',
+            data:{ labels:['Verified','Discrepancy','Error','Unverified'],
+                   datasets:[{ data:[stats.verified||0, stats.discrepancies||0, stats.errors||0, stats.unverified||0],
+                       backgroundColor:['#1dda9f','#f59e0b','#f43f5e','#6366f1'],
+                       borderColor:'transparent', borderWidth:0, hoverOffset:10 }] },
+            options:{ responsive:true, maintainAspectRatio:false, cutout:'68%',
+                      plugins:{ legend:{display:false}, tooltip:{callbacks:{label:c=>`${c.label}: ${c.raw}`}} } }
+        });
+    }
+
+    // Discrepancy reasons
+    const reasons = {};
+    recent.forEach(r => {
+        if (r.disc_reason || r.reason) {
+            const key = (r.disc_reason || r.reason || '').trim();
+            if (key) reasons[key] = (reasons[key]||0)+1;
+        }
+    });
+    const topReasons = Object.entries(reasons).sort((a,b)=>b[1]-a[1]).slice(0,8);
+    const discEl = document.getElementById('an-disc-reasons');
+    if (discEl) {
+        discEl.innerHTML = topReasons.length ? topReasons.map(([reason,cnt]) => `
+            <div class="disc-reason-row">
+                <div class="disc-reason-text">${escHtml(reason)}</div>
+                <div class="disc-reason-right">
+                    <div class="disc-reason-bar-wrap">
+                        <div class="disc-reason-bar" style="width:${Math.round(cnt/topReasons[0][1]*100)}%"></div>
+                    </div>
+                    <span class="disc-reason-count">${cnt}</span>
+                </div>
+            </div>`).join('')
+        : `<div style="padding:32px;text-align:center;color:var(--text-3);">✅ No discrepancy reasons found — all clean!</div>`;
+    }
+
+    // Verification by country table
+    const countrySt = {};
+    recent.forEach(r => {
+        const c = r.country || 'Unknown';
+        if (!isValidCountry(c)) return;
+        if (!countrySt[c]) countrySt[c] = {total:0,verified:0,discrepancy:0,error:0};
+        countrySt[c].total++;
+        const s = (r.status||'').toLowerCase();
+        if (s==='verified') countrySt[c].verified++;
+        else if (s==='discrepancy') countrySt[c].discrepancy++;
+        else if (s==='error') countrySt[c].error++;
+    });
+    const vcTbody = document.getElementById('an-verif-country-tbody');
+    if (vcTbody) {
+        const vcEntries = Object.entries(countrySt).sort((a,b)=>b[1].total-a[1].total);
+        vcTbody.innerHTML = vcEntries.length ? vcEntries.map(([country,st]) => {
+            const rate = (st.verified/st.total*100).toFixed(0);
+            const rateColor = rate>=80?'var(--green)':rate>=50?'var(--accent)':'var(--red)';
+            return `<tr class="clickable-row" onclick="geoRowDrilldown('${country.replace(/'/g,"\\'")}', ${st.total})">
+                <td>${getFlag(country)} <strong>${escHtml(country)}</strong></td>
+                <td style="text-align:center;">${st.total}</td>
+                <td style="text-align:center;color:var(--green);font-weight:700;">${st.verified}</td>
+                <td style="text-align:center;color:var(--accent);font-weight:700;">${st.discrepancy}</td>
+                <td style="text-align:center;color:var(--red);font-weight:700;">${st.error}</td>
+                <td>
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <div style="flex:1;height:6px;background:var(--bg-hover);border-radius:20px;overflow:hidden;">
+                            <div style="height:6px;width:${rate}%;background:${rateColor};border-radius:20px;"></div>
+                        </div>
+                        <span style="font-weight:800;font-size:0.83rem;color:${rateColor};min-width:36px;">${rate}%</span>
+                    </div>
+                </td>
+            </tr>`;
+        }).join('')
+        : `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:24px;">No verification data available — run verification first</td></tr>`;
+    }
+}
+
+
+// -- Main fetch ----------------------------------------------------------
 async function fetchAnalytics() {
+    // Wait for dashboard data if not yet ready
+    if (!globalData) {
+        let waited = 0;
+        await new Promise(resolve => {
+            const poll = setInterval(() => {
+                waited += 100;
+                if (globalData || waited >= 6000) { clearInterval(poll); resolve(); }
+            }, 100);
+        });
+    }
+
+    // Always-available data from the dashboard
+    const recent        = globalData?.recent         || [];
+    const stats         = globalData?.stats          || {};
+    const countryCounts = globalData?.country_counts || {};
+    const domainCounts  = globalData?.domain_counts  || {};
+
+    // Try supplementary analytics API (may be empty if no verification run)
+    let d = { course_category:{}, pricing_category:{}, variant_category:{}, country_pivot:{}, domain_pivot:{} };
     try {
         const res  = await fetch('/api/analytics.json');
         const json = await res.json();
-        if (json.status !== 'success') return;
-        const d = analyticsData = json.data;
-        populateAnalyticsKPIs(d, globalData?.stats);
-        populateCredentialChart(d.course_category);
-        populatePricingChart(d.pricing_category);
-        geoTableData = Object.entries(d.country_pivot||{})
-            .filter(([k])=>k&&k!=='Unknown').sort((a,b)=>b[1]-a[1]);
-        renderGeoTable();
-        populateAnTopCountries(d.country_pivot);
-        populateDomainTab(d.domain_pivot);
-    } catch(e) { console.error('Analytics fetch error:', e); }
+        if (json.status === 'success' && json.data) { d = analyticsData = json.data; }
+    } catch(e) { console.warn('[Analytics] analytics.json not available, using dashboard data only'); }
+
+    // Merge: prefer analytics data; fall back to globalData equivalents
+    const effectiveCountryPivot = Object.keys(d.country_pivot||{}).length > 0
+        ? d.country_pivot
+        : Object.fromEntries(Object.entries(countryCounts).filter(([k])=>isValidCountry(k)));
+
+    let effectiveDomainPivot = d.domain_pivot || {};
+    if (Object.keys(effectiveDomainPivot).length === 0 && Object.keys(domainCounts).length > 0) {
+        effectiveDomainPivot = {};
+        Object.entries(domainCounts).forEach(([dom, total]) => {
+            const dr  = recent.filter(r => (r.domain||'').toLowerCase().includes(dom.toLowerCase()));
+            const ind = dr.filter(r => (r.country||'').toLowerCase().includes('india')).length || Math.round(total * 0.7);
+            effectiveDomainPivot[dom] = { Total: total, Indian: ind, International: total - ind };
+        });
+    }
+
+    const effectiveCourseCategory = Object.keys(d.course_category||{}).length > 0
+        ? d.course_category : domainCounts;
+
+    // Populate all sections
+    populateAnalyticsKPIs(d, stats, countryCounts);
+    populateInsightCards({ ...d, country_pivot: effectiveCountryPivot, domain_pivot: effectiveDomainPivot }, globalData);
+    populateCredentialChart(effectiveCourseCategory);
+    populatePricingChart(d.pricing_category);
+
+    // India vs World - always from country_counts (truth)
+    const realTotal  = stats.total || Object.values(countryCounts).reduce((s,v)=>s+v,0) || 1;
+    const indiaTotal = Object.entries(countryCounts)
+        .filter(([k]) => k.toLowerCase().includes('india'))
+        .reduce((s,[,v]) => s+(Number(v)||0), 0);
+    populateSplitVisual((indiaTotal / realTotal) * 100);
+
+    populateAnTopCountries(effectiveCountryPivot);
+
+    geoTableData = Object.entries(effectiveCountryPivot)
+        .filter(([k])=>isValidCountry(k)).sort((a,b)=>b[1]-a[1]);
+    renderGeoTable();
+
+    populateDomainTab(effectiveDomainPivot);
+    populateVerificationTab(stats, recent);
+
+    console.log('[Analytics] OK - total:', realTotal, '| countries:', geoTableData.length, '| india:', indiaTotal);
 }
+
+
 
 
 // ================================================================
@@ -825,7 +1243,9 @@ document.addEventListener('DOMContentLoaded', () => {
     initUpload();
     initAnalyticsSubTabs();
 
-    setTimeout(fetchData,      500);
-    setTimeout(fetchAnalytics, 1200);
-    setInterval(fetchData, 6000);
+    // Chain: fetch dashboard data first, then analytics (analytics needs globalData)
+    fetchData().then(() => fetchAnalytics());
+
+    // Periodic refresh for dashboard data; analytics refreshes on tab click
+    setInterval(fetchData, 8000);
 });
