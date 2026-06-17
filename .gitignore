@@ -1,29 +1,46 @@
-# Environment variables
+# ── Secrets & credentials ────────────────────────────────────────────────────
 .env
+serviceAccountKey.json
 
-# Python
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
+venv/
+.venv/
 
-# Chrome profiles
+# ── Chrome browser profiles ───────────────────────────────────────────────────
 chrome_profile/
 chrome_profile_fallback/
 chrome_profile_*/
 chrome_profile_fallback_*/
 
-# Data/Reports
-verification_screenshots/
+# ── Data / Reports / PDFs ─────────────────────────────────────────────────────
 *.pdf
 *.xlsx
 !CombinedWork.xlsx
-# dump_courses.json
+*.json
+!firebase.json
+!public/api/courses.json
+!public/api/data.json
+!public/api/analytics.json
 *_floating_items.json
+master_dashboard_results.json
+verification_screenshots/
+AUTONOMOUS_VERIFIED.xlsx
+fees.xlsx
 
-# Virtual environment
-venv/
-.venv/
-
-# Secrets
-serviceAccountKey.json
+# ── Local persistent data ─────────────────────────────────────────────────────
 1.json
+rankings.db
+
+# ── Firebase cache ────────────────────────────────────────────────────────────
+.firebase/
+
+# ── Kiro / agent internals ────────────────────────────────────────────────────
+.agents/
+skills-lock.json
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+.gcloudignore
+DEPLOYMENT_GUIDE.md
