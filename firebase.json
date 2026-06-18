@@ -7,19 +7,12 @@
     "ignore": [
       "firebase.json",
       "**/.*",
-      "**/node_modules/**",
-      "serviceAccountKey.json",
-      "1.json"
+      "**/node_modules/**"
     ],
-    "headers": [
+    "rewrites": [
       {
-        "source": "**/*.@(json|js|html)",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "no-cache, no-store, must-revalidate"
-          }
-        ]
+        "source": "**",
+        "destination": "/index.html"
       }
     ]
   }

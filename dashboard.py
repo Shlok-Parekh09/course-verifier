@@ -69,80 +69,134 @@ def clean_country(country):
     return country if country else 'Unknown'
 
 def save_courses(updated_courses=None):
+    """
+    Save courses to all persistence layers
+    Args:
+        updated_courses: Optional list of courses that were updated. 
+                        If None, all courses will be saved to Firestore.
+    """
     try:
-        # Also backup to local 1.json just in case
-        with open(PERSISTENT_FILE, "w", encoding="utf-8") as f:
-            json.dump(global_courses, f, indent=2)
-            
-        # Update Firestore
-        if db and updated_courses:
-            batch = db.batch()
-            for c in updated_courses:
-                doc_ref = db.collection('courses').document(str(c['id']))
-                batch.set(doc_ref, c)
-            batch.commit()
-            
-        # --- EXPORT STATIC JSON FOR PUBLIC HOSTING ---
-        os.makedirs(os.path.join("public", "api"), exist_ok=True)
+        print(f"[SAVE] Saving {len(global_courses)} total courses...")
         
-        # 1. Export courses.json
-        with open(os.path.join("public", "api", "courses.json"), "w", encoding="utf-8") as f:
-            json.dump({"status": "success", "courses": global_courses}, f, indent=2)
+        # 1. ALWAYS backup to local 1.json (primary backup)
+        try:
+            with open(PERSISTENT_FILE, "w", encoding="utf-8") as f:
+                json.dump(global_courses, f, indent=2)
+            print(f"[SAVE] ✓ Saved to local file: {PERSISTENT_FILE}")
+        except Exception as e:
+            print(f"[SAVE] ✗ Error saving to local file: {e}")
+            raise  # Re-raise to prevent silent failures
             
-        # 2. Export data.json (aggregated stats)
-        total_courses = len(global_courses)
-        verified = sum(1 for c in global_courses if c.get('status') == 'Verified')
-        discrepancies = sum(1 for c in global_courses if c.get('status') == 'Discrepancy')
-        errors = sum(1 for c in global_courses if c.get('status') == 'Error')
-        unverified = sum(1 for c in global_courses if c.get('status') == 'Unverified')
-        
-        domain_counts = {}
-        country_counts = {}
-        discrepancy_list = []
-        
-        for c in global_courses:
-            d = c.get('domain')
-            if d:
-                domain_counts[d] = domain_counts.get(d, 0) + 1
-            cty = c.get('country')
-            if cty and cty != 'Unknown':
-                country_counts[cty] = country_counts.get(cty, 0) + 1
+        # 2. Update Firestore - SAVE ALL COURSES, not just updated_courses
+        if db:
+            try:
+                # Determine which courses to save
+                courses_to_save = updated_courses if updated_courses else global_courses
                 
-            if c.get('status') == 'Discrepancy':
-                discrepancy_list.append({
-                    "name": c.get('name', ''),
-                    "university": c.get('university', ''),
-                    "reason": c.get('disc_reason', ''),
-                    "domain": d
-                })
-        
-        data_json = {
-            "status": "success",
-            "stats": {
-                "total": total_courses,
-                "verified": verified,
-                "discrepancies": discrepancies,
-                "errors": errors,
-                "unverified": unverified
-            },
-            "domain_counts": domain_counts,
-            "country_counts": country_counts,
-            "discrepancy_list": discrepancy_list,
-            "recent": [c for c in global_courses if c.get('status') in ['Discrepancy', 'Error'] and 'pdf_page' in c]
-        }
-        with open(os.path.join("public", "api", "data.json"), "w", encoding="utf-8") as f:
-            json.dump(data_json, f, indent=2)
+                # Use batched writes for efficiency (max 500 per batch in Firestore)
+                batch = db.batch()
+                batch_count = 0
+                
+                for c in courses_to_save:
+                    doc_ref = db.collection('courses').document(str(c['id']))
+                    batch.set(doc_ref, c, merge=True)  # merge=True to update existing fields
+                    batch_count += 1
+                    
+                    # Commit every 500 operations (Firestore limit)
+                    if batch_count >= 500:
+                        batch.commit()
+                        print(f"[SAVE] Committed batch of {batch_count} courses to Firestore")
+                        batch = db.batch()
+                        batch_count = 0
+                
+                # Commit remaining items
+                if batch_count > 0:
+                    batch.commit()
+                    print(f"[SAVE] ✓ Saved {len(courses_to_save)} courses to Firestore")
+            except Exception as e:
+                print(f"[SAVE] ✗ Error saving to Firestore: {e}")
+                # Don't raise - Firestore failure shouldn't block local saves
+        else:
+            print("[SAVE] ⚠ Firestore not available, skipping cloud sync")
+            
+        # 3. EXPORT STATIC JSON FOR PUBLIC HOSTING
+        try:
+            os.makedirs(os.path.join("public", "api"), exist_ok=True)
+            
+            # Export courses.json
+            with open(os.path.join("public", "api", "courses.json"), "w", encoding="utf-8") as f:
+                json.dump({"status": "success", "courses": global_courses}, f, indent=2)
+                
+            # Export data.json (aggregated stats)
+            total_courses = len(global_courses)
+            verified = sum(1 for c in global_courses if c.get('status') == 'Verified')
+            discrepancies = sum(1 for c in global_courses if c.get('status') == 'Discrepancy')
+            errors = sum(1 for c in global_courses if c.get('status') == 'Error')
+            unverified = sum(1 for c in global_courses if c.get('status') == 'Unverified')
+            
+            domain_counts = {}
+            country_counts = {}
+            discrepancy_list = []
+            
+            for c in global_courses:
+                d = c.get('domain')
+                if d:
+                    domain_counts[d] = domain_counts.get(d, 0) + 1
+                cty = c.get('country')
+                if cty and cty != 'Unknown':
+                    country_counts[cty] = country_counts.get(cty, 0) + 1
+                    
+                if c.get('status') == 'Discrepancy':
+                    discrepancy_list.append({
+                        "name": c.get('name', ''),
+                        "university": c.get('university', ''),
+                        "reason": c.get('disc_reason', ''),
+                        "domain": d
+                    })
+            
+            data_json = {
+                "status": "success",
+                "stats": {
+                    "total": total_courses,
+                    "verified": verified,
+                    "discrepancies": discrepancies,
+                    "errors": errors,
+                    "unverified": unverified
+                },
+                "domain_counts": domain_counts,
+                "country_counts": country_counts,
+                "discrepancy_list": discrepancy_list,
+                "recent": [c for c in global_courses if c.get('status') in ['Discrepancy', 'Error'] and 'pdf_page' in c]
+            }
+            with open(os.path.join("public", "api", "data.json"), "w", encoding="utf-8") as f:
+                json.dump(data_json, f, indent=2)
+            
+            print("[SAVE] ✓ Exported static JSON files for hosting")
+        except Exception as e:
+            print(f"[SAVE] ✗ Error exporting static JSON: {e}")
 
-        # 3. Trigger Firebase deploy in background to update the live site
-        if updated_courses:
+        # 4. OPTIONAL: Trigger Firebase deploy (non-blocking)
+        # Only deploy if AUTO_DEPLOY environment variable is set to 'true'
+        if updated_courses and os.environ.get('AUTO_DEPLOY', 'false').lower() == 'true':
             import threading
             def deploy_site():
-                print("Deploying updated static files to live website...")
-                os.system("firebase deploy --only hosting")
-            threading.Thread(target=deploy_site).start()
+                try:
+                    print("[DEPLOY] Starting Firebase deployment...")
+                    result = os.system("firebase deploy --only hosting")
+                    if result == 0:
+                        print("[DEPLOY] ✓ Successfully deployed to live website")
+                    else:
+                        print(f"[DEPLOY] ✗ Deployment failed with exit code {result}")
+                except Exception as e:
+                    print(f"[DEPLOY] ✗ Deployment error: {e}")
+            threading.Thread(target=deploy_site, daemon=True).start()
+        else:
+            print("[DEPLOY] ⚠ Auto-deploy disabled. Run 'firebase deploy --only hosting' manually to update live site.")
 
     except Exception as e:
-        print("Error saving courses:", e)
+        print(f"[SAVE] ✗ Critical error in save_courses: {e}")
+        import traceback
+        traceback.print_exc()
 
 def load_courses():
     global global_courses
@@ -220,7 +274,16 @@ def load_courses():
                 "status": status,
                 "cost_match": d.get('cost_match', False),
                 "duration_match": d.get('duration_match', False),
-                "disc_reason": str(d.get('disc_reason', d.get('reason', '')))
+                "mode_match": d.get('mode_match', False),
+                "lang_match": d.get('lang_match', False),
+                "country_match": d.get('country_match', False),
+                "uni_match": d.get('uni_match', False),
+                "sk_match": d.get('sk_match', False),
+                "disc_reason": str(d.get('disc_reason', d.get('reason', ''))),
+                
+                # Preserve PDF verification data
+                "pdf_page": d.get('pdf_page'),
+                "pdf_table": d.get('pdf_table', [])
             }
             global_courses.append(course)
             
@@ -518,7 +581,9 @@ def api_upload():
             if os.path.exists(temp_path):
                 os.remove(temp_path)
     if updates > 0:
-        save_courses(verified_in_this_batch)
+        # Save ALL courses to ensure complete data persistence
+        # This prevents data loss when Firestore is the primary data source
+        save_courses(global_courses)
         
     return jsonify({
         "status": "success", 
