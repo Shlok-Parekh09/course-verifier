@@ -599,6 +599,17 @@ async function showCourseModal(courseId, fallbackName, fallbackUni) {
     document.getElementById('course-modal').classList.add('open');
 }
 
+function initModal() {
+    document.getElementById('close-modal')?.addEventListener('click', () =>
+        document.getElementById('course-modal').classList.remove('open'));
+    document.getElementById('delete-course-btn')?.addEventListener('click', () =>
+        alert('Deleting from the online viewer is disabled. Please use the local dashboard.'));
+    document.getElementById('course-modal')?.addEventListener('click', e => {
+        if (e.target === document.getElementById('course-modal'))
+            document.getElementById('course-modal').classList.remove('open');
+    });
+}
+
 // ================================================================
 //  MAIN DATA FETCH
 // ================================================================
