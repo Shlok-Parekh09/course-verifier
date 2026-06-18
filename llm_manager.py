@@ -445,15 +445,3 @@ def get_llm_manager():
     if _llm_manager is None:
         _llm_manager = LLMManager()
     return _llm_manager
-")
-        return None
-# Global Singleton for easy import
-_llm_manager = None
-def get_llm_manager():
-    global _llm_manager
-    if _llm_manager is None:
-        _llm_manager = LLMManager()
-    return _llm_manager
-llm_manager is None:
-        _llm_manager = LLMManager()
-    return _llm_manager
