@@ -30,9 +30,6 @@ verification_screenshots/
 AUTONOMOUS_VERIFIED.xlsx
 fees.xlsx
 
-# ── Local persistent data ─────────────────────────────────────────────────────
-1.json
-rankings.db
 
 # ── Firebase cache ────────────────────────────────────────────────────────────
 .firebase/
@@ -43,4 +40,4 @@ skills-lock.json
 
 # ── Misc ──────────────────────────────────────────────────────────────────────
 .gcloudignore
-DEPLOYMENT_GUIDE.md
+
