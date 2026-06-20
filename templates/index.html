@@ -67,6 +67,16 @@
                     <div class="kpi-value" id="error-count">0</div>
                     <span class="kpi-trend down" id="kpi-err-trend">✕ Failed</span>
                 </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Website Issues</div>
+                    <div class="kpi-value" id="website-issue-count">0</div>
+                    <span class="kpi-trend down" id="kpi-webissue-trend">🔗 Broken</span>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Course Issues</div>
+                    <div class="kpi-value" id="course-issue-count">0</div>
+                    <span class="kpi-trend warn" id="kpi-courseissue-trend">📋 Mismatch</span>
+                </div>
             </div>
 
             <!-- Country-wise Analysis  ← MAIN DASHBOARD SECTION -->
@@ -144,6 +154,16 @@
                         </div>
                         <div class="chart-wrap chart-h260">
                             <canvas id="statusPieChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Issue Category Doughnut -->
+                    <div class="panel">
+                        <div class="panel-hdr">
+                            <div class="panel-title">Issue Category Breakdown</div>
+                        </div>
+                        <div class="chart-wrap chart-h260">
+                            <canvas id="issuePieChart"></canvas>
                         </div>
                     </div>
 

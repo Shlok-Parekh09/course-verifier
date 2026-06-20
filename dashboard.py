@@ -12,6 +12,11 @@ from werkzeug.utils import secure_filename
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024 # 50 MB
 
+# Issue category constants (mirrored from verifier)
+ISSUE_CATEGORY_WEBSITE = "website_issue"
+ISSUE_CATEGORY_COURSE = "course_issue"
+ISSUE_CATEGORY_VERIFIED = "verified"
+
 # Initialize Firebase
 db = None
 try:
@@ -133,11 +138,30 @@ def save_courses(updated_courses=None):
             discrepancies = sum(1 for c in global_courses if c.get('status') == 'Discrepancy')
             errors = sum(1 for c in global_courses if c.get('status') == 'Error')
             unverified = sum(1 for c in global_courses if c.get('status') == 'Unverified')
-            
+            website_issues = sum(1 for c in global_courses if c.get('issue_category') == ISSUE_CATEGORY_WEBSITE)
+            course_issues = sum(1 for c in global_courses if c.get('issue_category') == ISSUE_CATEGORY_COURSE)
+
+            website_sub_counts = {}
+            course_sub_counts = {}
+            domain_issue_counts = {}
+            for c in global_courses:
+                sub = c.get('issue_sub_type', '')
+                if c.get('issue_category') == ISSUE_CATEGORY_WEBSITE and sub:
+                    website_sub_counts[sub] = website_sub_counts.get(sub, 0) + 1
+                elif c.get('issue_category') == ISSUE_CATEGORY_COURSE and sub:
+                    course_sub_counts[sub] = course_sub_counts.get(sub, 0) + 1
+                if c.get('issue_category') == ISSUE_CATEGORY_WEBSITE:
+                    dom = c.get('domain', 'Unknown')
+                    domain_issue_counts[dom] = domain_issue_counts.get(dom, 0) + 1
+
+            domain_warnings = [{"domain": d, "issue_count": cnt} for d, cnt in domain_issue_counts.items() if cnt >= 3]
+
             domain_counts = {}
             country_counts = {}
             discrepancy_list = []
-            
+            website_issue_list = []
+            course_issue_list = []
+
             for c in global_courses:
                 d = c.get('domain')
                 if d:
@@ -145,7 +169,7 @@ def save_courses(updated_courses=None):
                 cty = c.get('country')
                 if cty and cty != 'Unknown':
                     country_counts[cty] = country_counts.get(cty, 0) + 1
-                    
+
                 if c.get('status') == 'Discrepancy':
                     discrepancy_list.append({
                         "name": c.get('name', ''),
@@ -153,7 +177,23 @@ def save_courses(updated_courses=None):
                         "reason": c.get('disc_reason', ''),
                         "domain": d
                     })
-            
+                if c.get('issue_category') == ISSUE_CATEGORY_WEBSITE:
+                    website_issue_list.append({
+                        "name": c.get('name', ''),
+                        "university": c.get('university', ''),
+                        "sub_type": c.get('issue_sub_type', ''),
+                        "reason": c.get('disc_reason', ''),
+                        "domain": d
+                    })
+                elif c.get('issue_category') == ISSUE_CATEGORY_COURSE:
+                    course_issue_list.append({
+                        "name": c.get('name', ''),
+                        "university": c.get('university', ''),
+                        "sub_type": c.get('issue_sub_type', ''),
+                        "reason": c.get('disc_reason', ''),
+                        "domain": d
+                    })
+
             data_json = {
                 "status": "success",
                 "stats": {
@@ -161,11 +201,18 @@ def save_courses(updated_courses=None):
                     "verified": verified,
                     "discrepancies": discrepancies,
                     "errors": errors,
-                    "unverified": unverified
+                    "unverified": unverified,
+                    "website_issues": website_issues,
+                    "course_issues": course_issues
                 },
+                "website_sub_counts": website_sub_counts,
+                "course_sub_counts": course_sub_counts,
+                "domain_warnings": domain_warnings,
                 "domain_counts": domain_counts,
                 "country_counts": country_counts,
                 "discrepancy_list": discrepancy_list,
+                "website_issue_list": website_issue_list,
+                "course_issue_list": course_issue_list,
                 "recent": [c for c in global_courses if c.get('status') in ['Discrepancy', 'Error'] and 'pdf_page' in c]
             }
             with open(os.path.join("public", "api", "data.json"), "w", encoding="utf-8") as f:
@@ -256,6 +303,24 @@ def load_courses():
                 else:
                     status = 'Unverified'
             
+            issue_cat = d.get('issue_category', '')
+            issue_sub = d.get('issue_sub_type', '')
+            # Derive status from issue_category if present, else fall back to old logic
+            if issue_cat == ISSUE_CATEGORY_VERIFIED:
+                status = 'Verified'
+            elif issue_cat == ISSUE_CATEGORY_WEBSITE:
+                status = 'Error'
+            elif issue_cat == ISSUE_CATEGORY_COURSE:
+                status = 'Discrepancy'
+            elif not status or status == 'Unverified':
+                web_status = d.get('web_status', '')
+                if web_status == 'MATCH':
+                    status = 'Verified'
+                elif web_status == 'FALSE':
+                    status = 'Error' if d.get('is_hard_error') else 'Discrepancy'
+                else:
+                    status = 'Unverified'
+
             course = {
                 "id": d.get("id", idx + 1),
                 "name": str(d.get('name', d.get('Course Name', 'Unknown'))).strip(),
@@ -270,8 +335,12 @@ def load_courses():
                 "nirf": str(d.get('nirf_detail', d.get('nirf', ''))),
                 "has_qs_badge": d.get('has_qs_badge', False),
                 "has_nirf_badge": d.get('has_nirf_badge', False),
-                
+
                 "status": status,
+                "issue_category": issue_cat,
+                "issue_sub_type": issue_sub,
+                "retry_count": d.get('retry_count', 0),
+                "error_screenshot_path": d.get('error_screenshot_path', ''),
                 "cost_match": d.get('cost_match', False),
                 "duration_match": d.get('duration_match', False),
                 "mode_match": d.get('mode_match', False),
@@ -280,7 +349,7 @@ def load_courses():
                 "uni_match": d.get('uni_match', False),
                 "sk_match": d.get('sk_match', False),
                 "disc_reason": str(d.get('disc_reason', d.get('reason', ''))),
-                
+
                 # Preserve PDF verification data
                 "pdf_page": d.get('pdf_page'),
                 "pdf_table": d.get('pdf_table', [])
@@ -309,17 +378,44 @@ def api_data():
     discrepancies = sum(1 for c in global_courses if c['status'] == 'Discrepancy')
     errors = sum(1 for c in global_courses if c['status'] == 'Error')
     unverified = sum(1 for c in global_courses if c['status'] == 'Unverified')
-    
+
+    # Issue category breakdown
+    website_issues = sum(1 for c in global_courses if c.get('issue_category') == ISSUE_CATEGORY_WEBSITE)
+    course_issues = sum(1 for c in global_courses if c.get('issue_category') == ISSUE_CATEGORY_COURSE)
+
+    # Sub-type tallies
+    website_sub_counts = {}
+    course_sub_counts = {}
+    for c in global_courses:
+        sub = c.get('issue_sub_type', '')
+        if c.get('issue_category') == ISSUE_CATEGORY_WEBSITE and sub:
+            website_sub_counts[sub] = website_sub_counts.get(sub, 0) + 1
+        elif c.get('issue_category') == ISSUE_CATEGORY_COURSE and sub:
+            course_sub_counts[sub] = course_sub_counts.get(sub, 0) + 1
+
+    # Domain health warnings
+    domain_issue_counts = {}
+    for c in global_courses:
+        if c.get('issue_category') == ISSUE_CATEGORY_WEBSITE:
+            dom = c.get('domain', 'Unknown')
+            domain_issue_counts[dom] = domain_issue_counts.get(dom, 0) + 1
+    domain_warnings = [
+        {"domain": d, "issue_count": cnt}
+        for d, cnt in domain_issue_counts.items() if cnt >= 3
+    ]
+
     domain_counts = {}
     country_counts = {}
     discrepancy_list = []
-    
+    website_issue_list = []
+    course_issue_list = []
+
     for c in global_courses:
         if c['domain']:
             domain_counts[c['domain']] = domain_counts.get(c['domain'], 0) + 1
         if c['country'] and c['country'] != 'Unknown':
             country_counts[c['country']] = country_counts.get(c['country'], 0) + 1
-            
+
         if c['status'] == 'Discrepancy':
             discrepancy_list.append({
                 "name": c['name'],
@@ -327,7 +423,23 @@ def api_data():
                 "reason": c['disc_reason'],
                 "domain": c['domain']
             })
-            
+        if c.get('issue_category') == ISSUE_CATEGORY_WEBSITE:
+            website_issue_list.append({
+                "name": c['name'],
+                "university": c['university'],
+                "sub_type": c.get('issue_sub_type', ''),
+                "reason": c['disc_reason'],
+                "domain": c['domain']
+            })
+        elif c.get('issue_category') == ISSUE_CATEGORY_COURSE:
+            course_issue_list.append({
+                "name": c['name'],
+                "university": c['university'],
+                "sub_type": c.get('issue_sub_type', ''),
+                "reason": c['disc_reason'],
+                "domain": c['domain']
+            })
+
     return jsonify({
         "status": "success",
         "stats": {
@@ -335,12 +447,19 @@ def api_data():
             "verified": verified,
             "discrepancies": discrepancies,
             "errors": errors,
-            "unverified": unverified
+            "unverified": unverified,
+            "website_issues": website_issues,
+            "course_issues": course_issues
         },
+        "website_sub_counts": website_sub_counts,
+        "course_sub_counts": course_sub_counts,
+        "domain_warnings": domain_warnings,
         "domain_counts": domain_counts,
         "country_counts": country_counts,
         "discrepancy_list": discrepancy_list,
-        "recent": [c for c in global_courses if c['status'] in ['Discrepancy', 'Error'] and 'pdf_page' in c] # Show all issues for uploaded PDFs
+        "website_issue_list": website_issue_list,
+        "course_issue_list": course_issue_list,
+        "recent": [c for c in global_courses if c['status'] in ['Discrepancy', 'Error'] and 'pdf_page' in c]
     })
 
 @app.route("/api/course/<int:course_id>", methods=["DELETE"])

@@ -149,6 +149,33 @@ function initCharts() {
         });
     }
 
+    // 2b. Issue Category Doughnut
+    const iCtx = document.getElementById('issuePieChart')?.getContext('2d');
+    if (iCtx) {
+        window.issueChart = new Chart(iCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Website Issues', 'Course Issues', 'Verified'],
+                datasets: [{
+                    data: [0, 0, 0],
+                    backgroundColor: ['#f16b6b', '#f5a623', '#1dda9f'],
+                    borderWidth: 0,
+                    hoverOffset: 8
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                cutout: '72%',
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: { usePointStyle: true, padding: 18, font: { size: 11 } }
+                    }
+                }
+            }
+        });
+    }
+
     // 3. Horizontal Bar Chart
     const bCtx = document.getElementById('coursesBarChart')?.getContext('2d');
     if (bCtx) {
@@ -314,12 +341,16 @@ function updateCards(stats) {
     document.getElementById('verified-count').textContent     = stats.verified || 0;
     document.getElementById('discrepancy-count').textContent  = stats.discrepancies || 0;
     document.getElementById('error-count').textContent        = (stats.errors || 0) + (stats.unverified || 0);
+    document.getElementById('website-issue-count').textContent = stats.website_issues || 0;
+    document.getElementById('course-issue-count').textContent  = stats.course_issues || 0;
 
     // Dynamic trend % labels
     const t = stats.total || 1;
     document.getElementById('kpi-verified-trend').textContent  = `↑ ${Math.round((stats.verified||0)/t*100)}% match rate`;
     document.getElementById('kpi-disc-trend').textContent      = `⚠ ${Math.round((stats.discrepancies||0)/t*100)}% flagged`;
     document.getElementById('kpi-err-trend').textContent       = `✕ ${Math.round(((stats.errors||0)+(stats.unverified||0))/t*100)}% failed`;
+    document.getElementById('kpi-webissue-trend').textContent  = `🔗 ${Math.round((stats.website_issues||0)/t*100)}% site broken`;
+    document.getElementById('kpi-courseissue-trend').textContent = `📋 ${Math.round((stats.course_issues||0)/t*100)}% data mismatch`;
     document.getElementById('kpi-total-trend').textContent     = `— ${t} records`;
 }
 
@@ -329,6 +360,14 @@ function updatePieChart(stats) {
         stats.verified, stats.discrepancies, stats.errors, stats.unverified
     ];
     statusChart.update();
+}
+
+function updateIssuePieChart(stats) {
+    if (!window.issueChart) return;
+    window.issueChart.data.datasets[0].data = [
+        stats.website_issues || 0, stats.course_issues || 0, stats.verified || 0
+    ];
+    window.issueChart.update();
 }
 
 function updateBarChart() {
@@ -488,14 +527,20 @@ function renderRecentPage() {
     const slice  = recentData.slice(start, start + RECENT_PAGE_SIZE);
     tbody.innerHTML = slice.length === 0
         ? '<tr><td colspan="5" style="text-align:center;">No verifications yet.</td></tr>'
-        : slice.map(c => `
+        : slice.map(c => {
+            const issueLabel = c.issue_category ? (c.issue_sub_type || c.issue_category).replace(/_/g, ' ') : c.status;
+            const badgeCls = c.issue_category === 'website_issue' ? 'badge-error' :
+                             c.issue_category === 'course_issue' ? 'badge-discrepancy' :
+                             getBadgeClass(c.status);
+            return `
             <tr onclick="showCourseModal('${c.id||''}','${escHtml(c.name)}','${escHtml(c.university||'')}')">
                 <td><strong>${escHtml(c.name)}</strong></td>
                 <td>${escHtml(c.university||'—')}</td>
-                <td><span class="badge ${getBadgeClass(c.status)}">${c.status}</span></td>
+                <td><span class="badge ${badgeCls}" title="${escHtml(c.issue_category || '')}">${issueLabel}</span></td>
                 <td style="max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(c.disc_reason||'—')}</td>
                 <td>${c.pdf_page||'—'}</td>
-            </tr>`).join('');
+            </tr>`;
+        }).join('');
     if (info) info.textContent = `Page ${currentRecentPage} of ${total} (${recentData.length})`;
 }
 
@@ -530,8 +575,12 @@ function renderCoursesPage() {
     const total = Math.ceil(allCoursesData.length / PAGE_SIZE);
     const start = (currentPage - 1) * PAGE_SIZE;
     const slice = allCoursesData.slice(start, start + PAGE_SIZE);
-    tbody.innerHTML = slice.map(c => `
-        <tr onclick="showCourseModal('${c.id}')">
+    tbody.innerHTML = slice.map(c => {
+        const issueLabel = c.issue_category ? (c.issue_sub_type || c.issue_category).replace(/_/g, ' ') : c.status;
+        const badgeCls = c.issue_category === 'website_issue' ? 'badge-error' :
+                         c.issue_category === 'course_issue' ? 'badge-discrepancy' :
+                         getBadgeClass(c.status);
+        return `<tr onclick="showCourseModal('${c.id}')">
             <td>${c.id}</td>
             <td><strong>${escHtml(c.name)}</strong></td>
             <td>${escHtml(c.university||'—')}</td>
@@ -539,8 +588,9 @@ function renderCoursesPage() {
             <td>${escHtml(c.country||'—')}</td>
             <td>${c.has_qs_badge   ? '<span class="badge badge-verified">Yes</span>' : '<span class="badge badge-error">No</span>'}</td>
             <td>${c.has_nirf_badge ? '<span class="badge badge-verified">Yes</span>' : '<span class="badge badge-error">No</span>'}</td>
-            <td><span class="badge ${getBadgeClass(c.status)}">${c.status}</span></td>
-        </tr>`).join('');
+            <td><span class="badge ${badgeCls}" title="${escHtml(c.issue_category || '')}">${issueLabel}</span></td>
+        </tr>`;
+    }).join('');
     if (info) info.textContent = `Page ${currentPage} of ${total} (${allCoursesData.length} courses)`;
 }
 
@@ -622,6 +672,7 @@ async function fetchData() {
         globalData = data;
         updateCards(data.stats);
         updatePieChart(data.stats);
+        updateIssuePieChart(data.stats);
         updateBarChart();
         updateLineChart(data.country_counts);
         updateMapChart(data.country_counts);

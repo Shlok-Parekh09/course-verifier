@@ -200,6 +200,182 @@ def normalize(text):
     return text
 
 
+# ──────────────────────────────────────────────────────────────
+#  ISSUE CLASSIFICATION SYSTEM
+# ──────────────────────────────────────────────────────────────
+
+ISSUE_CATEGORY_WEBSITE = "website_issue"
+ISSUE_CATEGORY_COURSE = "course_issue"
+ISSUE_CATEGORY_VERIFIED = "verified"
+
+WEBSITE_SUB_TYPES = {
+    "404_not_found": "404 / Page Not Found",
+    "ssl_error": "SSL / Privacy Error",
+    "server_error": "Server Error (500/503)",
+    "blocked_by_waf": "Blocked by WAF / Captcha",
+    "timeout": "Connection Timeout",
+    "dns_fail": "DNS / Domain Unreachable",
+    "login_required": "Login / Paywall Required",
+    "site_down": "Site Down / Maintenance",
+    "browser_crash": "Browser Crashed",
+    "redirect_loop": "Redirect Loop",
+}
+
+COURSE_SUB_TYPES = {
+    "name_mismatch": "Name Mismatch",
+    "cost_mismatch": "Cost Mismatch",
+    "duration_mismatch": "Duration Mismatch",
+    "university_mismatch": "University Mismatch",
+    "country_mismatch": "Country Mismatch",
+    "mode_mismatch": "Mode Mismatch",
+    "language_mismatch": "Language Mismatch",
+    "skills_mismatch": "Skills Mismatch",
+    "course_discontinued": "Course Discontinued",
+    "course_replaced": "Course Replaced / Redirected",
+    "wrong_url": "Wrong URL (Homepage/Unrelated)",
+    "multiple_mismatches": "Multiple Attribute Mismatches",
+}
+
+def classify_issue(course, reason="", is_hard_error=False, web_status="FALSE", matched_fields=None, failed_fields=None):
+    """
+    Classify verification outcome into website_issue or course_issue with a sub_type.
+    Returns: (issue_category, issue_sub_type, error_screenshot_path)
+    """
+    reason_l = (reason or "").lower()
+    title_l = (course.get("web_name") or "").lower()
+    uni = (course.get("uni") or "").lower()
+
+    # ── WEBSITE ISSUES (site's fault) ──
+    if is_hard_error or web_status == "FALSE" and not matched_fields:
+        if "404" in reason_l or "not found" in reason_l or "page not found" in reason_l:
+            return ISSUE_CATEGORY_WEBSITE, "404_not_found", ""
+        if "privacy error" in reason_l or "ssl" in reason_l or "certificate" in reason_l:
+            return ISSUE_CATEGORY_WEBSITE, "ssl_error", ""
+        if "service unavailable" in reason_l or "server error" in reason_l or "500" in reason_l or "503" in reason_l:
+            return ISSUE_CATEGORY_WEBSITE, "server_error", ""
+        if "waf" in reason_l or "cloudflare" in reason_l or "captcha" in reason_l or "blocked" in reason_l or "verify you are human" in reason_l:
+            return ISSUE_CATEGORY_WEBSITE, "blocked_by_waf", ""
+        if "timeout" in reason_l or "unreachable" in reason_l or "net::" in reason_l or "err_" in reason_l:
+            return ISSUE_CATEGORY_WEBSITE, "timeout", ""
+        if "dns" in reason_l or "domain" in reason_l or "name not resolved" in reason_l:
+            return ISSUE_CATEGORY_WEBSITE, "dns_fail", ""
+        if "login" in reason_l or "paywall" in reason_l or "sign in" in reason_l:
+            return ISSUE_CATEGORY_WEBSITE, "login_required", ""
+        if "maintenance" in reason_l or "down" in reason_l or "temporarily unavailable" in reason_l:
+            return ISSUE_CATEGORY_WEBSITE, "site_down", ""
+        if "crash" in reason_l or "disconnected" in reason_l or "session" in reason_l:
+            return ISSUE_CATEGORY_WEBSITE, "browser_crash", ""
+        if "redirect" in reason_l or "loop" in reason_l:
+            return ISSUE_CATEGORY_WEBSITE, "redirect_loop", ""
+        # Generic fallback for hard errors with no page evidence
+        return ISSUE_CATEGORY_WEBSITE, "site_down", ""
+
+    # ── COURSE ISSUES (data mismatch) ──
+    if web_status == "FALSE" and matched_fields:
+        # Determine dominant mismatch
+        if failed_fields:
+            if len(failed_fields) >= 3:
+                return ISSUE_CATEGORY_COURSE, "multiple_mismatches", ""
+            # Map first failed field to sub_type
+            field_map = {
+                "name": "name_mismatch",
+                "cost": "cost_mismatch",
+                "duration": "duration_mismatch",
+                "university": "university_mismatch",
+                "country": "country_mismatch",
+                "mode": "mode_mismatch",
+                "language": "language_mismatch",
+                "skills": "skills_mismatch",
+            }
+            first_fail = failed_fields[0].lower()
+            for key, sub in field_map.items():
+                if key in first_fail:
+                    return ISSUE_CATEGORY_COURSE, sub, ""
+        if "discontinued" in reason_l or "no longer" in reason_l:
+            return ISSUE_CATEGORY_COURSE, "course_discontinued", ""
+        if "replaced" in reason_l or "redirected" in reason_l:
+            return ISSUE_CATEGORY_COURSE, "course_replaced", ""
+        if "wrong url" in reason_l or "homepage" in reason_l or "unrelated" in reason_l:
+            return ISSUE_CATEGORY_COURSE, "wrong_url", ""
+        return ISSUE_CATEGORY_COURSE, "multiple_mismatches", ""
+
+    if web_status == "MATCH":
+        return ISSUE_CATEGORY_VERIFIED, "perfect_match", ""
+
+    return None, None, ""
+
+
+def detect_website_issue_from_page(title, body_text):
+    """Fast heuristic to classify a broken page into a website sub-type."""
+    tl = (title or "").lower()
+    bl = (body_text or "").lower()
+    combined = tl + " " + bl
+
+    if "404" in tl and "not found" in tl:
+        return "404_not_found"
+    if "privacy error" in tl or "your connection is not private" in combined:
+        return "ssl_error"
+    if "service unavailable" in combined or "500" in tl or "503" in tl:
+        return "server_error"
+    if "just a moment" in combined or "verify you are human" in combined or "attention required" in combined:
+        return "blocked_by_waf"
+    if "under maintenance" in combined or "temporarily unavailable" in combined:
+        return "site_down"
+    if "sign in" in combined or "login" in tl or "paywall" in combined:
+        return "login_required"
+    if len(bl) < 200 and ("error" in tl or "not found" in tl):
+        return "site_down"
+    return "site_down"
+
+
+class DomainHealthCache:
+    """Simple TTL cache for domain health to speed up bulk verification."""
+    def __init__(self, ttl_seconds=600):
+        self._cache = {}
+        self._ttl = ttl_seconds
+        self._lock = threading.Lock()
+
+    def _key(self, domain):
+        return domain.lower().strip()
+
+    def mark_issue(self, domain, category, sub_type):
+        with self._lock:
+            self._cache[self._key(domain)] = {
+                "category": category,
+                "sub_type": sub_type,
+                "timestamp": time.time(),
+                "issue_count": self._cache.get(self._key(domain), {}).get("issue_count", 0) + 1
+            }
+
+    def get_health(self, domain):
+        with self._lock:
+            entry = self._cache.get(self._key(domain))
+            if not entry:
+                return None
+            if time.time() - entry["timestamp"] > self._ttl:
+                del self._cache[self._key(domain)]
+                return None
+            return entry
+
+    def is_healthy(self, domain):
+        health = self.get_health(domain)
+        if not health:
+            return True  # Unknown = assume healthy
+        # If domain has 3+ issues, treat as potentially down
+        return health.get("issue_count", 0) < 3
+
+    def should_skip(self, domain):
+        health = self.get_health(domain)
+        if not health:
+            return False
+        # If we saw 5+ issues on this domain recently, skip with fast fail
+        return health.get("issue_count", 0) >= 5
+
+
+# Shared domain-health singleton
+_DOMAIN_HEALTH = DomainHealthCache(ttl_seconds=600)
+
+
 def fuzzy_match(needle, haystack, threshold=0.70):
     n = normalize(needle)
     h = normalize(haystack)
@@ -1515,13 +1691,19 @@ class AutonomousCourseVerifier:
         self.courses = []
         self.floating_items = []  # text/links outside boxes
         self.ndu_category_cache = {} # Cache for NDU category pages
+        self.domain_health = _DOMAIN_HEALTH  # Shared domain-health cache
         run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.screenshots_dir = os.path.abspath(os.path.join(
             os.path.dirname(input_pdf) or '.',
             'verification_screenshots',
             f"{self.base_name}_{run_stamp}",
         ))
+        self.error_screenshots_dir = os.path.abspath(os.path.join(
+            self.screenshots_dir,
+            'website_errors',
+        ))
         os.makedirs(self.screenshots_dir, exist_ok=True)
+        os.makedirs(self.error_screenshots_dir, exist_ok=True)
 
     def _safe_get(self, driver, url):
         """Wrapper around driver.get() that actively attempts to bypass Captchas."""
@@ -1545,7 +1727,7 @@ class AutonomousCourseVerifier:
             print(f"    -> [!] Error loading page {url}: {e}")
             
         time.sleep(3)
-        
+
         # Check if 405 or other WAF errors appear due to injections
         page_source_lower = driver.page_source.lower()
         if "405 " in page_source_lower or ">405<" in page_source_lower or ("405" in page_source_lower and ("not allowed" in page_source_lower or "error" in page_source_lower or "nginx" in page_source_lower or "cloudflare" in page_source_lower)):
@@ -1648,6 +1830,55 @@ class AutonomousCourseVerifier:
         os.makedirs(self.screenshots_dir, exist_ok=True)
 
         self.model = None
+
+    def _preflight_url_check(self, url):
+        """Fast HEAD/GET request to weed out dead links before opening the browser."""
+        if not url or not url.startswith('http'):
+            return None, "Invalid URL"
+        try:
+            # Use HEAD first (lightweight), fallback to GET with stream if HEAD fails
+            resp = requests.head(url, timeout=10, allow_redirects=True, headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            })
+            if resp.status_code >= 400:
+                # Some servers reject HEAD; try a tiny GET
+                resp = requests.get(url, timeout=10, stream=True, headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                })
+                # Read just a few bytes so connection closes quickly
+                _ = resp.raw.read(1)
+                resp.close()
+            if resp.status_code in [404, 410]:
+                return "404_not_found", f"HTTP {resp.status_code} via preflight"
+            if resp.status_code in [500, 502, 503, 504]:
+                return "server_error", f"HTTP {resp.status_code} via preflight"
+            if resp.status_code in [403, 406, 429]:
+                return "blocked_by_waf", f"HTTP {resp.status_code} via preflight"
+            if resp.status_code in [301, 302, 307, 308] and resp.headers.get('Location', '').rstrip('/').lower() == url.rstrip('/').lower():
+                return "redirect_loop", "Redirect loop detected via preflight"
+        except requests.exceptions.Timeout:
+            return "timeout", "Preflight HEAD request timed out"
+        except requests.exceptions.ConnectionError:
+            return "dns_fail", "DNS/Connection error in preflight"
+        except Exception:
+            pass
+        return None, "Preflight passed"
+
+    # ──────────────────────────────────────────────────────────
+    #  STEP 1: PDF EXTRACTION  (quadrants + floating detection)
+    # ──────────────────────────────────────────────────────────
+
+
+    # ──────────────────────────────────────────────────────────
+    #  STEP 1: PDF EXTRACTION  (quadrants + floating detection)
+    # ──────────────────────────────────────────────────────────
+
+
+
+    # ──────────────────────────────────────────────────────────
+    #  STEP 1: PDF EXTRACTION  (quadrants + floating detection)
+    # ──────────────────────────────────────────────────────────
+
 
     # ──────────────────────────────────────────────────────────
     #  STEP 1: PDF EXTRACTION  (quadrants + floating detection)
@@ -1915,6 +2146,8 @@ class AutonomousCourseVerifier:
                     "has_scholarship_box": badges["scholarship_box"],
                     # Verification results
                     "web_status": "FALSE", "reason": "",
+                    "issue_category": "", "issue_sub_type": "",
+                    "retry_count": 0, "error_screenshot_path": "",
                     "web_name": "", "web_cost": "", "web_uni": "",
                     "skills_verified": "", "qs_ranked": False, "nirf_ranked": False,
                     "qs_detail": "", "nirf_detail": "",
@@ -5347,6 +5580,39 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             explore_instruction = " The course was only found after exploring the website (clicking tabs/menus or searching), meaning the initial direct link did not contain all details and needs to be updated." if explored else ""
             return reason_text + explore_instruction
 
+    def _save_website_error_screenshot(self, driver, course_index, sub_type):
+        """Save a screenshot when a website issue is detected."""
+        try:
+            fname = f"course_{course_index + 1}_{sub_type}.png"
+            ss_path = os.path.join(self.error_screenshots_dir, fname)
+            driver.save_screenshot(ss_path)
+            return ss_path
+        except Exception:
+            return ""
+
+    def _classify_and_set_issue(self, course, matched_fields=None, failed_fields=None, explored=False):
+        """Classify the course outcome and set issue_category / issue_sub_type."""
+        cat, sub, _ = classify_issue(
+            course,
+            reason=course.get('reason', ''),
+            is_hard_error=course.get('is_hard_error', False),
+            web_status=course.get('web_status', 'FALSE'),
+            matched_fields=matched_fields,
+            failed_fields=failed_fields
+        )
+        course['issue_category'] = cat or ""
+        course['issue_sub_type'] = sub or ""
+        # Update domain health cache for website issues
+        url = course.get('url', '')
+        if url and cat == ISSUE_CATEGORY_WEBSITE:
+            domain = urlparse(url).netloc
+            if domain:
+                self.domain_health.mark_issue(domain, cat, sub)
+        return cat, sub
+
+    def _increment_retry(self, course):
+        course['retry_count'] = course.get('retry_count', 0) + 1
+
     # ──────────────────────────────────────────────────────────
     #  STEP 3: WEB VERIFICATION
     # ──────────────────────────────────────────────────────────
@@ -5540,11 +5806,47 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 cache_key = f"{url}::{normalize(course.get('name', ''))}"
                 if cache_key in url_cache:
                     cached = url_cache[cache_key]
-                    for k in ['web_status', 'reason', 'web_name', 'web_cost', 'web_uni', 'skills_verified', 'scholarship_found', 'is_hard_error']:
+                    for k in ['web_status', 'reason', 'web_name', 'web_cost', 'web_uni', 'skills_verified', 'scholarship_found', 'is_hard_error', 'issue_category', 'issue_sub_type', 'error_screenshot_path', 'retry_count']:
                         course[k] = cached.get(k, course.get(k, False))
                     raise EarlyExit()
 
                 print(f"  [{i + 1}/{len(self.courses)}] Investigating: {url}")
+
+                # SPEED: Domain health fast-skip if domain has 5+ recent issues
+                parsed_domain = urlparse(url).netloc
+                if parsed_domain and self.domain_health.should_skip(parsed_domain):
+                    print(f"    -> [SKIP] Domain '{parsed_domain}' has repeated failures. Fast-skipping.")
+                    course['web_status'] = "FALSE"
+                    course['reason'] = f"Fast-skip: Domain '{parsed_domain}' has repeated website issues."
+                    course['is_hard_error'] = True
+                    self._classify_and_set_issue(course)
+                    url_cache[cache_key] = {
+                        "web_status": "FALSE", "reason": course['reason'],
+                        "direct_link_working": False, "is_hard_error": True,
+                        "issue_category": course.get('issue_category', ''),
+                        "issue_sub_type": course.get('issue_sub_type', ''),
+                        "error_screenshot_path": "", "retry_count": course.get('retry_count', 0)
+                    }
+                    raise EarlyExit()
+
+                # SPEED/QUALITY: Preflight HEAD request to avoid launching browser on dead links
+                pf_type, pf_msg = self._preflight_url_check(url)
+                if pf_type:
+                    print(f"    -> [Preflight] {pf_msg}")
+                    course['web_status'] = "FALSE"
+                    course['reason'] = f"Preflight check failed: {pf_msg}"
+                    course['is_hard_error'] = True
+                    course['error_screenshot_path'] = self._save_website_error_screenshot(driver, i, pf_type)
+                    self._classify_and_set_issue(course)
+                    url_cache[cache_key] = {
+                        "web_status": "FALSE", "reason": course['reason'],
+                        "direct_link_working": False, "is_hard_error": True,
+                        "issue_category": course.get('issue_category', ''),
+                        "issue_sub_type": course.get('issue_sub_type', ''),
+                        "error_screenshot_path": course.get('error_screenshot_path', ''),
+                        "retry_count": course.get('retry_count', 0)
+                    }
+                    raise EarlyExit()
 
                 try:
                     time.sleep(random.uniform(0.5, 1.5))  # Fast: uc handles bot detection
@@ -5572,6 +5874,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         ("error" in initial_title.lower() and len(initial_body) < 500)
                     )
                     if initial_not_found:
+                        sub_type = detect_website_issue_from_page(initial_title, initial_body)
                         raw_reason = f"Initial page returned an error/not-found state. Page title: '{initial_title}'."
                         course['web_status'] = "FALSE"
                         course['reason'] = self._generate_description_locally(course['name'], raw_reason, is_error=True)
@@ -5581,13 +5884,15 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             course['reason'] += " " + course['nirf_detail'] + "."
                         course['direct_link_working'] = False
                         course['is_hard_error'] = True
-                        ss = os.path.join(self.screenshots_dir, f"course_{i+1}_initial_error.png")
-                        try:
-                            driver.save_screenshot(ss)
-                            print(f"    -> Initial page error. Screenshot: {ss}")
-                        except Exception:
-                            print("    -> Initial page error. Screenshot could not be saved.")
-                        url_cache[cache_key] = {"web_status": "FALSE", "reason": course['reason'], "direct_link_working": False, "is_hard_error": True}
+                        course['error_screenshot_path'] = self._save_website_error_screenshot(driver, i, sub_type)
+                        self._classify_and_set_issue(course)
+                        url_cache[cache_key] = {
+                            "web_status": "FALSE", "reason": course['reason'],
+                            "direct_link_working": False, "is_hard_error": True,
+                            "issue_category": course.get('issue_category', ''),
+                            "issue_sub_type": course.get('issue_sub_type', ''),
+                            "error_screenshot_path": course.get('error_screenshot_path', '')
+                        }
                         raise EarlyExit()
                         
                     # FALLBACK: If the browser failed before showing a real page, search DuckDuckGo.
@@ -5717,9 +6022,17 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             
                         # Instead of proceeding to Excel lookup and LLM verification, abort immediately on 404
                         course['is_hard_error'] = True
-                        url_cache[cache_key] = {"web_status": "FALSE", "reason": course.get('reason', raw_reason), "direct_link_working": False, "is_hard_error": True}
+                        course['error_screenshot_path'] = ss
+                        self._classify_and_set_issue(course)
+                        url_cache[cache_key] = {
+                            "web_status": "FALSE", "reason": course.get('reason', raw_reason),
+                            "direct_link_working": False, "is_hard_error": True,
+                            "issue_category": course.get('issue_category', ''),
+                            "issue_sub_type": course.get('issue_sub_type', ''),
+                            "error_screenshot_path": course.get('error_screenshot_path', '')
+                        }
                         raise EarlyExit()
-                        
+
                         # Set a flag to bypass normal DOM extraction
                         skip_dom_extraction = True
                     else:
@@ -6571,15 +6884,25 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     )
 
                     matched_fields = []
+                    failed_fields = []
                     if name_match: matched_fields.append(f"Name({name_score:.2f})")
                     if title_match: matched_fields.append(f"Title({title_score:.2f})")
                     if url_match: matched_fields.append(f"URL({url_score:.2f})")
                     if uni_match: matched_fields.append(f"Uni({uni_score:.2f})")
                     if cost_match: matched_fields.append("Cost")
+                    else: failed_fields.append("Cost")
                     if sk_match: matched_fields.append('Skills')
+                    else: failed_fields.append('Skills')
                     if duration_match: matched_fields.append("Duration")
+                    else: failed_fields.append("Duration")
                     if mode_match: matched_fields.append("Mode")
+                    else: failed_fields.append("Mode")
                     if lang_match: matched_fields.append("Language")
+                    else: failed_fields.append("Language")
+                    if country_match: matched_fields.append("Country")
+                    else: failed_fields.append("Country")
+                    if uni_match: matched_fields.append("University")
+                    else: failed_fields.append("University")
 
                     # Use XGBoost Classifier for intelligent match prediction (disabled/unused)
                     # Simple heuristic rule for Match
@@ -6627,16 +6950,16 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     course['reason'] = final_reason
                     course['web_name'] = web_title
                     course['web_cost'] = web_cost
-                    
+
                     if 'llm_unid' in locals() and llm_unid and llm_unid != "Information not explicitly mentioned on the webpage." and llm_unid != "N/A":
                         course['web_uni'] = llm_unid
                     else:
                         course['web_uni'] = course['uni'] if uni_match else "Not Found on Website"
-                        
+
                     course['skills_verified'] = sk_detail
                     course['scholarship_found'] = scholarship_found
                     course['direct_link_working'] = direct_link_working
-                    
+
                     # --- FINAL HEURISTICS BEFORE ASSIGNMENT ---
                     if not mode_match and ("not explicitly" in web_mode.lower() or "not found" in web_mode.lower() or web_mode in ['N/A', '', 'Not found', 'information not explicitly mentioned']):
                         mode_match = True
@@ -6667,7 +6990,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     course['web_duration'] = web_duration
                     course['web_mode'] = web_mode
                     course['web_language'] = web_language
-                    
+
                     # Match flags for the report
                     course['cost_match'] = cost_match
                     course['duration_match'] = duration_match
@@ -6676,6 +6999,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     course['sk_match'] = sk_match
                     course['uni_match'] = uni_match
 
+                    self._classify_and_set_issue(course, matched_fields=matched_fields, failed_fields=failed_fields, explored=explored)
+
                     url_cache[cache_key] = {
                         "web_status": final_status, "reason": final_reason,
                         "web_name": course['web_name'], "web_cost": course['web_cost'],
@@ -6683,7 +7008,9 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         "scholarship_found": scholarship_found, "direct_link_working": direct_link_working,
                         "web_duration": course['web_duration'], "web_mode": course['web_mode'], "web_language": course['web_language'],
                         "cost_match": cost_match, "duration_match": duration_match, "mode_match": mode_match,
-                        "lang_match": lang_match, "sk_match": sk_match, "uni_match": uni_match
+                        "lang_match": lang_match, "sk_match": sk_match, "uni_match": uni_match,
+                        "issue_category": course.get('issue_category', ''), "issue_sub_type": course.get('issue_sub_type', ''),
+                        "error_screenshot_path": course.get('error_screenshot_path', ''), "retry_count": course.get('retry_count', 0)
                     }
 
                     print(f"    -> RESULT: {final_status} | {', '.join(matched_fields) if matched_fields else 'Link accessible'}")
@@ -6742,7 +7069,13 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             course['web_status'] = "FALSE"
                             course['reason'] = f"Browser verification failed before course evidence could be confirmed."
                             
-                    url_cache[cache_key] = {"web_status": course.get('web_status', 'FALSE'), "reason": course.get('reason', ''), "is_hard_error": course.get('is_hard_error', True)}
+                    self._classify_and_set_issue(course)
+                    url_cache[cache_key] = {
+                        "web_status": course.get('web_status', 'FALSE'), "reason": course.get('reason', ''),
+                        "is_hard_error": course.get('is_hard_error', True),
+                        "issue_category": course.get('issue_category', ''), "issue_sub_type": course.get('issue_sub_type', ''),
+                        "error_screenshot_path": course.get('error_screenshot_path', ''), "retry_count": course.get('retry_count', 0)
+                    }
                     # Recovery: Check if driver is responsive
                     is_alive = False
                     try:
@@ -6750,7 +7083,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         is_alive = True
                     except Exception:
                         pass
-                        
+
                     if not is_alive:
                         print("    -> Driver appears dead. Recreating browser instance...")
                         try: 
@@ -6793,7 +7126,12 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             print("    -> CRITICAL: Failed to recover browser instance!")
 
             except EarlyExit:
-                pass
+                # Ensure classification is set for courses that exited early (e.g. no URL, hard errors)
+                if not course.get('issue_category') and course.get('web_status') == 'FALSE':
+                    self._classify_and_set_issue(course)
+                elif course.get('web_status') == 'MATCH' and not course.get('issue_category'):
+                    course['issue_category'] = ISSUE_CATEGORY_VERIFIED
+                    course['issue_sub_type'] = 'perfect_match'
             finally:
                 with checkpoint_lock:
                     try:
@@ -7019,7 +7357,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             df = None
             
         if df is None:
-            columns = ['Index', 'Domain', 'Country', 'Course Name', 'University (PDF)', 'University (Web)', 'University Match', 'Cost (PDF)', 'Cost (Web)', 'Cost Match', 'Duration (PDF)', 'Duration (Web)', 'Duration Match', 'Mode (PDF)', 'Mode (Web)', 'Mode Match', 'Language (PDF)', 'Language (Web)', 'Language Match', 'Skills (PDF)', 'Skills (Web)', 'Skills Match', 'QS (PDF)', 'QS (Web)', 'QS Match', 'NIRF (PDF)', 'NIRF (Web)', 'NIRF Match', 'Free (PDF)', 'Free (Web)', 'Free Match', 'Link Working', 'Web Status', 'Description']
+            columns = ['Index', 'Domain', 'Country', 'Course Name', 'University (PDF)', 'University (Web)', 'University Match', 'Cost (PDF)', 'Cost (Web)', 'Cost Match', 'Duration (PDF)', 'Duration (Web)', 'Duration Match', 'Mode (PDF)', 'Mode (Web)', 'Mode Match', 'Language (PDF)', 'Language (Web)', 'Language Match', 'Skills (PDF)', 'Skills (Web)', 'Skills Match', 'QS (PDF)', 'QS (Web)', 'QS Match', 'NIRF (PDF)', 'NIRF (Web)', 'NIRF Match', 'Free (PDF)', 'Free (Web)', 'Free Match', 'Link Working', 'Web Status', 'Issue Category', 'Issue Sub-Type', 'Retry Count', 'Error Screenshot', 'Description']
             df = pd.DataFrame(columns=columns)
             df.set_index('Index', inplace=True)
 
@@ -7192,6 +7530,10 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 'Free Match': get_web_val('Free Match', free_status),
                 'Link Working': get_web_val('Link Working', 'Working / Accessible' if not is_hard_error else 'Error'),
                 'Web Status': get_web_val('Web Status', course.get('web_status', '')),
+                'Issue Category': course.get('issue_category', ''),
+                'Issue Sub-Type': course.get('issue_sub_type', ''),
+                'Retry Count': course.get('retry_count', 0),
+                'Error Screenshot': course.get('error_screenshot_path', ''),
                 'Description': desc
             }
             
