@@ -230,16 +230,11 @@ class LLMManager:
         print("      -> [LLM Manager] CRITICAL ERROR: All Groq, Mistral, and SambaNova keys failed for Vision!")
         return None
 
-<<<<<<< HEAD
-    def _call_ollama(self, prompt: str, system: Optional[str], format: str, temperature: float, *, url: str, model: str) -> Optional[str]:
+    def _call_ollama(self, prompt: str, system: Optional[str], format: str, temperature: float, *, url: str = None, model: str = None) -> Optional[str]:
+        if not url: url = f"{self.ollama_api_url}/api/generate"
+        if not model: model = self.ollama_model
         payload = {
             "model": model,
-=======
-    def _call_ollama(self, prompt: str, system: Optional[str], format: str, temperature: float) -> Optional[str]:
-        url = f"{self.ollama_api_url}/api/generate"
-        payload = {
-            "model": self.ollama_model,
->>>>>>> 1743106 (fixing issues with cost, ranking and much more)
             "prompt": prompt,
             "stream": False,
             "options": {
