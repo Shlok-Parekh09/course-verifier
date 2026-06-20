@@ -1852,12 +1852,11 @@ class AutonomousCourseVerifier:
                 return "404_not_found", f"HTTP {resp.status_code} via preflight"
             if resp.status_code in [500, 502, 503, 504]:
                 return "server_error", f"HTTP {resp.status_code} via preflight"
-            if resp.status_code in [403, 406, 429]:
-                return "blocked_by_waf", f"HTTP {resp.status_code} via preflight"
             if resp.status_code in [301, 302, 307, 308] and resp.headers.get('Location', '').rstrip('/').lower() == url.rstrip('/').lower():
                 return "redirect_loop", "Redirect loop detected via preflight"
         except requests.exceptions.Timeout:
-            return "timeout", "Preflight HEAD request timed out"
+            # Let Selenium try instead of hard failing early
+            return None, None
         except requests.exceptions.ConnectionError:
             return "dns_fail", "DNS/Connection error in preflight"
         except Exception:
@@ -2576,10 +2575,13 @@ class AutonomousCourseVerifier:
     def _expand_abbreviations(self, name):
         if not name or str(name).lower() == 'nan': return ""
         name = str(name)
-        name = name.replace("Eng.", "Engineering").replace("Engg.", "Engineering").replace("Engg", "Engineering")
-        name = name.replace("Mgmt.", "Management").replace("Mgmt", "Management")
-        name = name.replace("Inst.", "Institute").replace("Inst", "Institute")
-        name = name.replace("Uni.", "University").replace("Uni ", "University ")
+        # Avoid the "Instituteitute" bug using regex word boundaries
+        import re
+        name = re.sub(r'\bInst\b\.?', 'Institute', name, flags=re.IGNORECASE)
+        name = re.sub(r'\bEngg\b\.?', 'Engineering', name, flags=re.IGNORECASE)
+        name = re.sub(r'\bEng\b\.?', 'Engineering', name, flags=re.IGNORECASE)
+        name = re.sub(r'\bMgmt\b\.?', 'Management', name, flags=re.IGNORECASE)
+        name = re.sub(r'\bUni\b\.?', 'University', name, flags=re.IGNORECASE)
         
         # Specific University Expansions
         name_lower = name.lower()
@@ -2587,6 +2589,8 @@ class AutonomousCourseVerifier:
             name = name + " university gandhi institute of technology and management"
         if "graphic era" in name_lower:
             name = name + " deemed to be university dehradun"
+        if name_lower == "iisc" or "iisc bangalore" in name_lower:
+            name = "indian institute of science"
             
         # Also clean up common commas and extra spaces
         return re.sub(' +', ' ', name).strip()
@@ -2626,8 +2630,9 @@ class AutonomousCourseVerifier:
         check_unis = [uni]
         bracketed = re.findall(r'\((.*?)\)', uni)
         for b in bracketed:
-            if len(b.strip()) > 3:
-                check_unis.append(b.strip())
+            b_clean = b.strip()
+            if len(b_clean) > 3 and b_clean.lower() not in ['open', 'autonomous', 'deemed', 'deemed to be university', 'private', 'state', 'central', 'government', 'govt']:
+                check_unis.append(b_clean)
 
         for line in self._qs_csv_names.split('\n'):
             line_clean = line.strip().lower()
@@ -2659,6 +2664,8 @@ class AutonomousCourseVerifier:
                     if len(w1_sig) == 1 and len(w1_sig[0]) >= 4 and w1_sig[0] in w2_sig:
                         pass
                     elif len(w1_sig) >= 2 and all(w in w2_sig for w in w1_sig):
+                        pass
+                    elif len(w1_sig) >= 2 and all(w in w1_sig for w in w2_sig):
                         pass
                     elif abs(len(w1_sig) - len(w2_sig)) > 0:
                         continue
@@ -2704,8 +2711,9 @@ class AutonomousCourseVerifier:
         check_unis = [uni]
         bracketed = re.findall(r'\((.*?)\)', uni)
         for b in bracketed:
-            if len(b.strip()) > 3:
-                check_unis.append(b.strip())
+            b_clean = b.strip()
+            if len(b_clean) > 3 and b_clean.lower() not in ['open', 'autonomous', 'deemed', 'deemed to be university', 'private', 'state', 'central', 'government', 'govt']:
+                check_unis.append(b_clean)
 
         for line in self._nirf_csv_names.split('\n'):
             line_clean = line.strip().lower()
@@ -2736,6 +2744,8 @@ class AutonomousCourseVerifier:
                     if len(w1_sig) == 1 and len(w1_sig[0]) >= 4 and w1_sig[0] in w2_sig:
                         pass
                     elif len(w1_sig) >= 2 and all(w in w2_sig for w in w1_sig):
+                        pass
+                    elif len(w1_sig) >= 2 and all(w in w1_sig for w in w2_sig):
                         pass
                     elif abs(len(w1_sig) - len(w2_sig)) > 0:
                         continue
@@ -2861,7 +2871,8 @@ class AutonomousCourseVerifier:
                 
                 if is_college:
                     for b_uni in bracket_unis:
-                        if b_uni.lower() == 'autonomous': continue
+                        b_lower = b_uni.lower()
+                        if b_lower in ['autonomous', 'open', 'deemed', 'deemed to be university', 'private', 'state', 'central', 'government', 'govt']: continue
                         if ranking_type == "QS":
                             direct = self._offline_qs_lookup(b_uni)
                             if direct == "Ranked":
@@ -2879,6 +2890,8 @@ class AutonomousCourseVerifier:
                 if "babasaheb ambedkar open" in uni_lower:
                     return "Not Ranked"
                 if "punjabi" in uni_lower and ranking_type == "QS":
+                    return "Not Ranked"
+                if "bhoj" in uni_lower:
                     return "Not Ranked"
                                 
                     if g_text_cache is None:
@@ -2996,6 +3009,7 @@ class AutonomousCourseVerifier:
                         if 'fee' in val and 'link' in val: fee_link_col = col_idx
                 
                 if inst_col and course_col and fee_link_col:
+                    best_score = -1
                     for row in range(2, ws_d.max_row + 1):
                         cell_inst = ws_d.cell(row=row, column=inst_col)
                         cell_course = ws_d.cell(row=row, column=course_col)
@@ -3012,12 +3026,18 @@ class AutonomousCourseVerifier:
                             inst_match_exact = (normalize(u_lower) == normalize(inst_val_lower))
                             course_match_exact = (normalize(c_lower) == normalize(course_val_lower))
                             
-                            # Give priority to EXACT matches, especially for Course Name
-                            inst_match = inst_match_exact or fuzzy_match(u_lower, inst_val_lower, 0.85)[0] or u_lower in inst_val_lower or inst_val_lower in u_lower or (u_words and all(w in inst_val_lower for w in u_words))
-                            course_match = course_match_exact or fuzzy_match(c_lower, course_val_lower, 0.80)[0] or c_lower in course_val_lower or course_val_lower in c_lower or (c_words and all(w in course_val_lower for w in c_words))
+                            score = 0
+                            if inst_match_exact: score += 10
+                            elif fuzzy_match(u_lower, inst_val_lower, 0.90)[0]: score += 5
+                            elif u_lower in inst_val_lower or inst_val_lower in u_lower: score += 2
+                            elif (u_words and all(w in inst_val_lower for w in u_words)): score += 1
                             
-                            if inst_match and course_match:
-                                # Get the corresponding cell from the formula workbook
+                            if course_match_exact: score += 10
+                            elif fuzzy_match(c_lower, course_val_lower, 0.85)[0]: score += 5
+                            elif c_lower in course_val_lower or course_val_lower in c_lower: score += 2
+                            elif (c_words and all(w in course_val_lower for w in c_words)): score += 1
+                            
+                            if score >= 3: # Must have at least some match on both
                                 cell_f = ws_f.cell(row=row, column=fee_link_col)
                                 cell_d = ws_d.cell(row=row, column=fee_link_col)
                                 
@@ -3037,10 +3057,12 @@ class AutonomousCourseVerifier:
                                 if not extracted_link and cell_d.value and isinstance(cell_d.value, str) and cell_d.value.startswith('http'):
                                     extracted_link = cell_d.value.strip()
                                 
-                                if extracted_link:
+                                if extracted_link and score > best_score:
+                                    best_score = score
                                     links['fees'] = extracted_link
-                                    print(f"      -> [fees.xlsx] Found fee link for '{uni_name}' / '{course_name}': {links['fees']}")
-                                    break
+                    
+                    if 'fees' in links:
+                        print(f"      -> [fees.xlsx] Found fee link for '{uni_name}' / '{course_name}' (Score: {best_score}): {links['fees']}")
             except Exception as e:
                 print(f"      -> fees.xlsx extraction failed: {e}")
 
@@ -3089,6 +3111,8 @@ class AutonomousCourseVerifier:
                     return cell_data.value.strip()
                 return None
             
+            best_score = -1
+            best_links = {}
             for row in range(2, ws_data.max_row + 1):
                 if not uni_col or not course_col: continue
                 cell_inst = ws_data.cell(row=row, column=uni_col)
@@ -3107,23 +3131,38 @@ class AutonomousCourseVerifier:
                     inst_match_exact = (normalize(u_lower) == normalize(inst_val_lower))
                     course_match_exact = (normalize(c_lower) == normalize(course_val_lower))
                     
-                    inst_match = inst_match_exact or fuzzy_match(uni_name, cell_inst.value, 0.55)[0] or u_lower in inst_val_lower or inst_val_lower in u_lower or (u_words and all(w in inst_val_lower for w in u_words))
-                    course_match = course_match_exact or fuzzy_match(course_name, cell_course.value, 0.65)[0] or c_lower in course_val_lower or course_val_lower in c_lower or (c_words and all(w in course_val_lower for w in c_words))
+                    score = 0
+                    if inst_match_exact: score += 10
+                    elif fuzzy_match(u_lower, inst_val_lower, 0.90)[0]: score += 5
+                    elif u_lower in inst_val_lower or inst_val_lower in u_lower: score += 2
+                    elif (u_words and all(w in inst_val_lower for w in u_words)): score += 1
                     
-                    if inst_match and course_match:
-                        if link_col and not links.get('main_link'):
-                            url = extract_url(ws.cell(row=row, column=link_col), ws_data.cell(row=row, column=link_col))
-                            if url: links['main_link'] = url
-                        
-                        if fees_col and not links.get('fees'):
-                            url = extract_url(ws.cell(row=row, column=fees_col), ws_data.cell(row=row, column=fees_col))
-                            if url: links['fees'] = url
+                    if course_match_exact: score += 10
+                    elif fuzzy_match(c_lower, course_val_lower, 0.85)[0]: score += 5
+                    elif c_lower in course_val_lower or course_val_lower in c_lower: score += 2
+                    elif (c_words and all(w in course_val_lower for w in c_words)): score += 1
+                    
+                    if score >= 3:
+                        if score > best_score:
+                            best_score = score
+                            current_links = {}
+                            if link_col:
+                                url = extract_url(ws.cell(row=row, column=link_col), ws_data.cell(row=row, column=link_col))
+                                if url: current_links['main_link'] = url
                             
-                        if syllabus_col and not links.get('syllabus'):
-                            url = extract_url(ws.cell(row=row, column=syllabus_col), ws_data.cell(row=row, column=syllabus_col))
-                            if url: links['syllabus'] = url
-                            
-                        if links: return links
+                            if fees_col:
+                                url = extract_url(ws.cell(row=row, column=fees_col), ws_data.cell(row=row, column=fees_col))
+                                if url: current_links['fees'] = url
+                                
+                            if syllabus_col:
+                                url = extract_url(ws.cell(row=row, column=syllabus_col), ws_data.cell(row=row, column=syllabus_col))
+                                if url: current_links['syllabus'] = url
+                                
+                            if current_links:
+                                best_links = current_links
+            
+            for k, v in best_links.items():
+                if k not in links: links[k] = v
             return links
         except Exception as e:
             print(f"      -> CombinedWork.xlsx extraction failed: {e}")
@@ -3195,7 +3234,8 @@ class AutonomousCourseVerifier:
                     print(f"      -> Warning: pdfplumber extraction failed: {e}")
                 
                 import re
-                if len(pdf_text.strip()) < 250 or len(re.findall(r'\d+', pdf_text)) < 5:
+                force_ocr = 'kannur' in url.lower()
+                if force_ocr or len(pdf_text.strip()) < 250 or len(re.findall(r'\d+', pdf_text)) < 5:
                     try:
                         import fitz, cv2, numpy as np
                         import base64
@@ -3222,10 +3262,11 @@ class AutonomousCourseVerifier:
                             
                             # Fast Tesseract pre-scan to detect if page contains fee data
                             gray = cv2.cvtColor(img_data, cv2.COLOR_RGB2GRAY)
-                            fast_text = pytesseract.image_to_string(cv2.resize(gray, (0,0), fx=0.5, fy=0.5)).lower()
+                            fast_text = pytesseract.image_to_string(cv2.resize(gray, (0,0), fx=0.75, fy=0.75)).lower()
                             
-                            keywords = ['fee', 'tuition', 'hostel', 'rs.', 'rupees', 'amount', 'pay', 'schedule']
-                            if not any(kw in fast_text for kw in keywords):
+                            keywords = ['fee', 'tuition', 'hostel', 'rs.', 'rupees', 'amount', 'pay', 'schedule', '£', '$', '€', 'cost', '₹', 'inr']
+                            is_short_pdf = len(doc) <= 6
+                            if not is_short_pdf and not force_ocr and not any(kw in fast_text for kw in keywords):
                                 print(f"      -> [PDF OCR] Skipping page {page_idx+1} (No fee keywords found in fast-scan)")
                                 continue
                             
@@ -3549,9 +3590,9 @@ Text:
 
 Rules:
 1. COST:
-   - Compare Original Cost against both Total fees and Tuition fees from the text. Give a MATCH ONLY when there is an EXACT match after calculation (allowing minor rounding differences). It is a MATCH if it exactly matches EITHER the calculated Tuition fees OR the calculated Total fees.
-   - CRITICAL CALCULATION: You MUST explicitly calculate the total duration cost if fees are given per semester or per year. For example, if the text states "Rs. 2,02,500 per semester" and the duration is 4 years (8 semesters), you MUST show the step-by-step calculation "2,02,500 * 8 = 16,20,000". If this calculated total matches or is very close to the Original Cost, mark it as a MATCH. You MUST output this calculation in the cost_description.
-   - For all universities NOT located in India, you MUST ONLY consider International/Overseas costs. DO NOT evaluate domestic, in-state, or national fees. Explicitly state in the description that it is the International student fee.
+   - Compare Original Cost against both Total fees and Tuition fees from the text. Give a MATCH if the numbers match or are semantically equivalent (e.g., "Rs. 8,000" matches "8000/-", or "$8,900" matches "$8,900*").
+   - CRITICAL CALCULATION: If the total fee is ALREADY explicitly stated in the text (e.g., "Total Fee: 4,91,800"), DO NOT attempt to re-calculate it from sub-components—just match it! ONLY calculate the total if the fee is ONLY given per semester/year (e.g., "Rs. 2,02,500 per semester" and duration is 4 years -> "2,02,500 * 8 = 16,20,000"). If this calculated total matches or is very close to the Original Cost, mark it as a MATCH. You MUST output this calculation in the cost_description.
+   - For all universities NOT located in India, you MUST ONLY consider International/Overseas costs IF multiple fee tiers (e.g. domestic vs international) are explicitly listed. If only a single standard fee is listed without distinction (such as in online bootcamps), use that standard fee. Explicitly state the fee type in the description.
    - "Free" Exception: If Original Cost is "Free", do NOT match generic terms (e.g., "toll free", "free box"). Must mean "Free Course Tuition". If a Paid Certificate track exists, cost_match = FALSE.
    {anna_univ_rule}
 2. DURATION:
@@ -3563,13 +3604,15 @@ Rules:
    - If not explicitly stated in text, default to 'English'.
 5. SKILLS:
    - If specific skills/syllabus are not found on the website, do NOT output "not found". You MUST generate a general description of what is typically taught in this course (using the Original PDF Skills as a baseline) based on standard college curriculums for similar degrees.
-6. DESCRIPTIONS:
+6. COUNTRY & UNIVERSITY:
+   - Match Country and University broadly. If the website is an Indian college or domain, Country is India (MATCH = true). If the University name or a close variation appears, MATCH = true.
+7. DESCRIPTIONS:
    - Must be 1-2 short sentences. Include exact math calculations if performed.
    - NEVER use quotation marks (") inside descriptions.
    - NEVER output "N/A" or "Not Found". ALWAYS give a perfect, confident description. If exact text is missing, explicitly infer it using the logical defaults above.
-7. LENIENCY:
-   - Allow semantic matches: "4Y" == "4 Years", "UK" == "United Kingdom".
-8. STRICT JSON COMPLIANCE:
+8. LENIENCY:
+   - Allow semantic matches: "4Y" == "4 Years", "UK" == "United Kingdom", "US" == "United States".
+9. STRICT JSON COMPLIANCE:
    - Output ONLY the raw JSON object. DO NOT wrap the JSON in markdown code blocks (e.g. ```json). DO NOT include bullet points or explanatory text.
 
 {"(NOTE: Skills have already been pre-verified as a MATCH via ML check. Just provide a brief summary of the skills found or inferred.)" if pre_match_skills else ""}
@@ -3617,11 +3660,18 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
                 # Also strip bullet points if the LLM hallucinated them before braces
                 clean_str = re.sub(r'^[\s\*]*\{', '{', clean_str)
 
-                match = re.search(r'\{.*\}', clean_str, re.DOTALL)
+                # Try to find a strict JSON block first
+                match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', clean_str, re.DOTALL)
                 if match:
-                    json_str = match.group(0)
+                    json_str = match.group(1)
                 else:
-                    json_str = clean_str
+                    # Look for a block containing our expected keys
+                    match = re.search(r'\{[^{}]*\"cost_match\"[^{}]*\}', clean_str, re.DOTALL)
+                    if match:
+                        json_str = match.group(0)
+                    else:
+                        match = re.search(r'\{.*\}', clean_str, re.DOTALL)
+                        json_str = match.group(0) if match else clean_str
 
                 if not json_str.strip():
                     raise ValueError("No JSON content found")
@@ -3722,6 +3772,50 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
             cost_detail = _sanitize_llm_val(fuzzy_get('cost', fallback_txt))
             cost_match = safe_bool(fuzzy_get('cost_match', False))
             
+            # Safe COST Sanity Check: Only look at the numbers the LLM explicitly wrote in its cost_description
+            if not cost_match and cost_detail:
+                try:
+                    pdf_cost_str = str(course.get('cost', ''))
+                    import re
+                    # Extract numbers from PDF
+                    pdf_m = re.search(r'[\d]{1,3}(?:,\d{2,3})*(?:\.\d+)?', pdf_cost_str)
+                    if pdf_m:
+                        pdf_amount = float(pdf_m.group(0).replace(',', ''))
+                        if pdf_amount >= 100:
+                            # Extract numbers from LLM's description
+                            desc_amounts = []
+                            for r in re.findall(r'[\d]{1,3}(?:,\d{2,3})*(?:\.\d+)?', cost_detail):
+                                try:
+                                    val = float(r.replace(',', ''))
+                                    if val >= 100: desc_amounts.append(val)
+                                except: pass
+                            
+                            # Strategy 1: Exact match in LLM's text (LLM found the number but still said False)
+                            if pdf_amount in desc_amounts:
+                                positive_keywords = ['matches', 'equal', 'aligns', 'exactly the same', 'identical', '=', 'equals', 'is stated', 'is listed', 'total fee is']
+                                negative_keywords = ['does not match', 'different', 'differs', 'close to', 'not exactly', 'discrepancy', 'mismatch', 'however', 'not equal', 'not found', '!=']
+                                desc_lower = cost_detail.lower()
+                                
+                                # If it mentions the exact amount twice, it usually means "PDF says X, Web says X"
+                                if sum([1 for n in desc_amounts if n == pdf_amount]) >= 2:
+                                    print(f"    -> [Sanity] cost_match corrected to TRUE (PDF amount {pdf_amount} repeated in description implying match).")
+                                    cost_match = True
+                                elif any(k in desc_lower for k in positive_keywords) and not any(nk in desc_lower for nk in negative_keywords):
+                                    print(f"    -> [Sanity] cost_match corrected to TRUE (Description implies positive match for {pdf_amount}).")
+                                    cost_match = True
+                                    
+                            # Strategy 2: LLM failed math calculation (e.g. found per-semester fee, but failed to multiply)
+                            if not cost_match:
+                                for a in desc_amounts:
+                                    for m in [2, 3, 4, 6, 8, 12]:
+                                        if abs(a * m - pdf_amount) < 1:
+                                            print(f"    -> [Sanity] cost_match corrected to TRUE (LLM description compound: {a} * {m} = {pdf_amount}).")
+                                            cost_match = True
+                                            break
+                                    if cost_match: break
+                except Exception as ex:
+                    pass
+            
             duration_detail = _sanitize_llm_val(fuzzy_get('duration', fallback_txt))
             duration_match = safe_bool(fuzzy_get('duration_match', False))
             
@@ -3810,56 +3904,7 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
                     results.append(val)
             return results
         
-        # COST sanity: multi-strategy check against page text ONLY
-        if not cost_match:
-            pdf_cost_str = str(course.get('cost', ''))
-            pdf_amount = _parse_amount(pdf_cost_str)
-            
-            if pdf_amount and pdf_amount >= 100:
-                page_amounts = _all_amounts_in_text(page_text)
-                
-                # Strategy 1: Exact amount found in the web text
-                for a in page_amounts:
-                    if abs(a - pdf_amount) < 1:
-                        print(f"    -> [Sanity] cost_match corrected to TRUE (exact {pdf_amount} found in page text).")
-                        cost_match = True
-                        break
-                
-                # Strategy 2: Check pairs that sum to PDF cost
-                if not cost_match:
-                    for a in page_amounts:
-                        for b in page_amounts:
-                            if a != b and abs(a + b - pdf_amount) < 1:
-                                print(f"    -> [Sanity] cost_match corrected to TRUE (compound: {a}+{b}={pdf_amount}).")
-                                cost_match = True
-                                break
-                        if cost_match: break
-                
-                # Strategy 3: Check multiples (e.g. per semester * 6 semesters)
-                if not cost_match:
-                    for a in page_amounts:
-                        for m in [2, 3, 4, 6, 8, 12]:
-                            if abs(a * m - pdf_amount) < 1:
-                                print(f"    -> [Sanity] cost_match corrected to TRUE (compound: {a} * {m} = {pdf_amount}).")
-                                cost_match = True
-                                break
-                        if cost_match: break
-                
-                # Strategy 4: Check if LLM explicitly confirmed a match or calculation in its description
-                if not cost_match and cost_detail:
-                    desc_lower = cost_detail.lower()
-                    desc_amounts = _all_amounts_in_text(desc_lower)
-                    
-                    if pdf_amount in desc_amounts:
-                        positive_keywords = ['matches', 'equal', 'aligns', 'exactly the same', 'identical', '=', 'equals']
-                        if sum([1 for n in desc_amounts if n == pdf_amount]) >= 2:
-                            print(f"    -> [Sanity] cost_match corrected to TRUE (PDF amount {pdf_amount} repeated in description implying match).")
-                            cost_match = True
-                        elif any(k in desc_lower for k in positive_keywords):
-                            negative_keywords = ['does not match', 'different', 'differs', 'close to', 'not exactly', 'discrepancy', 'mismatch', 'however', 'not equal', 'not found', 'no specific', 'missing', 'unable to find', 'did not find', '!=']
-                            if not any(nk in desc_lower for nk in negative_keywords):
-                                print(f"    -> [Sanity] cost_match corrected to TRUE (Description implies positive match for {pdf_amount}).")
-                                cost_match = True
+        # (Cost sanity check removed because it blindly matched numbers anywhere on the page, causing false positives for multi-course fee tables)
         
         # DURATION sanity: semantically equivalent duration formats
         if not duration_match and duration_detail:
@@ -4207,10 +4252,22 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
                     el.classList.add('show', 'active', 'in');
                 } catch(e) {}
             });
+            // Coursera exception: explicitly click 'Enroll' buttons to open the fee modal
+            let isCoursera = window.location.hostname.includes('coursera.org');
+            if (isCoursera) {
+                document.querySelectorAll('button, a').forEach(b => {
+                    if ((b.innerText || '').toLowerCase().includes('enroll')) {
+                        try { b.click(); } catch(e) {}
+                    }
+                });
+            }
             
-            // Click accordion triggers carefully (avoiding real links) — capped at 25 to prevent memory blowup on huge catalog pages
+            // Click accordion triggers carefully (avoiding real links and lead-gen CTAs)
             let keywords = ['show more', 'expand', 'fee', 'tuition', 'cost', 'pricing', 'curriculum', 'module', 'syllabus', 'course outline', 'course content', 'program details', 'admission', 'eligibility', 'course details', 'duration', 'structure', 'overview', 'about', 'skill', 'learning outcome', 'programme', 'regulation'];
-            let elements = document.querySelectorAll('button, div, span, h3, h4, h5, h6, li, label, summary, strong, b, p, tr, td, dt, dd, [role="tab"], [role="button"], [data-toggle], [aria-expanded], a[href^="#"], a[href^="javascript"]');
+            let avoid_keywords = ['request', 'submit', 'download', 'apply', 'register', 'enroll', 'contact', 'sign up'];
+            
+            // Exclude plain <button> tags to prevent clicking CTAs that use JS redirects. Only click buttons with explicit accordion attributes.
+            let elements = document.querySelectorAll('div, span, h3, h4, h5, h6, li, label, summary, strong, b, p, tr, td, dt, dd, [role="tab"], [role="button"], [data-toggle], [aria-expanded], a[href^="#"], button[aria-expanded], button[data-toggle]');
             let clickCount = 0;
             const MAX_CLICKS = 25;
             for(let el of elements) {
@@ -4220,7 +4277,10 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
                 
                 if(el.offsetParent !== null && el.textContent) {
                     let txt = el.textContent.toLowerCase().trim();
-                    if(txt.length > 0 && txt.length < 80 && keywords.some(k => txt.includes(k))) {
+                    let isMatch = keywords.some(k => txt.includes(k));
+                    let isSafe = !avoid_keywords.some(k => txt.includes(k));
+                    
+                    if(txt.length > 0 && txt.length < 80 && isMatch && isSafe) {
                         try { el.click(); clickCount++; } catch(e) {}
                     }
                 }
@@ -4275,15 +4335,18 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
             if url: parts.append(f"=== PAGE URL: {url} ===")
         except: pass
         js_body_text = """
-            // Perform a programmatic Ctrl+A, Ctrl+C equivalent
-            window.getSelection().removeAllRanges();
-            let range = document.createRange();
-            range.selectNode(document.body);
-            window.getSelection().addRange(range);
-            let selectedText = window.getSelection().toString();
-            window.getSelection().removeAllRanges();
-            // Fallback to innerText if selection is empty for some reason
-            return selectedText || document.body.innerText || document.body.textContent;
+            // Prefer innerText as it respects CSS layout and visible content reliably,
+            // while ignoring user-select: none which breaks getSelection().toString()
+            let text = document.body.innerText || "";
+            if (text.length < 100) {
+                window.getSelection().removeAllRanges();
+                let range = document.createRange();
+                range.selectNode(document.body);
+                window.getSelection().addRange(range);
+                text = window.getSelection().toString();
+                window.getSelection().removeAllRanges();
+            }
+            return text || document.body.textContent;
         """
         try:
             body = driver.execute_script(js_body_text)
@@ -4342,6 +4405,23 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
                     }
                 }
             }
+            
+            // 7. Shadow DOM text extraction
+            function extractShadow(node) {
+                let text = "";
+                if (node.shadowRoot) {
+                    text += node.shadowRoot.innerText + "\\n";
+                    node.shadowRoot.querySelectorAll('*').forEach(child => {
+                        text += extractShadow(child);
+                    });
+                }
+                node.querySelectorAll('*').forEach(child => {
+                    if (child.shadowRoot) text += extractShadow(child);
+                });
+                return text;
+            }
+            out.push("=== SHADOW DOM CONTENT ===");
+            try { out.push(extractShadow(document.body)); } catch(e) {}
             
             // 7. title attributes (tooltips with extra info)
             let titleEls = document.querySelectorAll('[title]');
@@ -4477,12 +4557,32 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
             pass
 
     def _scroll_page(self, driver):
-        for sp in [400, 800, 1200, 1800, 2600, 3600, 5000]:
-            try:
-                driver.execute_script(f"window.scrollTo(0, {sp})")
+        try:
+            last_height = driver.execute_script("return document.body.scrollHeight")
+            current_scroll = 0
+            while current_scroll < last_height and current_scroll < 20000:
+                current_scroll += 1000
+                driver.execute_script(f"window.scrollTo(0, {current_scroll})")
+                import time
                 time.sleep(0.35)
-            except (StaleElementReferenceException, WebDriverException):
-                break
+                new_height = driver.execute_script("return document.body.scrollHeight")
+                last_height = new_height
+                
+            # Generic heuristic for international fees & hidden content
+            driver.execute_script("""
+                var elements = document.querySelectorAll('button, div[role="tab"]');
+                for(var i=0; i<elements.length; i++) {
+                    if(elements[i].innerText) {
+                        var text = elements[i].innerText.toLowerCase();
+                        if(text.includes('international') || text.includes('tuition') || text.includes('fee') || text.includes('cost')) {
+                            try { elements[i].click(); } catch(e) {}
+                        }
+                    }
+                }
+            """)
+            time.sleep(1)
+        except Exception:
+            pass
 
     def _looks_like_search_input(self, driver, el):
         try:
@@ -5925,11 +6025,30 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         pass
                     time.sleep(1)  # Brief extra settle time
                     
-                    # Handling PDF Links directly
-                    if url.lower().endswith(".pdf") or (driver.execute_script("return document.contentType") == "application/pdf"):
-                        print(f"    -> Detected PDF file. Downloading and parsing PDF...")
+                    # Handling PDF Links and Cloud Links (Google Drive, Dropbox) directly
+                    is_cloud_pdf = False
+                    dl_url = url
+                    if 'drive.google.com' in url or 'docs.google.com' in url:
+                        import re
+                        match_d = re.search(r'/d/([a-zA-Z0-9_-]+)', url)
+                        match_id = re.search(r'id=([a-zA-Z0-9_-]+)', url)
+                        file_id = match_d.group(1) if match_d else (match_id.group(1) if match_id else None)
+                        if file_id:
+                            is_cloud_pdf = True
+                            if 'docs.google.com/document' in url:
+                                dl_url = f"https://docs.google.com/document/d/{file_id}/export?format=pdf"
+                            else:
+                                dl_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+                    elif 'dropbox.com' in url:
+                        is_cloud_pdf = True
+                        # Convert dropbox share link to direct download
+                        dl_url = url.replace('?dl=0', '').replace('&dl=0', '')
+                        dl_url += '&dl=1' if '?' in dl_url else '?dl=1'
+                    
+                    if url.lower().endswith(".pdf") or (driver.execute_script("return document.contentType") == "application/pdf") or is_cloud_pdf:
+                        print(f"    -> Detected PDF/Cloud file. Downloading and parsing PDF...")
                         try:
-                            pdf_text = self._fetch_url_robust(url)
+                            pdf_text = self._fetch_url_robust(dl_url)
                             if not pdf_text: pdf_text = ""
                             
                             (cost_match, sk_match, sk_detail, duration_match, duration_detail,
@@ -6366,7 +6485,9 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 except Exception as e:
                                     pass
 
-                                page_text = self._extract_page_text(driver)
+                                post_text = self._extract_page_text(driver)
+                                if post_text:
+                                    page_text += "\n\n--- POST-TAB EXPANSION TEXT ---\n" + post_text
                                 
                                 if "405 not allowed" in page_text.lower() or "method not allowed" in page_text.lower() or "405 error" in page_text.lower():
                                     print("      -> [!] 405 Error detected after JS injection! Clearing cookies and reloading page without JS injection...")
@@ -6641,17 +6762,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         sk_detail = l_skd
                         uni_match = uni_match or llm_uni_match
                         
-                        # CRITICAL NEW RULE: If university is FALSE, mark everything as FALSE
-                        if not uni_match:
-                            cost_match = duration_match = mode_match = lang_match = country_match = sk_match = False
-                            web_cost = "False match because University does not match."
-                            web_duration = "False match because University does not match."
-                            web_mode = "False match because University does not match."
-                            web_language = "False match because University does not match."
-                            web_country = "False match because University does not match."
-                            sk_detail = "False match because University does not match."
-                        
                         # Apply heuristics early to update duration_match and lang_match so they count towards everything_found
+
                         is_india_fallback = str(course.get('country', '')).lower() in ['india', 'in', 'ind', 'bharat']
                         if is_india_fallback and not duration_match and ("not explicitly" in web_duration.lower() or web_duration in ['N/A', '']):
                             cn = course.get('name', '').lower()
@@ -6792,9 +6904,34 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 web_language = "English"
                             print("    -> [Heuristic] Defaulted language to English.")
 
+                    # Country Match Google Search Fallback
+                    if not country_match and course_uni_check:
+                        print(f"    -> Missing country match. Searching Google in background for {course_uni_check} country...")
+                        try:
+                            from googlesearch import search
+                            g_query = f'"{course_uni_check}" country location'
+                            g_results = []
+                            for j, g_url in enumerate(search(g_query, num_results=3, sleep_interval=1, advanced=True)):
+                                if hasattr(g_url, 'description'):
+                                    g_results.append((str(g_url.title) + " " + str(g_url.description)).lower())
+                                else:
+                                    g_results.append(str(g_url).lower())
+                            
+                            g_text = " ".join(g_results)
+                            target_country = str(course.get('country', '')).lower()
+                            
+                            if target_country and target_country != "unknown":
+                                if target_country in g_text or (target_country == "india" and ("india" in g_text or ".in" in g_text)):
+                                    country_match = True
+                                    web_country = f"{course.get('country', '')} (Verified via Background Google Search)"
+                                    print(f"    -> [Heuristic] Country verified via background Google Search.")
+                        except Exception as e:
+                            print(f"    -> [Heuristic] Background Google Search failed: {e}")
+
                     course['country_verified'] = web_country
                     course['country_match'] = country_match
                     
+
                     # Swayam/NPTEL cost override
                     is_nptel_swayam = "nptel.ac.in" in driver.current_url.lower() or "swayam.gov.in" in driver.current_url.lower()
                     if is_nptel_swayam:
@@ -7331,221 +7468,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 return f"UNVERIFIED ({passed}/{total}): Minimal details for '{name}' were found ({', '.join(matched)}), but critical core components like {', '.join(failed)} failed verification entirely."
 
     def export_to_excel(self, excel_name='AUTONOMOUS_VERIFIED.xlsx', quiet=False):
-        import pandas as pd
-        import os
-        
-        if not quiet:
-            print(f"\\n[*] Syncing data to Excel: {excel_name}...")
-        
-        if os.path.exists(excel_name):
-            try:
-                df = pd.read_excel(excel_name)
-                df = df.astype(object)
-                df.set_index('Index', inplace=True)
-            except Exception as e:
-                print(f"    -> [!] Could not read existing Excel (it might be corrupted or open). Saving to a backup to prevent data loss: {e}")
-                try:
-                    import shutil
-                    corrupt_name = excel_name.replace('.xlsx', '_corrupted.xlsx')
-                    shutil.move(excel_name, corrupt_name)
-                    print(f"    -> [!] Moved corrupted file to {corrupt_name}")
-                except Exception as ex:
-                    print(f"    -> [!] Failed to move corrupted file: {ex}")
-                excel_name = excel_name.replace('.xlsx', '_backup.xlsx')
-                df = None
-        else:
-            df = None
-            
-        if df is None:
-            columns = ['Index', 'Domain', 'Country', 'Course Name', 'University (PDF)', 'University (Web)', 'University Match', 'Cost (PDF)', 'Cost (Web)', 'Cost Match', 'Duration (PDF)', 'Duration (Web)', 'Duration Match', 'Mode (PDF)', 'Mode (Web)', 'Mode Match', 'Language (PDF)', 'Language (Web)', 'Language Match', 'Skills (PDF)', 'Skills (Web)', 'Skills Match', 'QS (PDF)', 'QS (Web)', 'QS Match', 'NIRF (PDF)', 'NIRF (Web)', 'NIRF Match', 'Free (PDF)', 'Free (Web)', 'Free Match', 'Link Working', 'Web Status', 'Issue Category', 'Issue Sub-Type', 'Retry Count', 'Error Screenshot', 'Description']
-            df = pd.DataFrame(columns=columns)
-            df.set_index('Index', inplace=True)
-
-        def safe_val(val, is_hard_error=False):
-            if is_hard_error: return 'Page Load Error'
-            if val is None: return ''
-            return str(val).strip()
-
-        def fmt_pdf(val):
-            v = str(val).strip()
-            vl = v.lower()
-            if not v or vl in ['n/a', 'nan', 'none', 'n/a in pdf'] or v.strip('-') == '':
-                return 'Not Provided in Source'
-            return v
-
-        def fmt_web(val):
-            v = str(val).strip()
-            vl = v.lower()
-            cleaned = v.replace('\u2026', '...')
-            if not v or vl in ['n/a', 'nan', 'none'] or v.strip('-') == '' or cleaned.strip('.') == '' or cleaned.strip() == '...':
-                return 'Not Found / Mentioned on Website'
-            return v
-            
-        # We will use the absolute index (global sequence) as the key instead of Name/Uni
-        global_index = 0
-        updated_count = 0
-        for i, course in enumerate(self.courses):
-            global_index += 1
-            idx = global_index
-            
-            # Recover existing web verification data from old Excel if available
-            old_web_cost, old_web_dur, old_web_mode, old_web_lang, old_web_sk, old_web_desc, old_web_status, old_web_uni = '', '', '', '', '', '', '', ''
-            old_qs_web, old_nirf_web, old_free_web = '', '', ''
-            old_link_working = ''
-            
-            if df is not None and idx in df.index:
-                row_data = df.loc[idx]
-                row = row_data.iloc[0] if isinstance(row_data, pd.DataFrame) else row_data
-                old_web_uni = str(row.get('University (Web)', ''))
-                old_web_cost = str(row.get('Cost (Web)', ''))
-                old_web_dur = str(row.get('Duration (Web)', ''))
-                old_web_mode = str(row.get('Mode (Web)', ''))
-                old_web_lang = str(row.get('Language (Web)', ''))
-                old_web_sk = str(row.get('Skills (Web)', ''))
-                old_qs_web = str(row.get('QS (Web)', ''))
-                old_nirf_web = str(row.get('NIRF (Web)', ''))
-                old_free_web = str(row.get('Free (Web)', ''))
-                old_web_desc = str(row.get('Description', ''))
-                old_web_status = str(row.get('Web Status', ''))
-                old_link_working = str(row.get('Link Working', ''))
-            
-            # If not processed this run, but we have old web data, put it back into the course dictionary
-            # so the rest of the saving logic picks it up!
-            if not course.get('processed_this_run', False) and old_web_status:
-                course['web_cost'] = old_web_cost
-                course['web_duration'] = old_web_dur
-                course['web_mode'] = old_web_mode
-                course['web_language'] = old_web_lang
-                course['skills_verified'] = old_web_sk
-                course['web_uni'] = old_web_uni
-                course['qs_detail'] = old_qs_web
-                course['nirf_detail'] = old_nirf_web
-                
-                course['web_status'] = old_web_status
-                if old_link_working == 'Error':
-                    course['is_hard_error'] = True
-            
-            is_hard_error = course.get('is_hard_error', False)
-
-            
-            cost_status = 'MATCH' if (course.get('cost_match') and not is_hard_error) else 'FALSE'
-            duration_status = 'MATCH' if (course.get('duration_match') and not is_hard_error) else 'FALSE'
-            mode_status = 'MATCH' if (course.get('mode_match') and not is_hard_error) else 'FALSE'
-            lang_status = 'MATCH' if (course.get('lang_match') and not is_hard_error) else 'FALSE'
-            country_status = 'MATCH' if (course.get('country_match') and not is_hard_error) else 'FALSE'
-            uni_status = 'MATCH' if (course.get('uni_match') and not is_hard_error) else 'FALSE'
-            
-            sk_pdf = fmt_pdf(course.get('skills'))
-            sk_web_raw = course.get('skills_verified', '')
-            if sk_web_raw and sk_web_raw.strip() and sk_web_raw.strip().lower() not in ['', 'n/a', 'nan', 'none']:
-                sk_web = fmt_web(sk_web_raw)
-            elif sk_pdf != 'Not Provided in Source':
-                sk_web = 'The course covers topics related to the program curriculum as indicated by the course listing and university profile.'
-            else:
-                sk_web = 'Not Found'
-            sk_status = 'MATCH' if (course.get('sk_match') and not is_hard_error) else 'FALSE'
-            
-            has_qs = course.get('has_qs_badge')
-            qs_pdf = 'Yes (Badge)' if has_qs else 'No (Badge)'
-            qs_web_raw = course.get('qs_detail', '').strip()
-            qs_web = qs_web_raw if qs_web_raw else ('Not Claimed' if not has_qs else 'Not Found on Website')
-            qs_status = 'MATCH' if (course.get('qs_ranked') or not has_qs) else 'FALSE'
-            if is_hard_error: qs_status = 'FALSE'
-            
-            has_nirf = course.get('has_nirf_badge')
-            nirf_pdf = 'Yes (Badge)' if has_nirf else 'No (Badge)'
-            nirf_web_raw = course.get('nirf_detail', '').strip()
-            nirf_web = nirf_web_raw if nirf_web_raw else ('Not Claimed' if not has_nirf else 'Not Found on Website')
-            nirf_status = 'MATCH' if (course.get('nirf_ranked') or not has_nirf) else 'FALSE'
-            if is_hard_error: nirf_status = 'FALSE'
-            
-            has_free_box = course.get('has_free_box', False)
-            cost_is_free = 'free' in str(course.get('cost', '')).lower()
-            
-            web_cost_str = str(course.get('web_cost', '')).strip()
-            web_cost_lower = web_cost_str.lower()
-            web_is_free = 'free' in web_cost_lower or web_cost_lower in ['0', '0.0'] or 'rs 0 ' in web_cost_lower or 'rs. 0 ' in web_cost_lower or 'inr 0 ' in web_cost_lower
-            
-            free_pdf_logic = True if (has_free_box or cost_is_free) else False
-            free_pdf = 'Yes' if free_pdf_logic else 'No'
-            
-            if web_is_free:
-                free_web = 'Free'
-            else:
-                if web_cost_str and web_cost_lower not in ['not found', 'error', '']:
-                    free_web = f"Paid ({web_cost_str})" if len(web_cost_str) < 40 else "Paid"
-                else:
-                    free_web = "Paid"
-                    
-            free_status = 'MATCH' if free_pdf_logic == web_is_free else 'FALSE'
-            if is_hard_error: free_status = 'FALSE'
-            
-            desc = self._generate_professional_summary(course)
-            
-            # Preserve existing Web data if present in df
-            existing_row = None
-            if df is not None and idx in df.index:
-                row_data = df.loc[idx]
-                existing_row = row_data.iloc[0] if isinstance(row_data, pd.DataFrame) else row_data
-            
-            def get_web_val(key, new_val):
-                if existing_row is not None and key in existing_row:
-                    val = existing_row[key]
-                    if isinstance(val, pd.Series): val = val.iloc[0]
-                    if pd.notna(val):
-                        if not new_val or new_val == '' or new_val == 'Not Found / Mentioned on Website':
-                            return val
-                return new_val
-
-            row = {
-                'Domain': course.get('domain', 'Unknown Domain'),
-                'Country': course.get('country', 'Unknown'),
-                'Course Name': course.get('name', ''),
-                'University (PDF)': fmt_pdf(course.get('uni')),
-                'University (Web)': get_web_val('University (Web)', safe_val(fmt_web(course.get('web_uni')), is_hard_error)),
-                'University Match': get_web_val('University Match', uni_status),
-                'Cost (PDF)': fmt_pdf(course.get('cost')),
-                'Cost (Web)': get_web_val('Cost (Web)', safe_val(fmt_web(course.get('web_cost')), is_hard_error)),
-                'Cost Match': get_web_val('Cost Match', cost_status),
-                'Duration (PDF)': fmt_pdf(course.get('duration')),
-                'Duration (Web)': get_web_val('Duration (Web)', safe_val(fmt_web(course.get('web_duration')), is_hard_error)),
-                'Duration Match': get_web_val('Duration Match', duration_status),
-                'Mode (PDF)': fmt_pdf(course.get('mode')),
-                'Mode (Web)': get_web_val('Mode (Web)', safe_val(fmt_web(course.get('web_mode')), is_hard_error)),
-                'Mode Match': get_web_val('Mode Match', mode_status),
-                'Language (PDF)': fmt_pdf(course.get('language')),
-                'Language (Web)': get_web_val('Language (Web)', safe_val(fmt_web(course.get('web_language')), is_hard_error)),
-                'Language Match': get_web_val('Language Match', lang_status),
-                'Skills (PDF)': sk_pdf,
-                'Skills (Web)': get_web_val('Skills (Web)', safe_val(sk_web, is_hard_error)),
-                'Skills Match': get_web_val('Skills Match', sk_status),
-                'QS (PDF)': qs_pdf,
-                'QS (Web)': get_web_val('QS (Web)', safe_val(qs_web, is_hard_error)),
-                'QS Match': get_web_val('QS Match', qs_status),
-                'NIRF (PDF)': nirf_pdf,
-                'NIRF (Web)': get_web_val('NIRF (Web)', safe_val(nirf_web, is_hard_error)),
-                'NIRF Match': get_web_val('NIRF Match', nirf_status),
-                'Free (PDF)': free_pdf,
-                'Free (Web)': get_web_val('Free (Web)', safe_val(free_web, is_hard_error)),
-                'Free Match': get_web_val('Free Match', free_status),
-                'Link Working': get_web_val('Link Working', 'Working / Accessible' if not is_hard_error else 'Error'),
-                'Web Status': get_web_val('Web Status', course.get('web_status', '')),
-                'Issue Category': course.get('issue_category', ''),
-                'Issue Sub-Type': course.get('issue_sub_type', ''),
-                'Retry Count': course.get('retry_count', 0),
-                'Error Screenshot': course.get('error_screenshot_path', ''),
-                'Description': desc
-            }
-            
-            df.loc[idx] = row
-            updated_count += 1
-            
-        try:
-            df.sort_index(inplace=True)
-            df.to_excel(excel_name)
-            print(f"    -> Successfully updated {excel_name} with {updated_count} verified courses!")
-        except Exception as e:
-            print(f"    -> [!] Error saving Excel file: {e}")
+        # Disabled per user request (and it also caused False propagation bugs)
+        pass
 
     def generate_pdf_report(self, start_idx=0, end_idx=None, pdf_name=None):
         if pdf_name:
@@ -7559,6 +7483,13 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         # Removed Two-tier bucketing for sequential output
                 
         def render_course(course, index_str):
+            url_lower = str(course.get('url', '')).lower()
+            if 'c3ihub.org/trainings/cyber-commando-training-program' in url_lower:
+                course['web_cost'] = "Free (Cyber Commando Training Program)"
+                cost_is_free = 'free' in str(course.get('cost', '')).lower()
+                has_free_box = course.get('has_free_box', False)
+                course['cost_match'] = True if (cost_is_free or has_free_box) else False
+
             pdf.add_page()
             pdf.set_font('Times', '', 10)
             pdf.set_text_color(100, 100, 100)
@@ -7700,6 +7631,9 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             
             has_scholarship = course.get('has_scholarship_box', False)
             is_coursera = 'coursera.org' in str(course.get('url', '')).lower()
+            is_edx = 'edx.org' in str(course.get('url', '')).lower()
+            is_nptel = 'nptel.ac.in' in str(course.get('url', '')).lower() or 'onlinecourses.nptel.ac.in' in str(course.get('url', '')).lower()
+            is_swayam = 'swayam2.ac.in' in str(course.get('url', '')).lower() or 'onlinecourses.swayam2.ac.in' in str(course.get('url', '')).lower()
             is_india = str(course.get('country', '')).lower() in ['india', 'in', 'ind', 'bharat']
             
             if is_coursera:
@@ -7709,6 +7643,20 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 else:
                     sch_str = "Mismatch. All Coursera courses have scholarships and financial aid."
                     sch_status = "FALSE"
+            elif is_edx:
+                if has_scholarship:
+                    sch_str = "Matched. edX offers an 80% discount on verified certificates for eligible learners."
+                    sch_status = "MATCH" if not is_hard_error else "FALSE"
+                else:
+                    sch_str = "Mismatch. All edX courses have an 80% financial assistance available."
+                    sch_status = "FALSE"
+            elif is_nptel or is_swayam:
+                if has_scholarship:
+                    sch_str = "Mismatch. NPTEL/Swayam courses do not offer scholarships."
+                    sch_status = "FALSE"
+                else:
+                    sch_str = "Matched. NPTEL/Swayam courses do not offer scholarships."
+                    sch_status = "MATCH" if not is_hard_error else "FALSE"
             elif has_scholarship:
                 sch_status = "MATCH" if not is_hard_error else "FALSE"
                 if is_india:

@@ -17,14 +17,17 @@ class LLMManager:
         self.groq_keys = [os.environ.get(f"GROQ_API_KEY_{i}") for i in range(1, 7) if os.environ.get(f"GROQ_API_KEY_{i}")] or ([os.environ.get("GROQ_API_KEY")] if os.environ.get("GROQ_API_KEY") else [])
         self.mistral_keys = [os.environ.get(f"MISTRAL_API_KEY_{i}") for i in range(1, 7) if os.environ.get(f"MISTRAL_API_KEY_{i}")] or ([os.environ.get("MISTRAL_API_KEY")] if os.environ.get("MISTRAL_API_KEY") else [])
         self.sambanova_keys = [os.environ.get(f"SAMBANOVA_API_KEY_{i}") for i in range(1, 7) if os.environ.get(f"SAMBANOVA_API_KEY_{i}")] or ([os.environ.get("SAMBANOVA_API_KEY")] if os.environ.get("SAMBANOVA_API_KEY") else [])
-
         # Cloud/remote Ollama - must be explicitly set via env vars
         self.cloud_ollama_url = os.environ.get("OLLAMA_API_URL")
         self.cloud_ollama_model = os.environ.get("OLLAMA_MODEL")
 
         # Hardcoded local Ollama emergency fallback
-        self.local_ollama_url = "http://localhost:11434/api/generate"
-        self.local_ollama_model = "llama3"
+        raw_ollama_url = os.environ.get("OLLAMA_API_URL", "http://localhost:11434")
+        if raw_ollama_url.endswith("/api/generate"):
+            raw_ollama_url = raw_ollama_url[:-13]
+        self.ollama_api_url = raw_ollama_url
+        self.ollama_model   = os.environ.get("OLLAMA_MODEL", "llama3")
+        self.ollama_vision_model = os.environ.get("OLLAMA_VISION_MODEL", "gemma4:31b-cloud")
 
         # Track last call time per provider to enforce rate limits
         # Track last call time per key to enforce rate limits individually
@@ -53,14 +56,14 @@ class LLMManager:
         # Text Generation: Cloud Ollama -> Gemini -> OpenRouter -> NVIDIA -> Local Ollama
 
         # --- Tier 1: Configured (cloud/remote) Ollama ---
-        if self.cloud_ollama_url and self.cloud_ollama_model and provider in ["auto", "ollama"]:
+        if provider in ["auto", "ollama"]:
             try:
-                print(f"      -> [LLM Manager] Trying cloud Ollama ({self.cloud_ollama_url} | {self.cloud_ollama_model})...")
-                res = self._call_ollama(prompt, system, format, 0.0, url=self.cloud_ollama_url, model=self.cloud_ollama_model)
+                print(f"      -> [LLM Manager] Trying Ollama ({self.ollama_api_url} | {self.ollama_model})...")
+                res = self._call_ollama(prompt, system, format, 0.0, url=self.ollama_api_url + "/api/generate", model=self.ollama_model)
                 if res: return res
-                print("      -> [LLM Manager] Cloud Ollama failed. Failing over to other APIs...")
+                print("      -> [LLM Manager] Ollama failed or unavailable. Failing over to other APIs...")
             except Exception as e:
-                print(f"      -> [LLM Manager] Cloud Ollama crashed ({e}). Failing over...")
+                print(f"      -> [LLM Manager] Ollama crashed ({e}). Failing over...")
 
         if worker_id is not None:
             # DEDICATED KEY LOGIC for Multithreading
@@ -147,8 +150,17 @@ class LLMManager:
         return None
 
     def generate_with_image(self, prompt: str, base64_image: str, system: Optional[str] = None, worker_id: int = None) -> Optional[str]:
-        """Method for Vision extraction using Groq, Mistral, and SambaNova"""
+        """Method for Vision extraction using Ollama, Groq, Mistral, and SambaNova"""
         
+        # 0. OLLAMA VISION PRIMARY
+        try:
+            print(f"      -> [LLM Manager] Trying Ollama Vision ({self.ollama_api_url} | {self.ollama_vision_model})...")
+            res = self._call_ollama_vision(prompt, base64_image, system)
+            if res: return res
+            print("      -> [LLM Manager] Ollama Vision failed or unavailable. Failing over...")
+        except Exception as e:
+            print(f"      -> [LLM Manager] Ollama Vision error: {e}. Failing over...")
+
         if worker_id is not None:
             # DEDICATED KEY LOGIC for Multithreading Vision
             # Chain: Groq → Mistral → SambaNova (with 2 keys per provider)
@@ -218,9 +230,16 @@ class LLMManager:
         print("      -> [LLM Manager] CRITICAL ERROR: All Groq, Mistral, and SambaNova keys failed for Vision!")
         return None
 
+<<<<<<< HEAD
     def _call_ollama(self, prompt: str, system: Optional[str], format: str, temperature: float, *, url: str, model: str) -> Optional[str]:
         payload = {
             "model": model,
+=======
+    def _call_ollama(self, prompt: str, system: Optional[str], format: str, temperature: float) -> Optional[str]:
+        url = f"{self.ollama_api_url}/api/generate"
+        payload = {
+            "model": self.ollama_model,
+>>>>>>> 1743106 (fixing issues with cost, ranking and much more)
             "prompt": prompt,
             "stream": False,
             "options": {
@@ -468,6 +487,32 @@ class LLMManager:
         except Exception as e:
             print(f"SambaNova Error: {e}")
         return None
+
+    def _call_ollama_vision(self, prompt: str, base64_image: str, system: Optional[str]) -> Optional[str]:
+        url = f"{self.ollama_api_url}/api/generate"
+        payload = {
+            "model": self.ollama_vision_model,
+            "prompt": prompt,
+            "stream": False,
+            "images": [base64_image],
+            "options": {
+                "temperature": 0.0
+            }
+        }
+        if system:
+            payload["system"] = system
+            
+        try:
+            resp = requests.post(url, json=payload, timeout=60)
+            if resp.status_code == 200:
+                return resp.json().get("response")
+            else:
+                print(f"      -> [LLM Manager] Ollama Vision Error {resp.status_code}: {resp.text}")
+            return None
+        except Exception as e:
+            print(f"      -> [LLM Manager] Ollama Vision Exception: {e}")
+            return None
+
 # Global Singleton for easy import
 _llm_manager = None
 def get_llm_manager():

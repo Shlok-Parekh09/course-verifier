@@ -39,10 +39,11 @@ class DatabaseManager:
         cursor = conn.cursor()
         
         # QS Rankings table - simple membership list (just university names)
+        # QS Rankings table - simple membership list (just university names)
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS qs_rankings (
+            CREATE TABLE IF NOT EXISTS qs_ranking (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                university_name TEXT NOT NULL UNIQUE,
+                university TEXT NOT NULL UNIQUE,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -50,14 +51,14 @@ class DatabaseManager:
         # Create index on university_name for O(log n) lookup
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_qs_university_name 
-            ON qs_rankings(university_name)
+            ON qs_ranking(university)
         ''')
         
         # NIRF Rankings table - simple membership list (just university names)
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS nirf_rankings (
+            CREATE TABLE IF NOT EXISTS nirf_ranking (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                university_name TEXT NOT NULL UNIQUE,
+                university TEXT NOT NULL UNIQUE,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -65,7 +66,7 @@ class DatabaseManager:
         # Create index on university_name for O(log n) lookup
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_nirf_university_name 
-            ON nirf_rankings(university_name)
+            ON nirf_ranking(university)
         ''')
         
         conn.commit()
@@ -79,7 +80,7 @@ class DatabaseManager:
         
         try:
             cursor.execute('''
-                INSERT OR IGNORE INTO qs_rankings (university_name)
+                INSERT OR IGNORE INTO qs_ranking (university)
                 VALUES (?)
             ''', (university_name,))
             conn.commit()
@@ -94,7 +95,7 @@ class DatabaseManager:
         
         try:
             cursor.execute('''
-                INSERT OR IGNORE INTO nirf_rankings (university_name)
+                INSERT OR IGNORE INTO nirf_ranking (university)
                 VALUES (?)
             ''', (university_name,))
             conn.commit()
@@ -110,8 +111,8 @@ class DatabaseManager:
         try:
             # Exact match using index (fastest)
             cursor.execute('''
-                SELECT 1 FROM qs_rankings 
-                WHERE LOWER(university_name) = LOWER(?)
+                SELECT 1 FROM qs_ranking 
+                WHERE LOWER(university) = LOWER(?)
                 LIMIT 1
             ''', (university_name,))
             
@@ -120,8 +121,8 @@ class DatabaseManager:
             
             # Partial match if exact match fails (still uses index for LIKE)
             cursor.execute('''
-                SELECT 1 FROM qs_rankings 
-                WHERE LOWER(university_name) LIKE LOWER(?)
+                SELECT 1 FROM qs_ranking 
+                WHERE LOWER(university) LIKE LOWER(?)
                 LIMIT 1
             ''', (f'%{university_name}%',))
             
@@ -140,8 +141,8 @@ class DatabaseManager:
         try:
             # Exact match using index (fastest)
             cursor.execute('''
-                SELECT 1 FROM nirf_rankings 
-                WHERE LOWER(university_name) = LOWER(?)
+                SELECT 1 FROM nirf_ranking 
+                WHERE LOWER(university) = LOWER(?)
                 LIMIT 1
             ''', (university_name,))
             
@@ -150,8 +151,8 @@ class DatabaseManager:
             
             # Partial match if exact match fails (still uses index for LIKE)
             cursor.execute('''
-                SELECT 1 FROM nirf_rankings 
-                WHERE LOWER(university_name) LIKE LOWER(?)
+                SELECT 1 FROM nirf_ranking 
+                WHERE LOWER(university) LIKE LOWER(?)
                 LIMIT 1
             ''', (f'%{university_name}%',))
             

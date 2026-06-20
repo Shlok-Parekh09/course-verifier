@@ -16,7 +16,6 @@ chrome_profile_*/
 chrome_profile_fallback_*/
 
 # ── Data / Reports / PDFs ─────────────────────────────────────────────────────
-*.pdf
 *.xlsx
 !CombinedWork.xlsx
 *.json
@@ -27,9 +26,7 @@ chrome_profile_fallback_*/
 *_floating_items.json
 master_dashboard_results.json
 verification_screenshots/
-AUTONOMOUS_VERIFIED.xlsx
-fees.xlsx
-
+*.pdf
 
 # ── Firebase cache ────────────────────────────────────────────────────────────
 .firebase/
