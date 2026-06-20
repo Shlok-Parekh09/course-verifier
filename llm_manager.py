@@ -17,7 +17,15 @@ class LLMManager:
         self.groq_keys = [os.environ.get(f"GROQ_API_KEY_{i}") for i in range(1, 7) if os.environ.get(f"GROQ_API_KEY_{i}")] or ([os.environ.get("GROQ_API_KEY")] if os.environ.get("GROQ_API_KEY") else [])
         self.mistral_keys = [os.environ.get(f"MISTRAL_API_KEY_{i}") for i in range(1, 7) if os.environ.get(f"MISTRAL_API_KEY_{i}")] or ([os.environ.get("MISTRAL_API_KEY")] if os.environ.get("MISTRAL_API_KEY") else [])
         self.sambanova_keys = [os.environ.get(f"SAMBANOVA_API_KEY_{i}") for i in range(1, 7) if os.environ.get(f"SAMBANOVA_API_KEY_{i}")] or ([os.environ.get("SAMBANOVA_API_KEY")] if os.environ.get("SAMBANOVA_API_KEY") else [])
-        
+
+        # Cloud/remote Ollama - must be explicitly set via env vars
+        self.cloud_ollama_url = os.environ.get("OLLAMA_API_URL")
+        self.cloud_ollama_model = os.environ.get("OLLAMA_MODEL")
+
+        # Hardcoded local Ollama emergency fallback
+        self.local_ollama_url = "http://localhost:11434/api/generate"
+        self.local_ollama_model = "llama3"
+
         # Track last call time per provider to enforce rate limits
         # Track last call time per key to enforce rate limits individually
         self.last_call = {}
@@ -42,19 +50,22 @@ class LLMManager:
         return [worker_id % num_keys]
 
     def generate(self, prompt: str, system: Optional[str] = None, format: str = "text", temperature: float = 0.0, provider: str = "auto", worker_id: int = None) -> Optional[str]:
-        # Text Generation: Ollama -> Gemini -> OpenRouter -> NVIDIA
-        
-        # 0. OLLAMA PRIMARY
-        if provider in ["auto", "ollama"]:
-            print(f"      -> [LLM Manager] Trying Ollama ({self.ollama_api_url} | {self.ollama_model})...")
-            res = self._call_ollama(prompt, system, format, 0.0)
-            if res: return res
-            print("      -> [LLM Manager] Ollama failed or unavailable. Failing over...")
-        
+        # Text Generation: Cloud Ollama -> Gemini -> OpenRouter -> NVIDIA -> Local Ollama
+
+        # --- Tier 1: Configured (cloud/remote) Ollama ---
+        if self.cloud_ollama_url and self.cloud_ollama_model and provider in ["auto", "ollama"]:
+            try:
+                print(f"      -> [LLM Manager] Trying cloud Ollama ({self.cloud_ollama_url} | {self.cloud_ollama_model})...")
+                res = self._call_ollama(prompt, system, format, 0.0, url=self.cloud_ollama_url, model=self.cloud_ollama_model)
+                if res: return res
+                print("      -> [LLM Manager] Cloud Ollama failed. Failing over to other APIs...")
+            except Exception as e:
+                print(f"      -> [LLM Manager] Cloud Ollama crashed ({e}). Failing over...")
+
         if worker_id is not None:
             # DEDICATED KEY LOGIC for Multithreading
             # Chain: Gemini → OpenRouter → NVIDIA (with 2 keys per provider)
-            
+
             if self.gemini_keys and provider in ["auto", "gemini"]:
                 for idx in self._get_key_sequence(worker_id, len(self.gemini_keys)):
                     g_key = self.gemini_keys[idx]
@@ -74,7 +85,7 @@ class LLMManager:
                     res = self._call_openrouter(o_key, prompt, system, format, 0.0)
                     if res: return res
                 print(f"      -> [LLM Manager] Worker {worker_id+1}'s OpenRouter keys failed. Failing over to NVIDIA...")
-            
+
             if self.nvidia_keys and provider in ["auto", "nvidia"]:
                 for idx in self._get_key_sequence(worker_id, len(self.nvidia_keys)):
                     n_key = self.nvidia_keys[idx]
@@ -84,7 +95,17 @@ class LLMManager:
                     res = self._call_nvidia(n_key, prompt, system, format, 0.0)
                     if res: return res
                 print(f"      -> [LLM Manager] Worker {worker_id+1}'s NVIDIA keys failed.")
-                
+
+            # Tier 3: Local Ollama emergency fallback
+            if provider in ["auto", "ollama"]:
+                try:
+                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying local Ollama ({self.local_ollama_url} | {self.local_ollama_model})...")
+                    res = self._call_ollama(prompt, system, format, 0.0, url=self.local_ollama_url, model=self.local_ollama_model)
+                    if res: return res
+                    print(f"      -> [LLM Manager] Worker {worker_id+1} local Ollama failed.")
+                except Exception as e:
+                    print(f"      -> [LLM Manager] Worker {worker_id+1} local Ollama crashed ({e}).")
+
             return None
 
         # FALLBACK SEQUENTIAL LOGIC (If worker_id is not provided)
@@ -103,7 +124,7 @@ class LLMManager:
             result = self._call_openrouter(key, prompt, system, format, 0.0)
             if result: return result
             print(f"      -> [LLM Manager] OpenRouter Key {idx+1} failed. Failing over...")
-        
+
         # Provider 3: NVIDIA
         for idx, key in enumerate(self.nvidia_keys):
             print(f"      -> [LLM Manager] Trying NVIDIA Key {idx+1}/{len(self.nvidia_keys)}...")
@@ -111,8 +132,18 @@ class LLMManager:
             result = self._call_nvidia(key, prompt, system, format, 0.0)
             if result: return result
             print(f"      -> [LLM Manager] NVIDIA Key {idx+1} failed. Failing over...")
-            
-        print("      -> [LLM Manager] CRITICAL ERROR: All API keys for Gemini, OpenRouter, and NVIDIA failed!")
+
+        # --- Tier 3: Hardcoded local Ollama emergency fallback ---
+        if provider in ["auto", "ollama"]:
+            try:
+                print(f"      -> [LLM Manager] Trying local Ollama ({self.local_ollama_url} | {self.local_ollama_model})...")
+                result = self._call_ollama(prompt, system, format, 0.0, url=self.local_ollama_url, model=self.local_ollama_model)
+                if result: return result
+                print("      -> [LLM Manager] Local Ollama failed or unavailable.")
+            except Exception as e:
+                print(f"      -> [LLM Manager] Local Ollama crashed ({e}).")
+
+        print("      -> [LLM Manager] CRITICAL ERROR: All API keys for Gemini, OpenRouter, NVIDIA, and Ollama failed!")
         return None
 
     def generate_with_image(self, prompt: str, base64_image: str, system: Optional[str] = None, worker_id: int = None) -> Optional[str]:
@@ -187,10 +218,9 @@ class LLMManager:
         print("      -> [LLM Manager] CRITICAL ERROR: All Groq, Mistral, and SambaNova keys failed for Vision!")
         return None
 
-    def _call_ollama(self, prompt: str, system: Optional[str], format: str, temperature: float) -> Optional[str]:
-        url = "http://localhost:11434/api/generate"
+    def _call_ollama(self, prompt: str, system: Optional[str], format: str, temperature: float, *, url: str, model: str) -> Optional[str]:
         payload = {
-            "model": "llama3",
+            "model": model,
             "prompt": prompt,
             "stream": False,
             "options": {
