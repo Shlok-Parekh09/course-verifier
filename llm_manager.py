@@ -17,17 +17,22 @@ class LLMManager:
         self.groq_keys = [os.environ.get(f"GROQ_API_KEY_{i}") for i in range(1, 7) if os.environ.get(f"GROQ_API_KEY_{i}")] or ([os.environ.get("GROQ_API_KEY")] if os.environ.get("GROQ_API_KEY") else [])
         self.mistral_keys = [os.environ.get(f"MISTRAL_API_KEY_{i}") for i in range(1, 7) if os.environ.get(f"MISTRAL_API_KEY_{i}")] or ([os.environ.get("MISTRAL_API_KEY")] if os.environ.get("MISTRAL_API_KEY") else [])
         self.sambanova_keys = [os.environ.get(f"SAMBANOVA_API_KEY_{i}") for i in range(1, 7) if os.environ.get(f"SAMBANOVA_API_KEY_{i}")] or ([os.environ.get("SAMBANOVA_API_KEY")] if os.environ.get("SAMBANOVA_API_KEY") else [])
-        # Cloud/remote Ollama - must be explicitly set via env vars
-        self.cloud_ollama_url = os.environ.get("OLLAMA_API_URL")
-        self.cloud_ollama_model = os.environ.get("OLLAMA_MODEL")
+        # Cloud/remote Ollama - must be explicitly set via env vars.
+        # .strip() guards against trailing newlines/whitespace that secret
+        # stores (GitHub Actions, .env pastes) sometimes append, which
+        # otherwise corrupt the request URL (e.g. /api/generate%0A/api/generate).
+        _oc_url = os.environ.get("OLLAMA_API_URL")
+        self.cloud_ollama_url = _oc_url.strip() if _oc_url else None
+        _oc_model = os.environ.get("OLLAMA_MODEL")
+        self.cloud_ollama_model = _oc_model.strip() if _oc_model else None
 
         # Hardcoded local Ollama emergency fallback
-        raw_ollama_url = os.environ.get("OLLAMA_API_URL", "http://localhost:11434")
+        raw_ollama_url = os.environ.get("OLLAMA_API_URL", "http://localhost:11434").strip()
         if raw_ollama_url.endswith("/api/generate"):
-            raw_ollama_url = raw_ollama_url[:-13]
+            raw_ollama_url = raw_ollama_url[: -len("/api/generate")]
         self.ollama_api_url = raw_ollama_url
-        self.ollama_model   = os.environ.get("OLLAMA_MODEL", "llama3")
-        self.ollama_vision_model = os.environ.get("OLLAMA_VISION_MODEL", "gemma4:31b-cloud")
+        self.ollama_model   = os.environ.get("OLLAMA_MODEL", "llama3").strip()
+        self.ollama_vision_model = os.environ.get("OLLAMA_VISION_MODEL", "gemma4:31b-cloud").strip()
 
         # Local (localhost) Ollama emergency fallback. Distinct from the cloud
         # Ollama above: this always targets localhost:11434 so that if a local
