@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+"""
+run_verifier_pages.py – Standalone launcher for the Course Verifier.
+Usage (server / cron / bare-metal):
+    python run_verifier_pages.py link_compile.pdf --pages 602 1890
+    python run_verifier_pages.py link_compile.pdf --pages 602 1890 --resume
+    python run_verifier_pages.py link_compile.pdf --all
+
+Features
+• Non-interactive – no stdin prompts; 100 % automation-ready.
+• Automatic page-range -> course-index mapping.
+• E-mail report on completion (reads .env SMTP_* settings).
+• Graceful shutdown (no os._exit hijack).
+"""
+import sys
+import os
+import json
+import shutil
+import time
+
+# Force UTF-8 on Windows consoles
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
+# Load env first (before any imports that read it)
+from dotenv import load_dotenv
+load_dotenv()
+
+# ── Parse CLI ──
+PDF_PATH = None
+START_PAGE = 602
+END_PAGE = 1890
+RESUME = False
+NO_EMAIL = False
+
+args = sys.argv[1:]
+i = 0
+while i < len(args):
+    a = args[i]
+    if a in ("--pages", "-p"):
+        START_PAGE = int(args[i + 1])
+        END_PAGE = int(args[i + 2])
+        i += 3
+    elif a in ("--resume", "-r"):
+        RESUME = True
+        i += 1
+    elif a in ("--all"):
+        START_PAGE = 1
+        END_PAGE = 99999
+        i += 1
+    elif a in ("--no-email"):
+        NO_EMAIL = True
+        i += 1
+    elif a.startswith("-"):
+        print(f"[!] Unknown flag: {a}")
+        sys.exit(1)
+    else:
+        PDF_PATH = a
+        i += 1
+
+if not PDF_PATH:
+    print("Usage: python run_verifier_pages.py <pdf> [--pages START END] [--resume] [--all] [--no-email]")
+    sys.exit(1)
+
+if not os.path.exists(PDF_PATH):
+    print(f"[X] PDF not found: {PDF_PATH}")
+    sys.exit(1)
+
+# ── Import verifier after env is loaded ──
+from autonomous_course_verifier import AutonomousCourseVerifier, check_runtime_dependencies
+
+if not check_runtime_dependencies():
+    sys.exit(1)
+
+agent = AutonomousCourseVerifier(PDF_PATH)
+
+# ── Resume logic ──
+resume = RESUME
+checkpoint_path = f"autonomous_verified_{os.path.basename(PDF_PATH)}.json"
+start_idx = 0
+
+if os.path.exists(checkpoint_path) and not resume:
+    # Auto-resume if checkpoint exists and we are in the target range
+    try:
+        with open(checkpoint_path, "r", encoding="utf-8") as f:
+            _peek = json.load(f)
+        # Only auto-resume when the checkpoint contains our target range
+        resume = True
+        print(f"[*] Auto-resuming from checkpoint: {checkpoint_path}")
+    except Exception:
+        resume = False
+
+if resume and os.path.exists(checkpoint_path):
+    try:
+        with open(checkpoint_path, "r", encoding="utf-8") as f:
+            agent.courses = json.load(f)
+        for c in agent.courses:
+            c['processed_this_run'] = False
+        # Find first unverified course
+        for i, c in enumerate(agent.courses):
+            if c.get("web_status") == "FALSE" and c.get("reason", "") == "":
+                start_idx = i
+                break
+        else:
+            start_idx = len(agent.courses)
+        print(f"[*] Resumed {len(agent.courses)} courses. Web verification resumes at index {start_idx}.")
+        agent.export_to_excel(quiet=True)
+    except Exception as e:
+        print(f"[!] Could not load checkpoint: {e}")
+        start_idx = 0
+        resume = False
+
+if not resume:
+    try:
+        screenshots_base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "verification_screenshots")
+        if os.path.exists(screenshots_base):
+            shutil.rmtree(screenshots_base)
+            print("[*] Flushed old screenshot folders.")
+    except Exception as e:
+        print(f"[!] Could not flush old screenshots: {e}")
+    try:
+        if os.path.exists(checkpoint_path):
+            os.remove(checkpoint_path)
+            print("[*] Flushed old checkpoint.")
+    except Exception as e:
+        print(f"[!] Could not flush checkpoint: {e}")
+    agent.extract_and_parse()
+
+# ── Map page numbers to course indices ──
+min_page = min((c.get('page_num', 1) for c in agent.courses), default=1)
+max_page = max((c.get('page_num', 1) for c in agent.courses), default=1)
+
+s_idx = None
+e_idx = len(agent.courses)
+for i, c in enumerate(agent.courses):
+    if c.get('page_num', 1) >= START_PAGE and s_idx is None:
+        s_idx = i
+    if c.get('page_num', 1) > END_PAGE:
+        e_idx = i
+        break
+
+if s_idx is None:
+    s_idx = 0
+if e_idx <= s_idx:
+    e_idx = len(agent.courses)
+
+print(f"[*] Target pages {START_PAGE}-{END_PAGE} maps to course indices {s_idx}-{e_idx} ({e_idx - s_idx} courses)")
+
+# Clamp to resume start if resuming
+if resume and start_idx > s_idx:
+    s_idx = start_idx
+    print(f"[*] Resume override: starting from index {s_idx}")
+
+# ── Visual extraction (skip if resuming) ──
+if not resume and s_idx < len(agent.courses):
+    agent.extract_visuals_for_range(start_idx=s_idx, end_idx=e_idx)
+
+agent.export_to_excel(quiet=True)
+try:
+    with open(checkpoint_path, 'w', encoding='utf-8') as f:
+        json.dump(agent.courses, f, indent=4, ensure_ascii=False)
+    print("[*] Initial extraction checkpoint saved.")
+except Exception as e:
+    print(f"[!] Could not save initial checkpoint: {e}")
+
+# ── Web verification ──
+if s_idx < len(agent.courses):
+    agent.autonomous_web_verify(start_idx=s_idx, end_idx=e_idx)
+else:
+    print("[*] All courses in range already verified.")
+
+# ── Rankings ──
+print("\n[*] Verifying QS/NIRF rankings...")
+agent.verify_rankings(start_idx=s_idx, end_idx=e_idx)
+
+# ── PDF Report ──
+pdf_name = f"Verification_Report_Pages_{START_PAGE}_to_{END_PAGE}"
+agent.generate_pdf_report(start_idx=s_idx, end_idx=e_idx, pdf_name=pdf_name)
+
+# ── Dashboard sync ──
+if os.path.exists("autonomous_verified_data.json"):
+    shutil.copy("autonomous_verified_data.json", "master_dashboard_results.json")
+    print("\n[*] Copied results to master_dashboard_results.json")
+
+# ── Email report ──
+if not NO_EMAIL:
+    try:
+        from email_sender import send_report
+        report_pdf = f"{pdf_name}.pdf"
+        subject = f"Course Verification Complete – Pages {START_PAGE}-{END_PAGE}"
+        body = (
+            f"Verification finished for {PDF_PATH}\n"
+            f"Page range: {START_PAGE} – {END_PAGE}\n"
+            f"Courses processed: {e_idx - s_idx}\n"
+            f"Report attached: {report_pdf}\n"
+        )
+        if os.path.exists(report_pdf):
+            ok, msg = send_report(subject, body, report_pdf)
+            print(f"[{'OK' if ok else 'X'}] Email: {msg}")
+        else:
+            print(f"[!] Report PDF not found: {report_pdf}")
+    except Exception as e:
+        print(f"[!] Email step failed: {e}")
+else:
+    print("[*] Email suppressed (--no-email).")
+
+print("\n[*] Done.")
