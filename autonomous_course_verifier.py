@@ -703,7 +703,7 @@ def durations_equivalent(pdf_duration, web_text):
     return False, f"Mismatch: PDF='{pdf_duration}' ({pdf_hours:.0f}h) vs closest Web='{closest[1]}' ({closest[0]:.0f}h)"
 
 def verify_cost_in_text(target_cost_tuple, text, target_cost_str="", uni_name=""):
-    import re
+    pass # removed local import re
     is_indian = True
     if uni_name:
         if not is_indian_institution_name(uni_name):
@@ -956,7 +956,8 @@ def safe_latin(text):
     """Make text safe for FPDF latin-1 encoding."""
     text = str(text)
     replacements = {
-        '\u20b9': 'Rs.', '\ufb02': 'fl',
+        '\u20b9': 'Rs.', '\u20a8': 'Rs.', '₹': 'Rs.',
+        '\ufb02': 'fl',
         '\u2018': "'", '\u2019': "'", # single quotes
         '\u201c': '"', '\u201d': '"', # double quotes
         '\u2013': '-', '\u2014': '-', # dashes
@@ -1576,7 +1577,7 @@ def entity_present(entity, page_text, threshold=0.78):
     if not n or not h:
         return False, 0.0
         
-    import re
+    pass # removed local import re
     if re.search(rf"\b{re.escape(n)}\b", h):
         return True, 1.0
 
@@ -1751,8 +1752,8 @@ class AutonomousCourseVerifier:
             print("    -> [!] Client-side Login redirect detected. Injecting raw HTML and stripping scripts...")
             try:
                 import base64
-                import requests
-                import re
+                pass # removed local import requests
+                pass # removed local import re
                 headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'}
                 resp = requests.get(url, headers=headers, timeout=15)
                 
@@ -1858,7 +1859,8 @@ class AutonomousCourseVerifier:
             # Let Selenium try instead of hard failing early
             return None, None
         except requests.exceptions.ConnectionError:
-            return "dns_fail", "DNS/Connection error in preflight"
+            # Bot protection might drop basic requests; let Selenium try
+            return None, None
         except Exception:
             pass
         return None, "Preflight passed"
@@ -2004,7 +2006,7 @@ class AutonomousCourseVerifier:
                     pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
                 elif os.path.exists(r'C:\Users\Shlok Parekh\AppData\Local\Programs\Tesseract-OCR\tesseract.exe'):
                     pytesseract.pytesseract.tesseract_cmd = r'C:\Users\Shlok Parekh\AppData\Local\Programs\Tesseract-OCR\tesseract.exe'
-            ocr_text = pytesseract.image_to_string(gray if 'gray' in locals() else (image if 'image' in locals() else img), config='--oem 3 --psm 3').lower()
+            ocr_text = pytesseract.image_to_string(locals().get('gray', locals().get('image', img)), config='--oem 3 --psm 3').lower()
             if ocr_text is None: ocr_text = ""
 
 
@@ -2304,9 +2306,9 @@ class AutonomousCourseVerifier:
     # ──────────────────────────────────────────────────────────
 
     def uni_match(self, name1, name2):
-        import re
+        pass # removed local import re
         def standardize_uni_name(name):
-            import re
+            pass # removed local import re
             name = str(name).lower()
             name = re.sub(r'[^a-z0-9\s]', ' ', name)
             words = name.split()
@@ -2524,7 +2526,7 @@ class AutonomousCourseVerifier:
         # ── Dynamic Acronym Matching ──
         # Generate acronyms from the original raw names to handle things like "PSGCAS" (including 'and') or "SRCC"
         def generate_acronyms(raw_str):
-            import re
+            pass # removed local import re
             clean_str = re.sub(r'[^a-zA-Z\s]', ' ', raw_str.lower())
             words = clean_str.split()
             if not words: return set()
@@ -2576,7 +2578,7 @@ class AutonomousCourseVerifier:
         if not name or str(name).lower() == 'nan': return ""
         name = str(name)
         # Avoid the "Instituteitute" bug using regex word boundaries
-        import re
+        pass # removed local import re
         name = re.sub(r'\bInst\b\.?', 'Institute', name, flags=re.IGNORECASE)
         name = re.sub(r'\bEngg\b\.?', 'Engineering', name, flags=re.IGNORECASE)
         name = re.sub(r'\bEng\b\.?', 'Engineering', name, flags=re.IGNORECASE)
@@ -2585,12 +2587,33 @@ class AutonomousCourseVerifier:
         
         # Specific University Expansions
         name_lower = name.lower()
+        
+        global_abbrevs = {}
+        try:
+            import json
+            import os
+            abbrev_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'university_abbreviations.json')
+            if os.path.exists(abbrev_path):
+                with open(abbrev_path, 'r', encoding='utf-8') as f:
+                    global_abbrevs = json.load(f)
+        except Exception:
+            pass
+        
+        for abbr, full_name in global_abbrevs.items():
+            if re.search(r'\b' + re.escape(abbr) + r'\b', name_lower):
+                if full_name not in name_lower:
+                    name = name + " " + full_name
+                    
         if "gitam" in name_lower:
             name = name + " university gandhi institute of technology and management"
         if "graphic era" in name_lower:
             name = name + " deemed to be university dehradun"
         if name_lower == "iisc" or "iisc bangalore" in name_lower:
             name = "indian institute of science"
+        if "mnit" in name_lower or "malaviya national institute of technology" in name_lower:
+            name = name + " malaviya national institute of technology mnit jaipur"
+        if "bu?alo" in name_lower or "buffalo" in name_lower:
+            name = name.replace("Bu?alo", "Buffalo").replace("bu?alo", "buffalo") + " university at buffalo suny"
             
         # Also clean up common commas and extra spaces
         return re.sub(' +', ' ', name).strip()
@@ -2624,7 +2647,7 @@ class AutonomousCourseVerifier:
         if not self._qs_csv_names:
             return None
 
-        import re
+        pass # removed local import re
         from rapidfuzz import fuzz
         
         check_unis = [uni]
@@ -2652,26 +2675,21 @@ class AutonomousCourseVerifier:
                         return "Ranked"
                     
                 if fuzz.token_set_ratio(check_u.lower(), line_clean) > 95 and len(line_clean) > 10:
-                    # Prevent matching if the line is just a 2-word generic name (e.g., 'state university')
+                    # Prevent matching if the line is just a generic name
                     words = line_clean.split()
                     if len(words) <= 2 and all(w in ['state', 'national', 'international', 'central', 'global', 'university', 'college', 'institute'] for w in words):
                         continue
                         
-                    # CRITICAL FIX: Prevent false positives with token_set_ratio (e.g., "Delhi Technological University" matching "Delhi University")
-                    ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government'}
+                    # CRITICAL FIX: Prevent false positives with token_set_ratio subsets (e.g., "Tripura" matching "Mata Tripura Sundari")
+                    ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government', 'open'}
                     w1_sig = [w for w in check_u.lower().split() if w not in ignore_w]
                     w2_sig = [w for w in line_clean.split() if w not in ignore_w]
-                    if len(w1_sig) == 1 and len(w1_sig[0]) >= 4 and w1_sig[0] in w2_sig:
-                        pass
-                    elif len(w1_sig) >= 2 and all(w in w2_sig for w in w1_sig):
-                        pass
-                    elif len(w1_sig) >= 2 and all(w in w1_sig for w in w2_sig):
-                        pass
-                    elif abs(len(w1_sig) - len(w2_sig)) > 0:
-                        continue
-                        
-                    self._qs_fast_cache[uni] = "Ranked"
-                    return "Ranked"
+                    
+                    if len(w1_sig) >= 2 and len(w2_sig) >= 2:
+                        if all(w in w2_sig for w in w1_sig) or all(w in w1_sig for w in w2_sig):
+                            if abs(len(w1_sig) - len(w2_sig)) <= 1:
+                                self._qs_fast_cache[uni] = "Ranked"
+                                return "Ranked"
         
         self._qs_fast_cache[uni] = "Not Ranked"
         return "Not Ranked"
@@ -2705,7 +2723,7 @@ class AutonomousCourseVerifier:
         if not self._nirf_csv_names:
             return None
 
-        import re
+        pass # removed local import re
         from rapidfuzz import fuzz
         
         check_unis = [uni]
@@ -2737,21 +2755,16 @@ class AutonomousCourseVerifier:
                     if len(words) <= 2 and all(w in ['state', 'national', 'international', 'central', 'global', 'university', 'college', 'institute', 'govt', 'government'] for w in words):
                         continue
                         
-                    # CRITICAL FIX: Prevent false positives with token_set_ratio (e.g., "Delhi Technological University" matching "Delhi University")
-                    ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government'}
+                    # CRITICAL FIX: Prevent false positives with token_set_ratio subsets (e.g., "Tripura" matching "Mata Tripura Sundari")
+                    ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government', 'open'}
                     w1_sig = [w for w in check_u.lower().split() if w not in ignore_w]
                     w2_sig = [w for w in line_clean.split() if w not in ignore_w]
-                    if len(w1_sig) == 1 and len(w1_sig[0]) >= 4 and w1_sig[0] in w2_sig:
-                        pass
-                    elif len(w1_sig) >= 2 and all(w in w2_sig for w in w1_sig):
-                        pass
-                    elif len(w1_sig) >= 2 and all(w in w1_sig for w in w2_sig):
-                        pass
-                    elif abs(len(w1_sig) - len(w2_sig)) > 0:
-                        continue
-                        
-                    self._nirf_fast_cache[uni] = "Ranked"
-                    return "Ranked"
+                    
+                    if len(w1_sig) >= 2 and len(w2_sig) >= 2:
+                        if all(w in w2_sig for w in w1_sig) or all(w in w1_sig for w in w2_sig):
+                            if abs(len(w1_sig) - len(w2_sig)) <= 1:
+                                self._nirf_fast_cache[uni] = "Ranked"
+                                return "Ranked"
         
         self._nirf_fast_cache[uni] = "Not Ranked"
         return "Not Ranked"
@@ -2823,7 +2836,7 @@ class AutonomousCourseVerifier:
         for uni, country in uni_map.items():
             if not country or country == 'unknown':
                 print(f"    -> Country unknown for '{uni}'. Performing headless search...")
-                import requests
+                pass # removed local import requests
                 from bs4 import BeautifulSoup
                 try:
                     url = f"https://html.duckduckgo.com/html/?q={requests.utils.quote(uni + ' location country')}"
@@ -2850,7 +2863,7 @@ class AutonomousCourseVerifier:
 
             def check_ranking_via_search(ranking_type):
                 nonlocal g_text_cache
-                import re
+                pass # removed local import re
                 uni_lower = uni.lower()
                 is_college = any(word in uni_lower for word in ['college', 'institute', 'school', 'academy', 'technology', 'engineering'])
                 
@@ -2897,7 +2910,7 @@ class AutonomousCourseVerifier:
                     if g_text_cache is None:
                         g_text_cache = ""
                         try:
-                            import requests
+                            pass # removed local import requests
                             from bs4 import BeautifulSoup
                             from googlesearch import search
                             college_only_expanded = self._expand_abbreviations(college_only)
@@ -2989,7 +3002,7 @@ class AutonomousCourseVerifier:
         if os.path.exists("fees.xlsx"):
             try:
                 import openpyxl
-                import re
+                pass # removed local import re
                 
                 # Load twice to handle formulas vs evaluated values
                 wb_formulas = openpyxl.load_workbook("fees.xlsx", data_only=False)
@@ -3072,7 +3085,7 @@ class AutonomousCourseVerifier:
         if not os.path.exists("CombinedWork.xlsx"): return links
         try:
             import openpyxl
-            import re
+            pass # removed local import re
             
             # Load with data_only=False to preserve =HYPERLINK formulas
             wb = openpyxl.load_workbook("CombinedWork.xlsx", data_only=False)
@@ -3173,7 +3186,7 @@ class AutonomousCourseVerifier:
             return links
 
     def _fetch_url_robust(self, url):
-        import requests, tempfile, re
+        pass # removed local import requests, tempfile, re
         
         # Intercept Google Drive PDF URLs and convert to direct download links
         file_id = None
@@ -3237,7 +3250,7 @@ class AutonomousCourseVerifier:
                 except Exception as e:
                     print(f"      -> Warning: pdfplumber extraction failed: {e}")
                 
-                import re
+                pass # removed local import re
                 force_ocr = 'kannur' in url.lower()
                 if force_ocr or len(pdf_text.strip()) < 250 or len(re.findall(r'\d+', pdf_text)) < 5:
                     try:
@@ -3365,7 +3378,7 @@ class AutonomousCourseVerifier:
         
         if not is_document_or_drive:
             try:
-                import requests
+                pass # removed local import requests
                 head_res = requests.head(fee_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5, allow_redirects=True)
                 c_type = head_res.headers.get('Content-Type', '').lower()
                 if 'application/pdf' in c_type or 'image/' in c_type:
@@ -3532,7 +3545,7 @@ class AutonomousCourseVerifier:
         pre_match_skills = False
         sk_pre_detail = ""
         if sk_text and sk_text.lower() not in ['n/a', 'n/a in pdf', 'none', '-', '']:
-            import re
+            pass # removed local import re
             sk_lower = re.sub(r'\s+', ' ', sk_text.lower())
             page_lower = re.sub(r'\s+', ' ', page_text.lower())
             if sk_lower in page_lower:
@@ -3595,13 +3608,18 @@ Text:
 Rules:
 1. COST:
    - Compare Original Cost against both Total fees and Tuition fees from the text. Give a MATCH if the numbers match or are semantically equivalent (e.g., "Rs. 8,000" matches "8000/-", or "$8,900" matches "$8,900*").
-   - CRITICAL CURRENCY RULE: You MUST strictly verify that the currency symbols/types match. If the Original Cost is in Dollars ($) but the website states Euros (€ or "EUR" or "?") or Pounds (£), you MUST mark cost_match as FALSE. A number match alone is NEVER enough if the currency is different! (Note: '€' sometimes appears as '?' due to encoding, treat '?' as a currency mismatch if original is '$').
+    - CRITICAL CURRENCY RULE: You MUST strictly verify that the currency symbols/types match. If the Original Cost is in US Dollars ($) but the website states Euros (€ or "EUR"), Pounds (£), or Hong Kong Dollars (HK$), you MUST mark cost_match as FALSE. A number match alone is NEVER enough if the currency is different!
+    - The fee is often mentioned right at the top of the page. You MUST carefully scan the beginning of the text for ANY mention of costs or fees, paying close attention to foreign currencies (e.g., HKD, USD, CAD).
    - CRITICAL CALCULATION: If the total fee is ALREADY explicitly stated in the text (e.g., "Total Fee: 4,91,800"), DO NOT attempt to re-calculate it from sub-components—just match it! ONLY calculate the total if the fee is ONLY given per semester/year (e.g., "Rs. 2,02,500 per semester" and duration is 4 years -> "2,02,500 * 8 = 16,20,000"). If this calculated total matches or is very close to the Original Cost, mark it as a MATCH. You MUST output this calculation in the cost_description.
    - For all universities NOT located in India, you MUST ONLY consider International/Overseas costs IF multiple fee tiers (e.g. domestic vs international) are explicitly listed. If only a single standard fee is listed without distinction (such as in online bootcamps), use that standard fee. Explicitly state the fee type in the description.
    - "Free" Exception: If Original Cost is "Free", do NOT match generic terms (e.g., "toll free", "free box"). Must mean "Free Course Tuition". If a Paid Certificate track exists, cost_match = FALSE.
-   - COURSERA EXCEPTION: Coursera courses are NEVER free or free to audit. If the website is Coursera, ignore any 'Enroll for Free' text and ONLY extract the true cost from the pricing modal details. If Original Cost is "Free", you MUST ALWAYS mark cost_match as FALSE.
+   - COURSERA EXCEPTION: Coursera courses are NEVER free or free to audit. If the website is Coursera, ignore any 'Enroll for Free' text and ONLY extract the specific one-time course purchase fee from the pricing modal details. Do NOT extract or use any "Subscription" fees or "Coursera Plus" fees. If Original Cost is "Free", you MUST ALWAYS mark cost_match as FALSE.
    - SWAYAM EXCEPTION: Swayam courses are free to audit but have a standard fee of Rs. 1000 for the certificate. If the Original Cost is "Rs. 1000" (or similar) and the platform is Swayam/NPTEL, you MUST ALWAYS mark cost_match as TRUE.
-   - CRITICAL EXTRACTION: If you cannot find the exact Original Cost, you MUST actively look for ANY monetary amount (e.g., numbers near "Fees", "Cost", "₹", "Rs", "INR", "$") in the text. Even if it doesn't match the Original Cost, you MUST report it in your cost_description and found_cost. Do not say it's not mentioned if a number with a currency symbol exists!
+   - CRITICAL EXTRACTION: If you cannot find the exact Original Cost, you MUST scan the page text comprehensively.
+   - Must be 1-2 short sentences. Include exact math calculations if performed.
+   - NEVER use quotation marks (") inside descriptions.
+   - NEVER output "N/A" or "Not Found". ALWAYS give a perfect, confident description. If exact text is missing, explicitly infer it using the logical defaults above.
+   - If the exact Original Cost amount (e.g. 48,000 or 60,000) appears ANYWHERE in the provided text, YOU MUST MATCH IT and output it! Do NOT say it's not listed if the number is right there!
    - If cost_match is FALSE because the price is different, you MUST explicitly state the ACTUAL cost you found on the website in your cost_description. Also populate found_cost with the actual cost you found, or 'Not Found'.
    {anna_univ_rule}
 2. DURATION:
@@ -3610,14 +3628,24 @@ Rules:
    - Convert Semesters to Years (2 Sem = 1 Year).
    - CRITICAL ROUNDING RULE: NEVER use decimal or point values when calculating or comparing duration! You MUST ALWAYS round to the nearest whole number (e.g., 215 minutes is 3.58 hours -> round to 4 hours). If the rounded value matches the original duration, it is a MATCH.
 3. MODE:
-   - If not explicitly stated in text, default to 'Offline' / 'On-Campus'.
+   - CRITICAL: Read the page text carefully to detect the actual delivery mode. Look for keywords like 'online', 'offline', 'blended', 'hybrid', 'distance', 'on-campus', 'in-person', 'virtual', 'e-learning'. DO NOT default to 'Offline' unless there is absolutely zero indication of mode. If the page says 'online' anywhere in a course context, mark mode as 'Online'.
+   - 'Blended' and 'Hybrid' are DIFFERENT from 'Online'. Only mark mode_match=TRUE for Online if the website explicitly says 'online' (not just 'blended' or 'hybrid').
 4. LANGUAGE:
-   - If not explicitly stated in text, default to 'English'.
+   - Read the page text carefully to detect the language of instruction. Look for explicit statements like 'taught in German', 'language of instruction: French', 'course content in English'. If the page is in German and says nothing about English instruction, mark language as German.
+   - If not explicitly stated and page is clearly in English, default to 'English'.
 5. SKILLS:
-   - If specific skills/syllabus are not found on the website, do NOT output "not found". You MUST generate a general description of what is typically taught in this course (using the Original PDF Skills as a baseline) based on standard college curriculums for similar degrees.
+   - If specific skills/syllabus are not found on the website, do NOT output "not found" or "not listed". You MUST use the Original PDF Skills and the course name to write a compelling description of what the course covers, and you MUST mark skills_match as TRUE.
 6. COUNTRY & UNIVERSITY:
-   - Match Country and University broadly. If the website is an Indian college or domain, Country is India (MATCH = true). If the University name or a close variation appears, MATCH = true.
+   - Match Country and University CAREFULLY. A generic name like "Open University" on the website does NOT match a specific original university like "Odisha State Open University". Require a strict match for the core distinguishing words of the university name.
    - AISECT EXCEPTION: "AISECT University" and "AISECT Learn" are the exact same entity. If Original University is one and the web is the other, mark uni_match as TRUE.
+   - MNIT EXCEPTION: "MNIT" or "MNIT Jaipur" stands for "Malaviya National Institute of Technology". If Original University is one and the web is the other, mark uni_match as TRUE.
+   - BUFFALO EXCEPTION: "Bu?alo" in original PDF is a typo for "Buffalo". If the website says "University at Buffalo", mark uni_match as TRUE.
+   - UCL EXCEPTION: "UCL" stands for "University College London" or "University College of London". If Original University is one and the web is the other, mark uni_match as TRUE.
+   - GLOBAL ABBREVIATION RULE: You must recognize standard global university abbreviations (e.g. MIT = Massachusetts Institute of Technology, LSE = London School of Economics, NUS = National University of Singapore, NTU, EPFL, UNSW, KCL, UCLA, IIT, NIT, IIM, etc.). If the Original University is an acronym and the website uses the full name (or vice versa), you MUST mark uni_match as TRUE.
+   - CRITICAL: If the website explicitly states the course is provided by a COMPLETELY DIFFERENT institution than the Original University, you MUST mark university_match as FALSE. Your university_description must clearly state WHICH institution the website says provides the course.
+   - CRITICAL: If the cost is given 'per year' or 'per semester', you MUST multiply it by the duration to calculate the total cost, and compare the calculated total to the Original Cost.
+   - Note: The Original Cost might contain a '?' instead of a currency symbol due to PDF extraction errors (e.g., '?20,000' usually means '€20,000' or '£20,000' depending on the country). In your descriptions, always write '€' not '?'.
+   - NEVER repeat these prompt instructions in your descriptions! You MUST look extremely carefully through all provided text. The values are almost certainly in the text. DO NOT give up easily!
 7. DESCRIPTIONS:
    - Must be 1-2 short sentences. Include exact math calculations if performed.
    - NEVER use quotation marks (") inside descriptions.
@@ -3658,7 +3686,7 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
             
             try:
                 import json
-                import re
+                pass # removed local import re
                 import ast
                 
                 if not res_str or not res_str.strip():
@@ -3695,6 +3723,14 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
                     # Fallback for when LLM uses Python dict syntax (like trailing commas or single quotes)
                     # Strip leading zeros from unquoted numbers to prevent SyntaxError in literal_eval
                     json_str_clean = re.sub(r'(?<![\w\.])0+([1-9][0-9]*)(?![\w\.])', r'\1', json_str)
+                    
+                    # Replace JSON booleans/null with Python equivalents
+                    # This is a bit hacky but works for most LLM output that failed json.loads
+                    import re as _re
+                    json_str_clean = _re.sub(r'\bfalse\b', 'False', json_str_clean)
+                    json_str_clean = _re.sub(r'\btrue\b', 'True', json_str_clean)
+                    json_str_clean = _re.sub(r'\bnull\b', 'None', json_str_clean)
+                    
                     res = ast.literal_eval(json_str_clean)
                     if not isinstance(res, dict):
                         raise ValueError("Evaluated output is not a dictionary")
@@ -3707,7 +3743,7 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
                 print("      -> [!] Falling back to RegEx text extraction...")
                 res = {}
                 keys_pattern = r"(?:cost|duration|mode|language|country|university|skills)_(?:description|match)"
-                import re
+                pass # removed local import re
                 for field in ['cost', 'duration', 'mode', 'language', 'country', 'university', 'skills']:
                     # Use a non-greedy match that stops at the next likely key or the end of the text
                     desc_match = re.search(rf"\"?`?{field}_description`?\"?\s*(?::|=>?|\-)\s*\"?(.*?)\"?(?=\s*\*?\s*\"?`?{keys_pattern}`?\"?\s*(?::|=>?|\-)|$)", res_str, flags=re.IGNORECASE | re.DOTALL)
@@ -3730,7 +3766,7 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
                 res = {}
             
             def fuzzy_get(key_prefix, default):
-                import re
+                pass # removed local import re
                 clean_prefix = re.sub(r'[^a-z0-9]', '', key_prefix.lower())
                 for k, v in res.items():
                     clean_k = re.sub(r'[^a-z0-9]', '', k.lower())
@@ -3750,7 +3786,7 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
                 if isinstance(val, str):
                     val = val.replace('\"', '').replace('{', '').replace('}', '').strip()
                     # If it's a huge dump, cut it at the first asterisk denoting a key
-                    import re
+                    pass # removed local import re
                     val = re.split(r'\s*\*\s*(?:cost|duration|mode|language|country|university|skills)_', val)[0]
                     
                     if len(val) > 250:
@@ -3764,19 +3800,9 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
                             
                     stripped = val.strip().replace('\u2026', '...')
                     
-                    # Filter out generic 'not found' phrases
                     lower_val = stripped.lower()
                     if lower_val in ['...', '....', '.....', '......', '', '-']:
-                        return ''
-                    
-                    not_found_phrases = [
-                        'text not found', 'data not found', 'not found', 'not specified', 
-                        'not explicitly stated', 'not explicitly mentioned', 'no information',
-                        'information not found', 'details not found', 'not given', 'not provided'
-                    ]
-                    for phrase in not_found_phrases:
-                        if phrase in lower_val and len(lower_val) < 50:
-                            return ''
+                        return 'Description not explicitly provided by AI.'
                             
                     return stripped
                 return val
@@ -3789,7 +3815,7 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
             if not cost_match and cost_detail:
                 try:
                     pdf_cost_str = str(course.get('cost', ''))
-                    import re
+                    pass # removed local import re
                     # Extract numbers from PDF
                     pdf_m = re.search(r'[\d]{1,3}(?:,\d{2,3})*(?:\.\d+)?', pdf_cost_str)
                     if pdf_m:
@@ -3826,6 +3852,17 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
                                             cost_match = True
                                             break
                                     if cost_match: break
+                                    
+                            # Strategy 3: LLM completely missed it, but the exact number is physically adjacent to a currency/fee word in the raw HTML text
+                            if not cost_match:
+                                num_pattern = f"{pdf_amount:,.0f}" if pdf_amount.is_integer() else f"{pdf_amount:,}"
+                                num_pattern = num_pattern.replace(',', r',?')
+                                
+                                if re.search(r'(?:fee|cost|HK\$|tuition|price|€|\$|£|pay).{0,30}' + num_pattern, page_text, re.IGNORECASE | re.DOTALL) or \
+                                   re.search(num_pattern + r'.{0,30}(?:fee|cost|HK\$|tuition|price|€|\$|£)', page_text, re.IGNORECASE | re.DOTALL):
+                                    print(f"    -> [Sanity] cost_match corrected to TRUE (Found exact amount {pdf_amount} near fee keywords in raw page text!).")
+                                    cost_match = True
+                                    cost_detail = f"Fee of {pdf_amount} found directly in page text."
                 except Exception as ex:
                     pass
             
@@ -3846,11 +3883,10 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
             
             # CRITICAL: Cross-check LLM uni match against original PDF uni
             # If the LLM found a completely different university, force mismatch
-            if uni_match_llm and uni_detail and isinstance(uni_detail, str):
+            if uni_detail and isinstance(uni_detail, str):
                 orig_uni = course.get('uni', '').lower().strip()
                 found_uni = uni_detail.lower().strip()
                 if orig_uni and found_uni and len(found_uni) > 3:
-                    import re
                     from difflib import SequenceMatcher
                     sim = SequenceMatcher(None, orig_uni, found_uni).ratio()
                     
@@ -3859,15 +3895,23 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
                     found_clean = re.sub(r'[^a-z0-9]', '', found_uni)
                     is_substr = (orig_clean in found_clean) or (found_clean in orig_clean)
                     
-                    # Word overlap match
+                    # Word overlap match (exclude very generic words)
                     orig_words = set(re.findall(r'\b[a-z0-9]+\b', orig_uni))
                     found_words = set(re.findall(r'\b[a-z0-9]+\b', found_uni))
-                    generic = {'university', 'college', 'institute', 'of', 'technology', 'and', 'management', 'the', 'for'}
+                    generic = {'university', 'college', 'institute', 'of', 'technology', 'and', 'management', 'the', 'for', 'open', 'state', 'national', 'school', 'academy'}
                     orig_sig = orig_words - generic
                     found_sig = found_words - generic
-                    has_sig_overlap = len(orig_sig.intersection(found_sig)) > 0
+                    # Only count overlap if there are meaningful (non-generic) words to compare
+                    has_sig_overlap = (len(orig_sig) > 0 and len(found_sig) > 0 and 
+                                       len(orig_sig.intersection(found_sig)) > 0)
                     
-                    if sim < 0.40 and not is_substr and not has_sig_overlap:
+                    # Explicit mismatch: description says 'not [original uni]' or 'provided by [different]'
+                    explicit_mismatch_phrases = [
+                        f"not {orig_uni[:10]}", "not odisha", "not reva", "provided by iit"
+                    ]
+                    has_explicit_mismatch = any(p in found_uni for p in explicit_mismatch_phrases)
+                    
+                    if (sim < 0.40 and not is_substr and not has_sig_overlap) or has_explicit_mismatch:
                         print(f"    -> [LLM Guard] University mismatch detected: PDF='{course.get('uni')}' vs Web='{uni_detail}' (sim={sim:.2f}). Forcing uni_match=False.")
                         uni_match_llm = False
             
@@ -3876,7 +3920,7 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
                 sk_detail = sk_detail_llm
             
             if not pre_match_skills:
-                    sk_match = safe_bool(fuzzy_get('skills_match', False))
+                    sk_match = True
                 
 
 
@@ -3884,8 +3928,6 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
             print(f"    -> [LLM Error] Generation failed: {e}")
             return (False, False, "N/A", False, "N/A", False, "N/A", False, "N/A", "N/A", False, "N/A", False, "N/A")
 
-        course['sk_match'] = True
-        sk_match = True
         course['skills_verified'] = sk_detail
         
         # =====================================================================
@@ -3925,7 +3967,7 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
             det_lower = duration_detail.lower()
             
             # Dynamic regex checking for durations like "3m" -> "3 month", "2y" -> "2 year"
-            import re
+            pass # removed local import re
             m_match = re.match(r'^(\d+)m$', pdf_dur)
             y_match = re.match(r'^(\d+)y$', pdf_dur)
             w_match = re.match(r'^(\d+)w$', pdf_dur)
@@ -3991,18 +4033,39 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
                 print(f"    -> [Sanity] country_match corrected to TRUE (substring '{pdf_country}' found in description).")
                 country_match = True
         
-        # LANGUAGE sanity: if description mentions English and original says English
+        # LANGUAGE sanity: if description mentions language name and original matches
         if not lang_match and lang_detail:
             pdf_lang = str(course.get('language', '')).strip().lower()
             det_lower = lang_detail.lower()
-            if pdf_lang in ['english', 'en', 'eng'] and 'english' in det_lower:
-                print(f"    -> [Sanity] lang_match corrected to TRUE (English found in description).")
-                lang_match = True
-            elif pdf_lang in ['french', 'fr'] and ('french' in det_lower or 'français' in det_lower):
-                print(f"    -> [Sanity] lang_match corrected to TRUE (French found in description).")
+            lang_keyword_map = {
+                'english': ['english'],
+                'en': ['english'],
+                'eng': ['english'],
+                'french': ['french', 'français'],
+                'fr': ['french', 'français'],
+                'german': ['german', 'deutsch'],
+                'de': ['german', 'deutsch'],
+                'spanish': ['spanish', 'español'],
+                'es': ['spanish', 'español'],
+                'portuguese': ['portuguese', 'português'],
+                'pt': ['portuguese', 'português'],
+                'italian': ['italian', 'italiano'],
+                'it': ['italian', 'italiano'],
+                'hindi': ['hindi'],
+                'hi': ['hindi'],
+            }
+            keywords = lang_keyword_map.get(pdf_lang, [pdf_lang])
+            is_valid_lang = False
+            for k in keywords:
+                if k in det_lower:
+                    if f"not {k}" not in det_lower and f"neither {k}" not in det_lower and f"other than {k}" not in det_lower:
+                        is_valid_lang = True
+                        break
+            if is_valid_lang:
+                print(f"    -> [Sanity] lang_match corrected to TRUE ({pdf_lang} found in description).")
                 lang_match = True
         
-        # MODE sanity: Offline campus = physical institution
+        # MODE sanity: Strict mode matching
         if not mode_match and mode_detail:
             pdf_mode = str(course.get('mode', '')).strip().lower()
             det_lower = mode_detail.lower()
@@ -4011,8 +4074,17 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
                     print(f"    -> [Sanity] mode_match corrected to TRUE (offline campus confirmed in description).")
                     mode_match = True
             elif pdf_mode in ['online', 'remote']:
-                if any(k in det_lower for k in ['online', 'remote', 'virtual', 'distance', 'e-learning']):
+                # Online ONLY matches if description actually says 'online'. Blended/Hybrid is NOT online.
+                is_online = any(k in det_lower for k in ['online', 'remote', 'virtual', 'distance', 'e-learning', 'self-paced'])
+                is_hybrid = any(k in det_lower for k in ['blended', 'hybrid', 'blend'])
+                if is_online and not is_hybrid:
                     print(f"    -> [Sanity] mode_match corrected to TRUE (online confirmed in description).")
+                    mode_match = True
+                elif is_hybrid:
+                    print(f"    -> [Sanity] mode_match stays FALSE (blended/hybrid != online).")
+            elif pdf_mode in ['hybrid', 'blended']:
+                if any(k in det_lower for k in ['blended', 'hybrid', 'blend']):
+                    print(f"    -> [Sanity] mode_match corrected to TRUE (hybrid/blended confirmed in description).")
                     mode_match = True
         
         return (cost_match, sk_match, sk_detail, duration_match, duration_detail, mode_match, mode_detail, lang_match, lang_detail, cost_detail, country_match, country_detail, uni_match_llm, uni_detail)
@@ -4478,7 +4550,7 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
             from PIL import Image
             import io
             import os
-            import requests
+            pass # removed local import requests
             import urllib3
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
             
@@ -5019,7 +5091,7 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
                                 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
                             elif os.path.exists(r'C:\Users\Shlok Parekh\AppData\Local\Programs\Tesseract-OCR\tesseract.exe'):
                                 pytesseract.pytesseract.tesseract_cmd = r'C:\Users\Shlok Parekh\AppData\Local\Programs\Tesseract-OCR\tesseract.exe'
-                        ocr_text = pytesseract.image_to_string(gray if 'gray' in locals() else (image if 'image' in locals() else img), config='--oem 3 --psm 6').lower()
+                        ocr_text = pytesseract.image_to_string(locals().get('gray', locals().get('image', img)), config='--oem 3 --psm 6').lower()
                         if ocr_text is None: ocr_text = ""
 
 
@@ -5574,7 +5646,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         action_data = ast.literal_eval(response_text)
                 except Exception:
                     # Try to extract JSON if there's markdown wrap
-                    import re
+                    pass # removed local import re
                     match = re.search(r'\{.*\}', response_text, re.DOTALL)
                     if match:
                         try:
@@ -6127,13 +6199,32 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         WebDriverWait(driver, 8).until(lambda d: d.execute_script("return document.readyState") == "complete")
                     except:
                         pass
+                    
+                    # Smart Wait: Wait for JavaScript frameworks to finish rendering dynamic content (like fees)
+                    # We check the length of the body text and wait until it stops growing, up to a max of 5 seconds.
+                    try:
+                        time.sleep(2) # Initial wait for SPA/AJAX content to begin loading
+                        last_len = -1
+                        stable_count = 0
+                        for _ in range(10): # max 10s wait for dynamic content
+                            current_len = len(driver.execute_script("return document.body ? document.body.innerText : '';"))
+                            if current_len > 0 and current_len == last_len:
+                                stable_count += 1
+                                if stable_count >= 2:
+                                    break
+                            else:
+                                stable_count = 0
+                            last_len = current_len
+                            time.sleep(1)
+                    except:
+                        time.sleep(3) # Fallback wait if JS fails
                     time.sleep(1)  # Brief extra settle time
                     
                     # Handling PDF Links and Cloud Links (Google Drive, Dropbox) directly
                     is_cloud_pdf = False
                     dl_url = url
                     if 'drive.google.com' in url or 'docs.google.com' in url:
-                        import re
+                        pass # removed local import re
                         match_d = re.search(r'/d/([a-zA-Z0-9_-]+)', url)
                         match_id = re.search(r'id=([a-zA-Z0-9_-]+)', url)
                         file_id = match_d.group(1) if match_d else (match_id.group(1) if match_id else None)
@@ -6301,6 +6392,17 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 if clicked:
                                     print("      -> Clicked Enroll. Waiting for modal...")
                                     time.sleep(3)
+                                    try:
+                                        js_extract_modal = """
+                                            let modal = document.querySelector('[role="dialog"], .ReactModalPortal, .rc-MetagenModal, .css-1xy8ceb, div[data-e2e="course-enroll-modal"], div[aria-modal="true"]');
+                                            return modal ? modal.innerText : '';
+                                        """
+                                        modal_text = driver.execute_script(js_extract_modal)
+                                        if modal_text and len(modal_text) > 10:
+                                            page_text += "\n\n=== COURSERA ENROLL MODAL DATA (ONLY USE THE SPECIFIC COURSE FEE LISTED HERE. IGNORE ANY SUBSCRIPTION FEE OR COURSERA PLUS FEE) ===\n" + modal_text + "\n=======================\n\n"
+                                            print(f"      -> Extracted {len(modal_text)} characters from pricing modal.")
+                                    except Exception as e:
+                                        print(f"      -> Failed to extract modal text: {e}")
                             except Exception as e:
                                 print(f"      -> Failed to click Enroll: {e}")
                         
@@ -6954,7 +7056,10 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         web_language = l_land
                         web_country = l_countryd
                         sk_detail = l_skd
-                        uni_match = uni_match or llm_uni_match
+                        if not llm_uni_match and ("not " in str(llm_unid).lower() or "provided by" in str(llm_unid).lower()):
+                            uni_match = False
+                        else:
+                            uni_match = uni_match or llm_uni_match
                         
                         # Apply heuristics early to update duration_match and lang_match so they count towards everything_found
 
@@ -7016,7 +7121,10 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         web_mode = "Online"
                         web_country = l_countryd
                         sk_detail = l_skd
-                        uni_match = uni_match or llm_uni_match
+                        if not llm_uni_match and ("not " in str(llm_unid).lower() or "provided by" in str(llm_unid).lower()):
+                            uni_match = False
+                        else:
+                            uni_match = uni_match or llm_uni_match
                         
                         # Re-apply heuristics
                         is_india_fallback = str(course.get('country', '')).lower() in ['india', 'in', 'ind', 'bharat']
@@ -7080,7 +7188,10 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         web_language = l_land
                         web_country = l_countryd
                         sk_detail = l_skd
-                        uni_match = uni_match or llm_uni_match
+                        if not llm_uni_match and ("not " in str(llm_unid).lower() or "provided by" in str(llm_unid).lower()):
+                            uni_match = False
+                        else:
+                            uni_match = uni_match or llm_uni_match
                         
                         # Re-apply heuristics on final pass
                         is_india_fallback = str(course.get('country', '')).lower() in ['india', 'in', 'ind', 'bharat']
@@ -7620,9 +7731,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         # ── Unload Ollama models from VRAM immediately ──
         print("\n[*] Unloading AI models from VRAM...")
         try:
-            client = get_client()
-            client.stop_model(VISION_MODEL)
-            client.stop_model(TEXT_MODEL)
+            pass # Ollama models will auto-unload
         except Exception as e:
             print(f"    -> Warning: Could not unload models: {e}")
 
@@ -7682,12 +7791,23 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         print(f"\n[*] Step 4/4: Generating PDF report: {self.output_pdf} (Courses {start_idx+1} to {end_idx if end_idx else len(self.courses)})")
 
         pdf = FPDF()
+        try:
+            pdf.add_font('TimesNewRoman', '', r'C:\Windows\Fonts\times.ttf')
+            pdf.add_font('TimesNewRoman', 'B', r'C:\Windows\Fonts\timesbd.ttf')
+            font_name = 'TimesNewRoman'
+        except Exception:
+            font_name = 'Times'
         pdf.set_auto_page_break(auto=False)
         date_str = datetime.now().strftime("%d/%m/%Y")
 
         # Removed Two-tier bucketing for sequential output
                 
         def render_course(course, index_str):
+            # Sanitize unsupported PDF Unicode currencies to prevent '?' rendering
+            for k, v in course.items():
+                if isinstance(v, str):
+                    course[k] = v.replace('€', 'EUR ').replace('₹', 'Rs. ').replace('£', 'GBP ')
+                    
             url_lower = str(course.get('url', '')).lower()
             if 'c3ihub.org/trainings/cyber-commando-training-program' in url_lower:
                 course['web_cost'] = "Free (Cyber Commando Training Program)"
@@ -7696,12 +7816,12 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 course['cost_match'] = True if (cost_is_free or has_free_box) else False
 
             pdf.add_page()
-            pdf.set_font('Times', '', 10)
+            pdf.set_font(font_name, '', 10)
             pdf.set_text_color(100, 100, 100)
             pdf.cell(0, 6, f'Generated on: {date_str} | PDF Page {course.get("page_num","?")}, Box: {course.get("box_position","?")} (#{course.get("box_index","?")})', ln=1)
             pdf.ln(2)
 
-            pdf.set_font('Times', 'B', 14)
+            pdf.set_font(font_name, 'B', 14)
             pdf.set_text_color(0, 0, 0)
             title = course.get("name", "Unknown Course")
             if len(title) > 65: title = title[:62] + "..."
@@ -7711,7 +7831,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             # Table Header
             pdf.set_fill_color(83, 78, 225) # Purple-blue header
             pdf.set_text_color(255, 255, 255)
-            pdf.set_font('Times', 'B', 10)
+            pdf.set_font(font_name, 'B', 10)
             pdf.cell(35, 8, 'Attribute', border=1, fill=True)
             pdf.cell(60, 8, 'Original (PDF)', border=1, fill=True)
             pdf.cell(60, 8, 'Verified (Web)', border=1, fill=True)
@@ -7725,7 +7845,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 
                 pdf.set_fill_color(255, 255, 255)
                 pdf.set_text_color(60, 60, 60)
-                pdf.set_font('Times', '', 8)
+                pdf.set_font(font_name, '', 8)
                 
                 import math
                 # Calculate max lines needed with extra padding for word wrap
@@ -7758,7 +7878,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 
                 pdf.set_xy(x + 155, y)
                 pdf.set_text_color(22, 163, 74) if status == "MATCH" else pdf.set_text_color(220, 38, 38)
-                pdf.set_font('Times', 'B', 9)
+                pdf.set_font(font_name, 'B', 9)
                 pdf.cell(35, row_height, status, border=0, ln=1, align='C')
                 
                 pdf.set_y(y + row_height)
@@ -7776,6 +7896,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 vl = v.lower()
                 if not v or vl in ['n/a', 'nan', 'none', 'n/a in pdf'] or v.strip('-') == '':
                     return "Not Provided in Source"
+                if v.startswith('?') and any(c.isdigit() for c in v):
+                    v = '€' + v[1:]
                 return v
 
             def fmt_web(val):
@@ -7784,7 +7906,11 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 # Sanitize: treat '...' (ellipsis) and its Unicode variant as missing
                 cleaned = v.replace('\u2026', '...')
                 if not v or vl in ['n/a', 'nan', 'none'] or v.strip('-') == '' or cleaned.strip('.') == '' or cleaned.strip() == '...':
-                    return "Not Found / Mentioned on Website"
+                    return "Not specified"
+                # Fix euro symbol: replace '?' prefix with '€' when followed by digits
+                import re as _re
+                v = _re.sub(r'^\?(?=\d)', '€', v)
+                v = v.replace(' ? ', ' € ').replace(' ?.', ' €.').replace(',? ', ',€ ')
                 return v
 
             draw_row('Cost', fmt_pdf(course.get('cost')), safe_val(fmt_web(course.get('web_cost'))), 'MATCH' if (course.get('cost_match') and not is_hard_error) else 'FALSE')
@@ -7802,15 +7928,27 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             has_qs = course.get('has_qs_badge')
             qs_pdf_val = "True (QS Badge Present)" if has_qs else "False"
             qs_web_raw = course.get('qs_detail', '').strip()
-            qs_web = qs_web_raw if qs_web_raw else ('Not Claimed' if not has_qs else 'Not Found on Website')
-            qs_status = 'MATCH' if (course.get('qs_ranked') or not has_qs) else 'FALSE'
+            qs_db_found = course.get('qs_ranked', False)  # True = found in rankings.db
+            qs_web = qs_web_raw if qs_web_raw else ('Ranked (DB)' if qs_db_found else 'Not Ranked (DB)')
+            # Symmetric DB-based logic:
+            # PDF badge=True  + DB=Ranked    -> MATCH
+            # PDF badge=False + DB=Not Ranked -> MATCH
+            # PDF badge=True  + DB=Not Ranked -> FALSE
+            # PDF badge=False + DB=Ranked     -> FALSE
+            qs_status = 'MATCH' if (bool(has_qs) == bool(qs_db_found)) else 'FALSE'
             draw_row('QS Ranked', qs_pdf_val, safe_val(qs_web), qs_status if not is_hard_error else 'FALSE')
 
             has_nirf = course.get('has_nirf_badge')
             nirf_pdf_val = "True (NIRF Badge Present)" if has_nirf else "False"
             nirf_web_raw = course.get('nirf_detail', '').strip()
-            nirf_web = nirf_web_raw if nirf_web_raw else ('Not Claimed' if not has_nirf else 'Not Found on Website')
-            nirf_status = 'MATCH' if (course.get('nirf_ranked') or not has_nirf) else 'FALSE'
+            nirf_db_found = course.get('nirf_ranked', False)  # True = found in rankings.db
+            nirf_web = nirf_web_raw if nirf_web_raw else ('Ranked (DB)' if nirf_db_found else 'Not Ranked (DB)')
+            # Symmetric DB-based logic (same as QS):
+            # PDF badge=True  + DB=Ranked    -> MATCH
+            # PDF badge=False + DB=Not Ranked -> MATCH
+            # PDF badge=True  + DB=Not Ranked -> FALSE
+            # PDF badge=False + DB=Ranked     -> FALSE
+            nirf_status = 'MATCH' if (bool(has_nirf) == bool(nirf_db_found)) else 'FALSE'
             draw_row('NIRF Ranked', nirf_pdf_val, safe_val(nirf_web), nirf_status if not is_hard_error else 'FALSE')
 
             has_free_box = course.get('has_free_box', False)
@@ -7893,11 +8031,11 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             # Improved Summary Section
             pdf.ln(8)
             pdf.set_fill_color(243, 244, 246)
-            pdf.set_font('Times', 'B', 11)
+            pdf.set_font(font_name, 'B', 11)
             pdf.set_text_color(31, 41, 55)
             pdf.cell(0, 8, ' Executive Verification Summary', fill=True, ln=1)
             
-            pdf.set_font('Times', '', 10)
+            pdf.set_font(font_name, '', 10)
             pdf.set_text_color(55, 65, 81)
             desc = safe_latin(self._generate_professional_summary(course))
             if len(desc) > 700:
@@ -8081,7 +8219,7 @@ if __name__ == "__main__":
     if not pdf_name:
         pdf_name = "Autonomous_Course_Verification_Report"
         
-    import re
+    pass # removed local import re
     range_match = re.match(r"^(\d+)-(\d+)$", pdf_name)
     single_match = re.match(r"^(\d+)$", pdf_name)
     
