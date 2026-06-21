@@ -1001,6 +1001,21 @@ def detect_chrome_version_main():
     return None
 
 
+def headless_args():
+    """Return Chrome flags to run headless when there is no display.
+
+    Colab/CI containers have no X server ($DISPLAY unset), so headed Chrome
+    exits immediately and undetected_chromedriver reports "chrome not reachable".
+    On a local desktop (Windows/macOS, or Linux with $DISPLAY) we stay headed so
+    the user can watch the browser as before.
+    """
+    import sys as _sys
+    if _sys.platform == "linux" and not os.environ.get("DISPLAY"):
+        print("[*] No display detected (headless server / Colab). Running Chrome headless.")
+        return ["--headless=new"]
+    return []
+
+
 
 KNOWN_INSTITUTES = [
     "A J Institute Of Engineering And Technology.Kottar chowki Boloor Village Mangalore (Visvesvaraya Technological University",
@@ -5802,6 +5817,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             options.add_argument('--disable-dev-shm-usage')
             # Required when running as root (Colab/CI containers); harmless elsewhere.
             options.add_argument('--no-sandbox')
+            for _harg in headless_args():
+                options.add_argument(_harg)
             options.add_argument('--disable-extensions')
             options.add_argument('--disable-background-networking')
             options.add_argument('--disable-default-apps')
@@ -5834,6 +5851,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     options2.add_argument('--disable-gpu')
                     options2.add_argument('--disable-dev-shm-usage')
                     options2.add_argument('--no-sandbox')
+                    for _harg in headless_args():
+                        options2.add_argument(_harg)
                     fresh_profile2 = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"chrome_profile_fallback_{b_idx}")
                     if os.path.exists(fresh_profile2):
                         try: shutil.rmtree(fresh_profile2)
@@ -7286,6 +7305,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 new_options.add_argument('--disable-gpu')
                                 new_options.add_argument('--disable-dev-shm-usage')
                                 new_options.add_argument('--no-sandbox')
+                                for _harg in headless_args():
+                                    new_options.add_argument(_harg)
                                 ud_dir = os.path.join(tempfile.gettempdir(), f"uc_profile_rec_{random.randint(1000, 9999)}")
                                 driver = uc.Chrome(options=new_options, user_data_dir=ud_dir, version_main=detect_chrome_version_main())
                                 driver.set_page_load_timeout(60)
