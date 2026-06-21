@@ -161,15 +161,7 @@ jobs:
           if [ -n "$REPORT_PDF" ]; then
             echo "Sending email with $REPORT_PDF ..."
             export REPORT_PDF
-            printf '%s\n' \
-              'import os, sys' \
-              'from email_sender import send_report' \
-              'pdf = os.environ.get("REPORT_PDF", "")' \
-              'ok, msg = send_report("Course Verification Complete", f"Run finished. Report: {os.path.basename(pdf)}", pdf)' \
-              'print(msg)' \
-              'sys.exit(0 if ok else 1)' \
-              > /tmp/send_email.py
-            python3 /tmp/send_email.py
+            python3 -c "import os,sys;from email_sender import send_report;pdf=os.environ.get('REPORT_PDF','');ok,msg=send_report('Course Verification Complete',f'Report: '+os.path.basename(pdf),pdf);print(msg);sys.exit(0 if ok else 1)"
           else
             echo "[!] No report PDF found"
           fi
