@@ -968,6 +968,39 @@ def safe_latin(text):
     return text.encode('latin-1', 'replace').decode('latin-1')
 
 
+# Cache of the detected Chrome major version, so we only shell out once.
+_CHROME_VERSION_MAIN_CACHE = None
+
+def detect_chrome_version_main():
+    """Detect the installed Chrome/Chromium major version at runtime.
+
+    Returns an int (e.g. 149) suitable for undetected_chromedriver's
+    ``version_main`` argument, or None if detection fails.
+
+    Why: undetected_chromedriver defaults to downloading the *latest* ChromeDriver,
+    which often does NOT match the Chrome actually installed in the environment
+    (very common on Colab/CI where apt pins a specific google-chrome-stable).
+    A driver/browser major-version mismatch raises SessionNotCreatedException.
+    Detecting the installed version and passing it explicitly avoids that.
+    """
+    global _CHROME_VERSION_MAIN_CACHE
+    if _CHROME_VERSION_MAIN_CACHE is not None:
+        return _CHROME_VERSION_MAIN_CACHE
+    import subprocess, re as _re
+    for exe in ("google-chrome", "google-chrome-stable", "chromium-browser", "chromium"):
+        try:
+            out = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=15)
+        except Exception:
+            continue
+        m = _re.search(r"(\d+)\.", out.stdout or "")
+        if m:
+            _CHROME_VERSION_MAIN_CACHE = int(m.group(1))
+            print(f"[*] Detected Chrome major version: {_CHROME_VERSION_MAIN_CACHE} (from {exe})")
+            return _CHROME_VERSION_MAIN_CACHE
+    print("[!] Could not detect Chrome version; letting undetected_chromedriver choose.")
+    return None
+
+
 
 KNOWN_INSTITUTES = [
     "A J Institute Of Engineering And Technology.Kottar chowki Boloor Village Mangalore (Visvesvaraya Technological University",
@@ -5767,6 +5800,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             # Memory-saving flags to prevent RAM explosion with 6 browsers
             options.add_argument('--disable-gpu')
             options.add_argument('--disable-dev-shm-usage')
+            # Required when running as root (Colab/CI containers); harmless elsewhere.
+            options.add_argument('--no-sandbox')
             options.add_argument('--disable-extensions')
             options.add_argument('--disable-background-networking')
             options.add_argument('--disable-default-apps')
@@ -5784,8 +5819,9 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             os.makedirs(fresh_profile, exist_ok=True)
             
             with browser_init_lock:
+                chrome_major = detect_chrome_version_main()
                 try:
-                    driver = uc.Chrome(options=options, user_data_dir=fresh_profile, version_main=148)
+                    driver = uc.Chrome(options=options, user_data_dir=fresh_profile, version_main=chrome_major)
                 except Exception as e:
                     print(f"    -> Warning: Parallel profile creation failed ({e}). Retrying with fresh options...")
                     options2 = uc.ChromeOptions()
@@ -5795,12 +5831,15 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     options2.add_argument('--ignore-certificate-errors')
                     options2.add_argument('--disable-print-preview')
                     options2.add_argument('--kiosk-printing')
+                    options2.add_argument('--disable-gpu')
+                    options2.add_argument('--disable-dev-shm-usage')
+                    options2.add_argument('--no-sandbox')
                     fresh_profile2 = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"chrome_profile_fallback_{b_idx}")
                     if os.path.exists(fresh_profile2):
                         try: shutil.rmtree(fresh_profile2)
                         except Exception: pass
                     os.makedirs(fresh_profile2, exist_ok=True)
-                    driver = uc.Chrome(options=options2, user_data_dir=fresh_profile2, version_main=148)
+                    driver = uc.Chrome(options=options2, user_data_dir=fresh_profile2, version_main=chrome_major)
                     
             driver.set_page_load_timeout(60)
             driver.set_script_timeout(30)
@@ -7244,8 +7283,11 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 new_options.page_load_strategy = 'eager'
                                 new_options.add_argument('--disable-blink-features=AutomationControlled')
                                 new_options.add_argument(f'--window-size=1280,800')
+                                new_options.add_argument('--disable-gpu')
+                                new_options.add_argument('--disable-dev-shm-usage')
+                                new_options.add_argument('--no-sandbox')
                                 ud_dir = os.path.join(tempfile.gettempdir(), f"uc_profile_rec_{random.randint(1000, 9999)}")
-                                driver = uc.Chrome(options=new_options, user_data_dir=ud_dir)
+                                driver = uc.Chrome(options=new_options, user_data_dir=ud_dir, version_main=detect_chrome_version_main())
                                 driver.set_page_load_timeout(60)
                                 driver.set_script_timeout(30)
                                 try:
