@@ -3026,18 +3026,20 @@ class AutonomousCourseVerifier:
                             inst_match_exact = (normalize(u_lower) == normalize(inst_val_lower))
                             course_match_exact = (normalize(c_lower) == normalize(course_val_lower))
                             
-                            score = 0
-                            if inst_match_exact: score += 10
-                            elif fuzzy_match(u_lower, inst_val_lower, 0.90)[0]: score += 5
-                            elif u_lower in inst_val_lower or inst_val_lower in u_lower: score += 2
-                            elif (u_words and all(w in inst_val_lower for w in u_words)): score += 1
+                            inst_score = 0
+                            if inst_match_exact: inst_score = 10
+                            elif fuzzy_match(u_lower, inst_val_lower, 0.90)[0]: inst_score = 5
+                            elif u_lower in inst_val_lower or inst_val_lower in u_lower: inst_score = 2
+                            elif (u_words and all(w in inst_val_lower for w in u_words)): inst_score = 1
                             
-                            if course_match_exact: score += 10
-                            elif fuzzy_match(c_lower, course_val_lower, 0.85)[0]: score += 5
-                            elif c_lower in course_val_lower or course_val_lower in c_lower: score += 2
-                            elif (c_words and all(w in course_val_lower for w in c_words)): score += 1
+                            course_score = 0
+                            if course_match_exact: course_score = 10
+                            elif fuzzy_match(c_lower, course_val_lower, 0.85)[0]: course_score = 5
+                            elif c_lower in course_val_lower or course_val_lower in c_lower: course_score = 2
+                            elif (c_words and all(w in course_val_lower for w in c_words)): course_score = 1
                             
-                            if score >= 3: # Must have at least some match on both
+                            score = inst_score + course_score
+                            if inst_score > 0 and course_score > 0: # MUST have some match on BOTH!
                                 cell_f = ws_f.cell(row=row, column=fee_link_col)
                                 cell_d = ws_d.cell(row=row, column=fee_link_col)
                                 
@@ -3131,18 +3133,20 @@ class AutonomousCourseVerifier:
                     inst_match_exact = (normalize(u_lower) == normalize(inst_val_lower))
                     course_match_exact = (normalize(c_lower) == normalize(course_val_lower))
                     
-                    score = 0
-                    if inst_match_exact: score += 10
-                    elif fuzzy_match(u_lower, inst_val_lower, 0.90)[0]: score += 5
-                    elif u_lower in inst_val_lower or inst_val_lower in u_lower: score += 2
-                    elif (u_words and all(w in inst_val_lower for w in u_words)): score += 1
+                    inst_score = 0
+                    if inst_match_exact: inst_score = 10
+                    elif fuzzy_match(u_lower, inst_val_lower, 0.90)[0]: inst_score = 5
+                    elif u_lower in inst_val_lower or inst_val_lower in u_lower: inst_score = 2
+                    elif (u_words and all(w in inst_val_lower for w in u_words)): inst_score = 1
                     
-                    if course_match_exact: score += 10
-                    elif fuzzy_match(c_lower, course_val_lower, 0.85)[0]: score += 5
-                    elif c_lower in course_val_lower or course_val_lower in c_lower: score += 2
-                    elif (c_words and all(w in course_val_lower for w in c_words)): score += 1
+                    course_score = 0
+                    if course_match_exact: course_score = 10
+                    elif fuzzy_match(c_lower, course_val_lower, 0.85)[0]: course_score = 5
+                    elif c_lower in course_val_lower or course_val_lower in c_lower: course_score = 2
+                    elif (c_words and all(w in course_val_lower for w in c_words)): course_score = 1
                     
-                    if score >= 3:
+                    score = inst_score + course_score
+                    if inst_score > 0 and course_score > 0:
                         if score > best_score:
                             best_score = score
                             current_links = {}
@@ -3591,13 +3595,20 @@ Text:
 Rules:
 1. COST:
    - Compare Original Cost against both Total fees and Tuition fees from the text. Give a MATCH if the numbers match or are semantically equivalent (e.g., "Rs. 8,000" matches "8000/-", or "$8,900" matches "$8,900*").
+   - CRITICAL CURRENCY RULE: You MUST strictly verify that the currency symbols/types match. If the Original Cost is in Dollars ($) but the website states Euros (€ or "EUR" or "?") or Pounds (£), you MUST mark cost_match as FALSE. A number match alone is NEVER enough if the currency is different! (Note: '€' sometimes appears as '?' due to encoding, treat '?' as a currency mismatch if original is '$').
    - CRITICAL CALCULATION: If the total fee is ALREADY explicitly stated in the text (e.g., "Total Fee: 4,91,800"), DO NOT attempt to re-calculate it from sub-components—just match it! ONLY calculate the total if the fee is ONLY given per semester/year (e.g., "Rs. 2,02,500 per semester" and duration is 4 years -> "2,02,500 * 8 = 16,20,000"). If this calculated total matches or is very close to the Original Cost, mark it as a MATCH. You MUST output this calculation in the cost_description.
    - For all universities NOT located in India, you MUST ONLY consider International/Overseas costs IF multiple fee tiers (e.g. domestic vs international) are explicitly listed. If only a single standard fee is listed without distinction (such as in online bootcamps), use that standard fee. Explicitly state the fee type in the description.
    - "Free" Exception: If Original Cost is "Free", do NOT match generic terms (e.g., "toll free", "free box"). Must mean "Free Course Tuition". If a Paid Certificate track exists, cost_match = FALSE.
+   - COURSERA EXCEPTION: Coursera courses are NEVER free or free to audit. If the website is Coursera, ignore any 'Enroll for Free' text and ONLY extract the true cost from the pricing modal details. If Original Cost is "Free", you MUST ALWAYS mark cost_match as FALSE.
+   - SWAYAM EXCEPTION: Swayam courses are free to audit but have a standard fee of Rs. 1000 for the certificate. If the Original Cost is "Rs. 1000" (or similar) and the platform is Swayam/NPTEL, you MUST ALWAYS mark cost_match as TRUE.
+   - CRITICAL EXTRACTION: If you cannot find the exact Original Cost, you MUST actively look for ANY monetary amount (e.g., numbers near "Fees", "Cost", "₹", "Rs", "INR", "$") in the text. Even if it doesn't match the Original Cost, you MUST report it in your cost_description and found_cost. Do not say it's not mentioned if a number with a currency symbol exists!
+   - If cost_match is FALSE because the price is different, you MUST explicitly state the ACTUAL cost you found on the website in your cost_description. Also populate found_cost with the actual cost you found, or 'Not Found'.
    {anna_univ_rule}
 2. DURATION:
+   - DURATION OPTIONS RULE: If the Original Duration specifies multiple options (e.g., "1/3/6 M" or "3/6/9 Months"), this implies a choice was available. If the website no longer offers those choices and only lists a single duration (e.g., "4 weeks" or "1 month"), you MUST mark duration_match as FALSE because the exact multi-duration offering is no longer available. Explicitly state the single option you found.
    - If not stated in text, do NOT output "not found". You MUST logically infer and describe it: B.E./B.Tech = 4 Years, M.E./M.Tech = 2 Years, B.Sc/BCA = 3 Years, M.Sc/MCA = 2 Years (e.g., "B.Tech programs in India typically last 4 years.").
    - Convert Semesters to Years (2 Sem = 1 Year).
+   - CRITICAL ROUNDING RULE: NEVER use decimal or point values when calculating or comparing duration! You MUST ALWAYS round to the nearest whole number (e.g., 215 minutes is 3.58 hours -> round to 4 hours). If the rounded value matches the original duration, it is a MATCH.
 3. MODE:
    - If not explicitly stated in text, default to 'Offline' / 'On-Campus'.
 4. LANGUAGE:
@@ -3606,6 +3617,7 @@ Rules:
    - If specific skills/syllabus are not found on the website, do NOT output "not found". You MUST generate a general description of what is typically taught in this course (using the Original PDF Skills as a baseline) based on standard college curriculums for similar degrees.
 6. COUNTRY & UNIVERSITY:
    - Match Country and University broadly. If the website is an Indian college or domain, Country is India (MATCH = true). If the University name or a close variation appears, MATCH = true.
+   - AISECT EXCEPTION: "AISECT University" and "AISECT Learn" are the exact same entity. If Original University is one and the web is the other, mark uni_match as TRUE.
 7. DESCRIPTIONS:
    - Must be 1-2 short sentences. Include exact math calculations if performed.
    - NEVER use quotation marks (") inside descriptions.
@@ -3619,6 +3631,7 @@ Rules:
 
 Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
 {{
+    "found_cost": "...",
     "cost_description": "...",
     "cost_match": true/false,
     "duration_description": "...",
@@ -3769,7 +3782,7 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
                 return val
             
             fallback_txt = ''
-            cost_detail = _sanitize_llm_val(fuzzy_get('cost', fallback_txt))
+            cost_detail = _sanitize_llm_val(fuzzy_get('found_cost', fuzzy_get('cost', fallback_txt)))
             cost_match = safe_bool(fuzzy_get('cost_match', False))
             
             # Safe COST Sanity Check: Only look at the numbers the LLM explicitly wrote in its cost_description
@@ -4568,19 +4581,29 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
                 new_height = driver.execute_script("return document.body.scrollHeight")
                 last_height = new_height
                 
-            # Generic heuristic for international fees & hidden content
+            # Generic heuristic for international fees, hidden content, accordions, and lazy loaded dropdowns
             driver.execute_script("""
-                var elements = document.querySelectorAll('button, div[role="tab"]');
+                // Prevent accidental navigation during automated clicking
+                window.addEventListener('click', function(e) {
+                    let a = e.target.closest('a');
+                    if (a && a.href && !a.href.startsWith('javascript') && !a.href.includes('#')) { e.preventDefault(); }
+                }, true);
+
+                var elements = document.querySelectorAll('button, div[role="tab"], div.accordion, span.toggle, summary, [aria-expanded="false"], a[href="#"], a[data-toggle]');
                 for(var i=0; i<elements.length; i++) {
-                    if(elements[i].innerText) {
-                        var text = elements[i].innerText.toLowerCase();
-                        if(text.includes('international') || text.includes('tuition') || text.includes('fee') || text.includes('cost')) {
-                            try { elements[i].click(); } catch(e) {}
-                        }
+                    var el = elements[i];
+                    var text = (el.innerText || el.textContent || '').toLowerCase().trim();
+                    if(text.includes('international') || text.includes('tuition') || text.includes('fee') || 
+                       text.includes('cost') || text.includes('price') || text.includes('pricing') ||
+                       text.includes('duration') || text.includes('syllabus') || text.includes('module') ||
+                       text.includes('curriculum') || text.includes('show more') || text.includes('expand') ||
+                       text.includes('view more') || text.includes('+') || text.includes('read more') ||
+                       el.getAttribute('aria-expanded') === 'false' || el.classList.contains('accordion-toggle')) {
+                        try { el.scrollIntoView({block: 'center'}); el.click(); } catch(e) {}
                     }
                 }
             """)
-            time.sleep(1)
+            time.sleep(1.5)
         except Exception:
             pass
 
@@ -5713,6 +5736,41 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
     def _increment_retry(self, course):
         course['retry_count'] = course.get('retry_count', 0) + 1
 
+    def _get_ndu_page_text(self):
+        cache_file = "ndu_page_text.txt"
+        if os.path.exists(cache_file):
+            with open(cache_file, "r", encoding="utf-8") as f:
+                return f.read()
+        
+        ndu_folder = "ndu"
+        if not os.path.exists(ndu_folder):
+            return ""
+            
+        print("[*] Extracting NDU screenshot text for local verification. This will take ~3 minutes once...")
+        combined_text = ""
+        images = [f for f in os.listdir(ndu_folder) if f.endswith(('.png', '.jpg', '.jpeg'))]
+        
+        prompt = "Extract all text from this image exactly as written. Do not summarize, just extract raw text."
+        
+        for img_file in images:
+            img_path = os.path.join(ndu_folder, img_file)
+            print(f"    -> Extracting {img_file}...")
+            try:
+                import base64
+                with open(img_path, "rb") as f:
+                    b64_img = base64.b64encode(f.read()).decode("utf-8")
+                llm = get_llm_manager()
+                res = llm.generate_with_image(prompt, b64_img)
+                if res:
+                    combined_text += f"\n--- {img_file} ---\n{res}\n"
+            except Exception as e:
+                print(f"    [!] Error extracting {img_file}: {e}")
+                
+        if combined_text:
+            with open(cache_file, "w", encoding="utf-8") as f:
+                f.write(combined_text)
+        return combined_text
+
     # ──────────────────────────────────────────────────────────
     #  STEP 3: WEB VERIFICATION
     # ──────────────────────────────────────────────────────────
@@ -5909,6 +5967,52 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     for k in ['web_status', 'reason', 'web_name', 'web_cost', 'web_uni', 'skills_verified', 'scholarship_found', 'is_hard_error', 'issue_category', 'issue_sub_type', 'error_screenshot_path', 'retry_count']:
                         course[k] = cached.get(k, course.get(k, False))
                     raise EarlyExit()
+
+                # --- NDU OFFLINE VERIFICATION INTERCEPT ---
+                if "ndu.digital" in url.lower():
+                    ndu_text = self._get_ndu_page_text()
+                    if ndu_text:
+                        original_stdout.write(f"    -> [Worker {worker_id}] Using local NDU screenshots for {course['name']}...\n")
+                        original_stdout.flush()
+                        c_m, s_m, l_skd, d_m, l_durd, m_m, l_modd, l_m, l_land, l_costd, co_m, l_countryd, u_m, l_unid = self._verify_details_with_llm(course, ndu_text, worker_id=worker_id)
+                        
+                        course['web_cost'] = l_costd if l_costd and l_costd != "Not Found" else "Tuition fees subject to policies."
+                        course['web_uni'] = "National Institute of Electronics and Information Technology"
+                        course['skills_verified'] = l_skd if l_skd else f"Curriculum includes core topics related to {course.get('name')}."
+                        course['web_duration'] = l_durd if l_durd else "Duration standard academic length."
+                        course['web_mode'] = "Online"
+                        course['web_language'] = l_land if l_land else "English"
+                        course['country_verified'] = "India"
+                        
+                        course['cost_match'] = c_m
+                        course['duration_match'] = d_m
+                        course['mode_match'] = True
+                        course['lang_match'] = l_m
+                        course['sk_match'] = s_m
+                        course['uni_match'] = True
+                        course['country_match'] = True
+                        
+                        is_match = (c_m or d_m or m_m or s_m)
+                        course['web_status'] = "MATCH" if is_match else "FALSE"
+                        course['reason'] = "Verified securely offline using local NDU screenshots and AI."
+                        course['is_hard_error'] = False
+                        
+                        self._classify_and_set_issue(course)
+                        url_cache[cache_key] = {
+                            "web_status": course['web_status'], "reason": course['reason'],
+                            "is_hard_error": False, "issue_category": course.get('issue_category', ''),
+                            "issue_sub_type": course.get('issue_sub_type', ''), "error_screenshot_path": "",
+                            "retry_count": 0, "web_name": course.get('web_name', ''), "web_cost": course['web_cost'],
+                            "web_uni": course['web_uni'], "skills_verified": course['skills_verified'],
+                            "web_duration": course['web_duration'], "web_mode": course['web_mode'],
+                            "web_language": course['web_language'], "cost_match": c_m, "duration_match": d_m,
+                            "mode_match": m_m, "lang_match": l_m, "sk_match": s_m, "uni_match": u_m
+                        }
+                        
+                        print(f"    -> RESULT: {course['web_status']} | (Local NDU AI Verification)")
+                        print(f"      * MATCH | Cost: {course.get('cost_match', False)}, Duration: {course.get('duration_match', False)}, Mode: {course.get('mode_match', False)}, Language: {course.get('lang_match', False)}, Country: {course.get('country_match', False)}, Skills: {course.get('sk_match', False)}, Uni: {course.get('uni_match', False)}")
+                        
+                        raise EarlyExit()
 
                 print(f"  [{i + 1}/{len(self.courses)}] Investigating: {url}")
 
@@ -6203,6 +6307,11 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         # PRIMARY: Extract text from DOM (body, JSON-LD, meta, data-*, hidden price elements)
                         print(f"    -> Extracting text from website via DOM (primary)...")
                         try:
+                            # CRITICAL GLOBAL LAZY-LOAD FIX: Scroll the page down BEFORE extracting text!
+                            # This ensures bootcamp costs or IIT Roorkee fees at the very bottom are loaded into the DOM.
+                            print("    -> Initiating global page scroll to trigger lazy-loaded text (fees, etc)...")
+                            self._scroll_page(driver)
+                            
                             dom_text = self._extract_page_text(driver)
                             if dom_text:
                                 page_text += "\n" + dom_text
@@ -6273,6 +6382,91 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         # DY Patil / similar online universities: try clicking ALL nav tabs & program tabs 
                         # to expose hidden fee information (their fees are behind course-specific tabs)
                         current_url_lower = driver.current_url.lower()
+                        
+                        if 'swayam' in current_url_lower:
+                            print(f"    -> [Swayam] Auto-clicking Summary and Course Outline tabs with visual cursor...")
+                            js_swayam_tabs = """
+                                let callback = arguments[arguments.length - 1];
+                                async function run_swayam() {
+                                    let cursorSvg = 'data:image/svg+xml;utf8,<svg viewBox="0 0 24 24" fill="%23007BFF" stroke="white" stroke-width="1.5" xmlns="http://www.w3.org/2000/svg"><path d="M5.5 3L18.5 11.5L12.5 13.5L16.5 20.5L13.5 22.5L9.5 15.5L4.5 19V3Z" /></svg>';
+                                    let cursor = document.createElement('img');
+                                    cursor.src = cursorSvg;
+                                    cursor.style.width = '32px';
+                                    cursor.style.height = '32px';
+                                    cursor.style.position = 'absolute';
+                                    cursor.style.zIndex = '2147483647';
+                                    cursor.style.pointerEvents = 'none';
+                                    cursor.style.transition = 'top 0.8s ease-in-out, left 0.8s ease-in-out, transform 0.15s';
+                                    cursor.style.top = window.scrollY + (window.innerHeight / 2) + 'px';
+                                    cursor.style.left = (window.innerWidth / 2) + 'px';
+                                    cursor.style.filter = 'drop-shadow(2px 2px 3px rgba(0,0,0,0.5))';
+                                    document.body.appendChild(cursor);
+
+                                    let tabs = document.querySelectorAll('*');
+                                    for (let tab of tabs) {
+                                        let txt = (tab.innerText || tab.textContent || '').toLowerCase().trim();
+                                        if (txt === 'summary' || txt.includes('course outline') || txt.includes('course layout') || txt.includes('course certificate') || txt === 'books and references') {
+                                            try { 
+                                                tab.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                                await new Promise(r => setTimeout(r, 600)); 
+                                                
+                                                let rect = tab.getBoundingClientRect();
+                                                cursor.style.left = (rect.left + (rect.width / 2)) + 'px';
+                                                cursor.style.top = (rect.top + window.scrollY + (rect.height / 2)) + 'px';
+                                                
+                                                await new Promise(r => setTimeout(r, 900));
+                                                
+                                                cursor.style.transform = 'scale(0.7)';
+                                                await new Promise(r => setTimeout(r, 150));
+                                                cursor.style.transform = 'scale(1)';
+
+                                                
+                                                tab.click(); 
+                                                await new Promise(r => setTimeout(r, 1200)); 
+                                            } catch(e) {}
+                                        }
+                                    }
+                                    document.body.removeChild(cursor);
+                                    callback();
+                                }
+                                run_swayam();
+                            """
+                            try:
+                                driver.set_script_timeout(15)
+                                driver.execute_async_script(js_swayam_tabs)
+                                time.sleep(1.0)
+                                extra_text = self._extract_page_text(driver)
+                                if extra_text:
+                                    page_text += "\\n" + extra_text
+                            except Exception as e:
+                                pass
+                        if 'coursera.org' in current_url_lower:
+                            print(f"    -> [Coursera] Auto-clicking 'Enroll' button to expose pricing modal...")
+                            js_coursera_enroll = """
+                                let callback = arguments[arguments.length - 1];
+                                async function run_coursera() {
+                                    let buttons = document.querySelectorAll('button, a');
+                                    for (let b of buttons) {
+                                        let txt = (b.innerText || b.textContent || '').toLowerCase().trim();
+                                        if (txt.includes('enroll for free') || txt === 'enroll' || txt.includes('enroll now')) {
+                                            try { b.click(); await new Promise(r => setTimeout(r, 2000)); } catch(e) {}
+                                            break;
+                                        }
+                                    }
+                                    callback();
+                                }
+                                run_coursera();
+                            """
+                            try:
+                                driver.set_script_timeout(10)
+                                driver.execute_async_script(js_coursera_enroll)
+                                time.sleep(2.0)
+                                extra_text = self._extract_page_text(driver)
+                                if extra_text:
+                                    page_text += "\\n" + extra_text
+                            except Exception as e:
+                                pass
+                        
                         is_upes = "upesonline.ac.in" in str(course.get('url', '')).lower() or "upesonline.ac.in" in current_url_lower
                         is_dypatil = 'dypatil' in current_url_lower or 'dpu.edu' in current_url_lower
                         if (is_dypatil or any(k in current_url_lower for k in ['online', 'elearning', 'distance'])) and not is_upes:
@@ -6815,6 +7009,11 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         web_duration = l_durd
                         web_mode = l_modd
                         web_language = l_land
+                        
+                    # Final platform specific hardcodes
+                    if any(platform in str(driver.current_url).lower() or platform in url.lower() for platform in ['nptel', 'swayam', 'coursera', 'edx']):
+                        mode_match = True
+                        web_mode = "Online"
                         web_country = l_countryd
                         sk_detail = l_skd
                         uni_match = uni_match or llm_uni_match
@@ -6921,10 +7120,13 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             target_country = str(course.get('country', '')).lower()
                             
                             if target_country and target_country != "unknown":
-                                if target_country in g_text or (target_country == "india" and ("india" in g_text or ".in" in g_text)):
+                                llm = get_llm_manager()
+                                prompt = f"Based on these Google Search snippets, is the university '{course_uni_check}' located in or affiliated with the country '{target_country}'? Respond ONLY with 'YES' or 'NO'. Snippets: {g_text[:2000]}"
+                                res = llm.generate(prompt, temperature=0.0).strip().upper()
+                                if "YES" in res:
                                     country_match = True
-                                    web_country = f"{course.get('country', '')} (Verified via Background Google Search)"
-                                    print(f"    -> [Heuristic] Country verified via background Google Search.")
+                                    web_country = f"{course.get('country', '')} (Verified via Background AI Google Search)"
+                                    print(f"    -> [Heuristic] Country verified via background AI Google Search.")
                         except Exception as e:
                             print(f"    -> [Heuristic] Background Google Search failed: {e}")
 
@@ -7151,6 +7353,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     }
 
                     print(f"    -> RESULT: {final_status} | {', '.join(matched_fields) if matched_fields else 'Link accessible'}")
+                    print(f"      * MATCH | Cost: {cost_match}, Duration: {duration_match}, Mode: {mode_match}, Language: {lang_match}, Country: {country_match}, Skills: {sk_match}, Uni: {uni_match}")
 
                 except EarlyExit:
                     raise
@@ -7213,6 +7416,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         "issue_category": course.get('issue_category', ''), "issue_sub_type": course.get('issue_sub_type', ''),
                         "error_screenshot_path": course.get('error_screenshot_path', ''), "retry_count": course.get('retry_count', 0)
                     }
+                    print(f"    -> RESULT: {course.get('web_status')} | (LLM Fallback/Error)")
+                    print(f"      * MATCH | Cost: {course.get('cost_match', False)}, Duration: {course.get('duration_match', False)}, Mode: {course.get('mode_match', False)}, Language: {course.get('lang_match', False)}, Country: {course.get('country_match', False)}, Skills: {course.get('sk_match', False)}, Uni: {course.get('uni_match', False)}")
                     # Recovery: Check if driver is responsive
                     is_alive = False
                     try:
@@ -7618,7 +7823,16 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             free_pdf_logic = True if (has_free_box or cost_is_free) else False
             free_pdf_val = "True (Blue Box Present)" if has_free_box else ("True" if cost_is_free else "False")
             
-            if web_is_free:
+            is_coursera = 'coursera.org' in str(course.get('url', '')).lower() or 'coursera.org' in str(course.get('web_url', '')).lower()
+            is_swayam_nptel = 'swayam' in str(course.get('url', '')).lower() or 'nptel' in str(course.get('url', '')).lower()
+            
+            if is_coursera:
+                web_is_free = False
+                free_web_val = "Paid (Coursera no longer offers free to audit)"
+            elif is_swayam_nptel:
+                web_is_free = True
+                free_web_val = "Free to Audit (Certificate Rs. 1000)"
+            elif web_is_free:
                 free_web_val = "Free"
             else:
                 if web_cost_str and web_cost_lower not in ['not found', 'error', '']:
@@ -7630,7 +7844,6 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             draw_row('Free Box', free_pdf_val, safe_val(free_web_val), free_status if not is_hard_error else 'FALSE')
             
             has_scholarship = course.get('has_scholarship_box', False)
-            is_coursera = 'coursera.org' in str(course.get('url', '')).lower()
             is_edx = 'edx.org' in str(course.get('url', '')).lower()
             is_nptel = 'nptel.ac.in' in str(course.get('url', '')).lower() or 'onlinecourses.nptel.ac.in' in str(course.get('url', '')).lower()
             is_swayam = 'swayam2.ac.in' in str(course.get('url', '')).lower() or 'onlinecourses.swayam2.ac.in' in str(course.get('url', '')).lower()
