@@ -91,6 +91,7 @@ jobs:
 
       - name: Generate static API files
         if: always()
+        continue-on-error: true
         run: python -c "import dashboard"
 
       - name: Upload PDF report
@@ -131,6 +132,7 @@ jobs:
 
       - name: Deploy to Firebase Hosting
         if: ${{ always() && inputs.deploy }}
+        continue-on-error: true
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
@@ -140,6 +142,7 @@ jobs:
 
       - name: Send email notification
         if: always()
+        continue-on-error: true
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
