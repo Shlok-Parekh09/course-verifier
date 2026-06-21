@@ -164,18 +164,31 @@ except Exception as e:
     print(f"[!] Could not save initial checkpoint: {e}")
 
 # ── Web verification ──
+web_verify_ok = True
 if s_idx < len(agent.courses):
-    agent.autonomous_web_verify(start_idx=s_idx, end_idx=e_idx)
+    try:
+        agent.autonomous_web_verify(start_idx=s_idx, end_idx=e_idx)
+    except Exception as e:
+        web_verify_ok = False
+        print(f"\n[!] Web verification crashed: {e}")
+        print("[*] Continuing to rankings + PDF with whatever was verified so far (JSON checkpoint is safe).")
 else:
     print("[*] All courses in range already verified.")
 
 # ── Rankings ──
 print("\n[*] Verifying QS/NIRF rankings...")
-agent.verify_rankings(start_idx=s_idx, end_idx=e_idx)
+try:
+    agent.verify_rankings(start_idx=s_idx, end_idx=e_idx)
+except Exception as e:
+    print(f"[!] Rankings step crashed: {e}")
 
-# ── PDF Report ──
+# ── PDF Report ── (always attempted, even if web verify / rankings failed)
 pdf_name = f"Verification_Report_Pages_{START_PAGE}_to_{END_PAGE}"
-agent.generate_pdf_report(start_idx=s_idx, end_idx=e_idx, pdf_name=pdf_name)
+try:
+    agent.generate_pdf_report(start_idx=s_idx, end_idx=e_idx, pdf_name=pdf_name)
+except Exception as e:
+    print(f"[!] PDF report generation crashed: {e}")
+    print(f"[!] JSON checkpoint is still safe at: {checkpoint_path}")
 
 # ── Dashboard sync ──
 if os.path.exists("autonomous_verified_data.json"):

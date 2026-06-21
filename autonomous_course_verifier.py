@@ -7694,12 +7694,32 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         # Render sequentially
         counter = start_idx + 1
         end_val = end_idx if end_idx is not None else len(self.courses)
+        rendered_count = 0
         for c in self.courses[start_idx:end_val]:
             # Print if it was processed this run OR if it has a web_status (meaning it was verified in a previous checkpoint run)
             if not c.get('processed_this_run', False) and "web_status" not in c:
                 continue
             render_course(c, str(counter))
             counter += 1
+            rendered_count += 1
+
+        # Guard against an empty FPDF: fpdf2 raises "No pages have been added yet"
+        # on pdf.output() if zero courses were rendered. Emit a placeholder page
+        # so we still produce a valid (non-empty) PDF instead of crashing with
+        # no file written.
+        if rendered_count == 0:
+            print("[!] No courses had verification data to render (web verify may have failed).")
+            print("[*] Writing a placeholder PDF page so the report still exists.")
+            pdf.add_page()
+            pdf.set_font('Times', 'B', 14)
+            pdf.set_text_color(220, 38, 38)
+            pdf.cell(0, 20, 'No verification data available for this page range.', ln=1)
+            pdf.set_font('Times', '', 10)
+            pdf.set_text_color(60, 60, 60)
+            pdf.multi_cell(0, 6,
+                'Web verification did not complete for the requested pages (it likely crashed in '
+                'the Colab Chrome/Selenium environment). The JSON checkpoint is still safe and '
+                'contains the extracted courses. Re-run with --resume to retry web verification.')
 
         # ── Floating Items Page ──
         if self.floating_items:
