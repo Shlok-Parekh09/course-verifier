@@ -1,23 +1,22 @@
-name: Course Verifier – Pages 602-1890
+name: Course Verifier
 
 on:
-  # Run manually from the Actions tab
   workflow_dispatch:
     inputs:
       start_page:
-        description: 'Start page (default 602)'
+        description: 'Start page'
         required: true
         default: '602'
       end_page:
-        description: 'End page (default 1890)'
+        description: 'End page'
         required: true
         default: '1890'
       num_browsers:
-        description: 'Parallel browsers (2 recommended for GitHub runner RAM)'
+        description: 'Parallel browsers'
         required: true
         default: '2'
       resume:
-        description: 'Resume from previous checkpoint JSON?'
+        description: 'Resume from checkpoint?'
         type: boolean
         required: false
         default: false
@@ -25,7 +24,7 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6 hours max per GitHub job
+    timeout-minutes: 360
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -46,8 +45,7 @@ jobs:
             libxi6 libxtst6 libxrandr2 libasound2 \
             libpangocairo-1.0-0 libatspi2.0-0 libcups2 \
             libdrm2 libgbm1 libxkbcommon0 \
-            tesseract-ocr tesseract-ocr-eng \
-            unzip curl
+            tesseract-ocr tesseract-ocr-eng unzip curl
 
       - name: Install Google Chrome
         run: |
@@ -70,7 +68,7 @@ jobs:
           pip install -r requirements.txt
           playwright install chromium || true
 
-      - name: Restore previous checkpoint
+      - name: Restore checkpoint
         if: github.event.inputs.resume == 'true'
         uses: actions/download-artifact@v4
         with:
@@ -78,10 +76,10 @@ jobs:
           path: .
         continue-on-error: true
 
-      - name: Run course verifier
+      - name: Run verifier
         env:
           VERIFIER_NO_FORCE_EXIT: "true"
-          SEND_EMAIL_ON_COMPLETE: "true"
+          SEND_EMAIL_ON_COMPLETE: "false"
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
@@ -90,21 +88,6 @@ jobs:
           SMTP_TO: ${{ secrets.SMTP_TO }}
           OPENROUTER_KEY_1: ${{ secrets.OPENROUTER_KEY_1 }}
           GEMINI_KEY_1: ${{ secrets.GEMINI_KEY_1 }}
-          # Inject remaining keys as blanks if not set
-          OPENROUTER_KEY_2: ""
-          OPENROUTER_KEY_3: ""
-          OPENROUTER_KEY_4: ""
-          OPENROUTER_KEY_5: ""
-          OPENROUTER_KEY_6: ""
-          GEMINI_KEY_2: ""
-          GEMINI_KEY_3: ""
-          GEMINI_KEY_4: ""
-          GEMINI_KEY_5: ""
-          GEMINI_KEY_6: ""
-          NVIDIA_KEY_1: ""
-          GROQ_API_KEY_1: ""
-          MISTRAL_API_KEY_1: ""
-          SAMBANOVA_API_KEY_1: ""
           OLLAMA_API_URL: ${{ secrets.OLLAMA_API_URL }}
           OLLAMA_MODEL: ${{ secrets.OLLAMA_MODEL }}
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
@@ -112,11 +95,8 @@ jobs:
           START="${{ github.event.inputs.start_page }}"
           END="${{ github.event.inputs.end_page }}"
           BROWSERS="${{ github.event.inputs.num_browsers }}"
-
-          # Patch NUM_BROWSERS dynamically for the weak GitHub runner
           sed -i "s/NUM_BROWSERS = 6/NUM_BROWSERS = ${BROWSERS}/g" autonomous_course_verifier.py
-
-          echo "[*] Running verifier for pages ${START}-${END} with ${BROWSERS} browsers"
+          echo "Running verifier for pages ${START}-${END}"
           python run_verifier_pages.py link_compile.pdf --pages "$START" "$END" --no-email
 
       - name: Upload PDF report
@@ -126,14 +106,14 @@ jobs:
           path: Verification_Report_Pages_*.pdf
           retention-days: 30
 
-      - name: Upload checkpoint JSON
+      - name: Upload checkpoint
         uses: actions/upload-artifact@v4
         with:
           name: verifier-checkpoint
           path: autonomous_verified_link_compile.pdf.json
           retention-days: 30
 
-      - name: Upload Excel report
+      - name: Upload Excel
         uses: actions/upload-artifact@v4
         with:
           name: verification-report-excel
@@ -147,7 +127,7 @@ jobs:
           path: verification_screenshots/**
           retention-days: 7
 
-      - name: Send email notification
+      - name: Send email
         if: always()
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
@@ -156,28 +136,16 @@ jobs:
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           SMTP_FROM: ${{ secrets.SMTP_FROM }}
           SMTP_TO: ${{ secrets.SMTP_TO }}
-        run: |
-          REPORT_PDF=$(ls Verification_Report_Pages_*.pdf 2>/dev/null | head -n 1)
-          if [ -n "$REPORT_PDF" ]; then
-            echo "Sending email with $REPORT_PDF ..."
-            export REPORT_PDF
-            python3 -c "import os,sys;from email_sender import send_report;pdf=os.environ.get('REPORT_PDF','');ok,msg=send_report('Course Verification Complete',f'Report: '+os.path.basename(pdf),pdf);print(msg);sys.exit(0 if ok else 1)"
-          else
-            echo "[!] No report PDF found"
-          fi
+        run: python3 .github/scripts/send_email.py
 
-      - name: Job summary
+      - name: Summary
         if: always()
         run: |
-          echo "## Course Verifier – GitHub Actions" >> $GITHUB_STEP_SUMMARY
-          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
-          echo "| Pages | ${{ github.event.inputs.start_page }} – ${{ github.event.inputs.end_page }} |" >> $GITHUB_STEP_SUMMARY
+          echo "## Course Verifier" >> $GITHUB_STEP_SUMMARY
+          echo "| Pages | ${{ github.event.inputs.start_page }} - ${{ github.event.inputs.end_page }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Browsers | ${{ github.event.inputs.num_browsers }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Resume | ${{ github.event.inputs.resume }} |" >> $GITHUB_STEP_SUMMARY
           PDF=$(ls Verification_Report_Pages_*.pdf 2>/dev/null | head -n 1)
           if [ -n "$PDF" ]; then
             echo "| Report | $(basename $PDF) |" >> $GITHUB_STEP_SUMMARY
           fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Download artifacts: **Actions → Artifacts**" >> $GITHUB_STEP_SUMMARY
+          echo "Download artifacts: Actions -> Artifacts" >> $GITHUB_STEP_SUMMARY
