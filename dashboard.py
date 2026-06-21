@@ -287,39 +287,125 @@ def load_courses():
                 except Exception as e:
                     print(f"Error loading {jf}:", e)
                     
+    def _derive_status_issue(d):
+        """Derive status / issue_category from available evidence without destroying saved progress."""
+        has_pdf = d.get('pdf_page') is not None
+        web_status = d.get('web_status', '')
+        has_reason = bool(d.get('reason'))
+        stored_status = d.get('status', '')
+        stored_reason = d.get('disc_reason', d.get('reason', ''))
+
+        # 1. Fresh autonomous verifier evidence (web_status set) takes priority
+        if web_status == 'MATCH':
+            return 'Verified', ISSUE_CATEGORY_VERIFIED, 'perfect_match', ''
+        elif web_status == 'FALSE':
+            is_hard = d.get('is_hard_error', False)
+            reason = d.get('reason', '')
+            if is_hard:
+                return 'Error', ISSUE_CATEGORY_WEBSITE, 'site_down', reason
+            reason_l = reason.lower()
+            fails = []
+            if 'cost' in reason_l: fails.append('Cost')
+            if 'duration' in reason_l: fails.append('Duration')
+            if 'mode' in reason_l: fails.append('Mode')
+            if 'language' in reason_l: fails.append('Language')
+            if 'country' in reason_l: fails.append('Country')
+            if 'university' in reason_l: fails.append('University')
+            if 'skills' in reason_l: fails.append('Skills')
+            if len(fails) >= 3:
+                sub = 'multiple_mismatches'
+            elif fails:
+                field_map = {
+                    'Cost': 'cost_mismatch', 'Duration': 'duration_mismatch',
+                    'Mode': 'mode_mismatch', 'Language': 'language_mismatch',
+                    'Country': 'country_mismatch', 'University': 'university_mismatch',
+                    'Skills': 'skills_mismatch'
+                }
+                sub = field_map.get(fails[0], 'course_issue')
+            else:
+                sub = 'course_issue'
+            return 'Discrepancy', ISSUE_CATEGORY_COURSE, sub, reason
+
+        # 2. Manual PDF verification evidence (pdf_page + match fields present)
+        if has_pdf:
+            matches = [
+                d.get('cost_match', False), d.get('duration_match', False),
+                d.get('mode_match', False), d.get('lang_match', False),
+                d.get('country_match', False), d.get('uni_match', False),
+                d.get('sk_match', False),
+            ]
+            if all(matches):
+                return 'Verified', ISSUE_CATEGORY_VERIFIED, 'perfect_match', ''
+            fails = []
+            if not d.get('cost_match'): fails.append('Cost')
+            if not d.get('duration_match'): fails.append('Duration')
+            if not d.get('mode_match'): fails.append('Mode')
+            if not d.get('lang_match'): fails.append('Language')
+            if not d.get('country_match'): fails.append('Country')
+            if not d.get('uni_match'): fails.append('University')
+            if not d.get('sk_match'): fails.append('Skills')
+            reason = 'Mismatch: ' + ', '.join(fails)
+            if len(fails) >= 3:
+                sub = 'multiple_mismatches'
+            else:
+                field_map = {
+                    'Cost': 'cost_mismatch', 'Duration': 'duration_mismatch',
+                    'Mode': 'mode_mismatch', 'Language': 'language_mismatch',
+                    'Country': 'country_mismatch', 'University': 'university_mismatch',
+                    'Skills': 'skills_mismatch'
+                }
+                sub = field_map.get(fails[0], 'course_issue')
+            return 'Discrepancy', ISSUE_CATEGORY_COURSE, sub, reason
+
+        # 3. Previously saved status from older verifier runs (no web_status, no pdf_page, but status is set)
+        if stored_status == 'Verified':
+            return 'Verified', ISSUE_CATEGORY_VERIFIED, 'perfect_match', ''
+        elif stored_status == 'Error':
+            sub = 'site_down'
+            if '404' in stored_reason: sub = '404_not_found'
+            elif 'ssl' in stored_reason.lower() or 'privacy' in stored_reason.lower(): sub = 'ssl_error'
+            elif 'server' in stored_reason.lower(): sub = 'server_error'
+            elif 'waf' in stored_reason.lower() or 'cloudflare' in stored_reason.lower(): sub = 'blocked_by_waf'
+            elif 'timeout' in stored_reason.lower(): sub = 'timeout'
+            elif 'dns' in stored_reason.lower(): sub = 'dns_fail'
+            elif 'login' in stored_reason.lower() or 'paywall' in stored_reason.lower(): sub = 'login_required'
+            elif 'maintenance' in stored_reason.lower(): sub = 'site_down'
+            elif 'crash' in stored_reason.lower(): sub = 'browser_crash'
+            elif 'redirect' in stored_reason.lower(): sub = 'redirect_loop'
+            return 'Error', ISSUE_CATEGORY_WEBSITE, sub, stored_reason
+        elif stored_status == 'Discrepancy':
+            fails = []
+            if 'Cost' in stored_reason: fails.append('Cost')
+            if 'Duration' in stored_reason: fails.append('Duration')
+            if 'Mode' in stored_reason: fails.append('Mode')
+            if 'Language' in stored_reason: fails.append('Language')
+            if 'Country' in stored_reason: fails.append('Country')
+            if 'University' in stored_reason: fails.append('University')
+            if 'Skills' in stored_reason: fails.append('Skills')
+            if len(fails) >= 3:
+                sub = 'multiple_mismatches'
+            elif fails:
+                field_map = {
+                    'Cost': 'cost_mismatch', 'Duration': 'duration_mismatch',
+                    'Mode': 'mode_mismatch', 'Language': 'language_mismatch',
+                    'Country': 'country_mismatch', 'University': 'university_mismatch',
+                    'Skills': 'skills_mismatch'
+                }
+                sub = field_map.get(fails[0], 'course_issue')
+            else:
+                sub = 'course_issue'
+            return 'Discrepancy', ISSUE_CATEGORY_COURSE, sub, stored_reason
+
+        # 4. Nothing known
+        return 'Unverified', '', '', ''
+
     if loaded_raw:
         for idx, d in enumerate(raw_data):
             country = clean_country(d.get('country', d.get('Country', 'Unknown')))
             domain = str(d.get('domain', d.get('Domain', 'Unknown Domain'))).strip()
             if not domain: domain = 'Unknown Domain'
-            
-            status = d.get('status')
-            if not status or status == 'Unverified':
-                web_status = d.get('web_status', '')
-                if web_status == 'MATCH':
-                    status = 'Verified'
-                elif web_status == 'FALSE':
-                    status = 'Error' if d.get('is_hard_error') else 'Discrepancy'
-                else:
-                    status = 'Unverified'
-            
-            issue_cat = d.get('issue_category', '')
-            issue_sub = d.get('issue_sub_type', '')
-            # Derive status from issue_category if present, else fall back to old logic
-            if issue_cat == ISSUE_CATEGORY_VERIFIED:
-                status = 'Verified'
-            elif issue_cat == ISSUE_CATEGORY_WEBSITE:
-                status = 'Error'
-            elif issue_cat == ISSUE_CATEGORY_COURSE:
-                status = 'Discrepancy'
-            elif not status or status == 'Unverified':
-                web_status = d.get('web_status', '')
-                if web_status == 'MATCH':
-                    status = 'Verified'
-                elif web_status == 'FALSE':
-                    status = 'Error' if d.get('is_hard_error') else 'Discrepancy'
-                else:
-                    status = 'Unverified'
+
+            status, issue_cat, issue_sub, reason = _derive_status_issue(d)
 
             course = {
                 "id": d.get("id", idx + 1),
@@ -355,7 +441,109 @@ def load_courses():
                 "pdf_table": d.get('pdf_table', [])
             }
             global_courses.append(course)
-            
+
+        # ── MERGE: Overlay autonomous verifier results if available ──
+        for jf in JSON_FILES:
+            if os.path.exists(jf):
+                try:
+                    with open(jf, "r", encoding="utf-8") as f:
+                        verifier_raw = json.load(f)
+                    merged = 0
+                    for idx, v in enumerate(verifier_raw):
+                        if idx >= len(global_courses):
+                            break
+                        # A course was "actually processed" if it has a reason or issue_category
+                        was_processed = bool(v.get('reason')) or bool(v.get('issue_category'))
+                        if not was_processed:
+                            continue
+                        c = global_courses[idx]
+                        # Preserve manual verification artifacts
+                        pdf_page = c.get('pdf_page')
+                        pdf_table = c.get('pdf_table', [])
+                        web_status = v.get('web_status', '')
+                        is_hard = v.get('is_hard_error', False)
+                        if web_status == 'MATCH':
+                            status = 'Verified'
+                        elif web_status == 'FALSE':
+                            status = 'Error' if is_hard else 'Discrepancy'
+                        else:
+                            status = 'Unverified'
+                        issue_cat = v.get('issue_category', '')
+                        issue_sub = v.get('issue_sub_type', '')
+                        if not issue_cat:
+                            if status == 'Verified':
+                                issue_cat = ISSUE_CATEGORY_VERIFIED
+                                issue_sub = 'perfect_match'
+                            elif status == 'Error':
+                                issue_cat = ISSUE_CATEGORY_WEBSITE
+                                issue_sub = issue_sub or 'site_down'
+                            elif status == 'Discrepancy':
+                                issue_cat = ISSUE_CATEGORY_COURSE
+                                issue_sub = issue_sub or 'course_issue'
+                        reason = v.get('reason', '')
+                        # Derive honest status from verifier match fields
+                        v_matches = [
+                            v.get('cost_match', False), v.get('duration_match', False),
+                            v.get('mode_match', False), v.get('lang_match', False),
+                            v.get('country_match', False), v.get('uni_match', False),
+                            v.get('sk_match', False),
+                        ]
+                        if web_status == 'MATCH' and not all(v_matches):
+                            # LLM fallback may claim MATCH with weak evidence - downgrade if any field fails
+                            fails = []
+                            if not v.get('cost_match'): fails.append('Cost')
+                            if not v.get('duration_match'): fails.append('Duration')
+                            if not v.get('mode_match'): fails.append('Mode')
+                            if not v.get('lang_match'): fails.append('Language')
+                            if not v.get('country_match'): fails.append('Country')
+                            if not v.get('uni_match'): fails.append('University')
+                            if not v.get('sk_match'): fails.append('Skills')
+                            status = 'Discrepancy'
+                            issue_cat = ISSUE_CATEGORY_COURSE
+                            if len(fails) >= 3:
+                                issue_sub = 'multiple_mismatches'
+                            else:
+                                field_map = {
+                                    'Cost': 'cost_mismatch', 'Duration': 'duration_mismatch',
+                                    'Mode': 'mode_mismatch', 'Language': 'language_mismatch',
+                                    'Country': 'country_mismatch', 'University': 'university_mismatch',
+                                    'Skills': 'skills_mismatch'
+                                }
+                                issue_sub = field_map.get(fails[0], 'course_issue')
+                            reason = v.get('reason', '') + ' (downgraded due to field mismatch)'
+
+                        c.update({
+                            "status": status,
+                            "issue_category": issue_cat,
+                            "issue_sub_type": issue_sub,
+                            "disc_reason": reason,
+                            "web_status": web_status,
+                            "is_hard_error": is_hard,
+                            "web_name": v.get('web_name', ''),
+                            "web_cost": v.get('web_cost', ''),
+                            "web_uni": v.get('web_uni', ''),
+                            "skills_verified": v.get('skills_verified', ''),
+                            "cost_match": v.get('cost_match', False),
+                            "duration_match": v.get('duration_match', False),
+                            "mode_match": v.get('mode_match', False),
+                            "lang_match": v.get('lang_match', False),
+                            "country_match": v.get('country_match', False),
+                            "uni_match": v.get('uni_match', False),
+                            "sk_match": v.get('sk_match', False),
+                            "retry_count": v.get('retry_count', 0),
+                            "error_screenshot_path": v.get('error_screenshot_path', ''),
+                        })
+                        if pdf_page is not None:
+                            c['pdf_page'] = pdf_page
+                        if pdf_table:
+                            c['pdf_table'] = pdf_table
+                        merged += 1
+                    if merged:
+                        print(f"[MERGE] Overlayed {merged} processed courses from {jf}")
+                except Exception as e:
+                    print(f"[MERGE] Error merging {jf}: {e}")
+                break  # Only merge the first matching file
+
         save_courses()
 
 # Load immediately
@@ -675,10 +863,12 @@ def api_upload():
                                     break
                             
                             matches = [c['cost_match'], c['duration_match'], c['mode_match'], c['lang_match'], c['country_match'], c['uni_match'], c['sk_match']]
-                            
+
                             if all(matches):
                                 c['status'] = 'Verified'
                                 c['disc_reason'] = ''
+                                c['issue_category'] = ISSUE_CATEGORY_VERIFIED
+                                c['issue_sub_type'] = 'perfect_match'
                             else:
                                 c['status'] = 'Discrepancy'
                                 fails = []
@@ -690,6 +880,22 @@ def api_upload():
                                 if not c['uni_match']: fails.append('University')
                                 if not c['sk_match']: fails.append('Skills')
                                 c['disc_reason'] = "Mismatch: " + ", ".join(fails)
+                                c['issue_category'] = ISSUE_CATEGORY_COURSE
+                                if len(fails) >= 3:
+                                    c['issue_sub_type'] = 'multiple_mismatches'
+                                elif fails:
+                                    field_map = {
+                                        'Cost': 'cost_mismatch',
+                                        'Duration': 'duration_mismatch',
+                                        'Mode': 'mode_mismatch',
+                                        'Language': 'language_mismatch',
+                                        'Country': 'country_mismatch',
+                                        'University': 'university_mismatch',
+                                        'Skills': 'skills_mismatch',
+                                    }
+                                    c['issue_sub_type'] = field_map.get(fails[0], 'course_issue')
+                                else:
+                                    c['issue_sub_type'] = 'course_issue'
                             
                             updates += 1
                             verified_in_this_batch.append(c)
