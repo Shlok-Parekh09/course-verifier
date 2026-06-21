@@ -16,3 +16,4 @@ Flask
 Werkzeug
 firebase-admin
 python-dotenv
+gunicorn

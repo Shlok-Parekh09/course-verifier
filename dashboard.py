@@ -20,18 +20,36 @@ ISSUE_CATEGORY_VERIFIED = "verified"
 # Initialize Firebase
 db = None
 try:
-    if os.path.exists('serviceAccountKey.json'):
-        cred = credentials.Certificate('serviceAccountKey.json')
-        # Check if already initialized to avoid errors in hot-reloads
+    _cred = None
+    _sa_path = 'serviceAccountKey.json'
+
+    # 1. Try literal JSON from env (Render / PaaS pattern)
+    _sa_json_env = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON', '').strip()
+    if _sa_json_env and _sa_json_env.startswith('{'):
+        try:
+            _sa_dict = json.loads(_sa_json_env)
+            with open(_sa_path, 'w', encoding='utf-8') as _f:
+                json.dump(_sa_dict, _f)
+            print("[Firebase] Wrote serviceAccountKey.json from GOOGLE_APPLICATION_CREDENTIALS_JSON env var.")
+        except Exception as _e:
+            print("[Firebase] Failed to parse GOOGLE_APPLICATION_CREDENTIALS_JSON:", _e)
+
+    # 2. Try path from env
+    _sa_path_env = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', '').strip()
+    if _sa_path_env and os.path.exists(_sa_path_env):
+        _sa_path = _sa_path_env
+
+    if os.path.exists(_sa_path):
+        _cred = credentials.Certificate(_sa_path)
         if not firebase_admin._apps:
-            firebase_admin.initialize_app(cred)
+            firebase_admin.initialize_app(_cred)
         db = firestore.client()
-        print("Connected to Firestore (Local)")
+        print("Connected to Firestore (via service account)")
     else:
         if not firebase_admin._apps:
             firebase_admin.initialize_app()
         db = firestore.client()
-        print("Connected to Firestore (Cloud Run)")
+        print("Connected to Firestore (default credentials)")
 except Exception as e:
     print("Firestore initialization failed:", e)
 
@@ -712,5 +730,8 @@ def api_upload():
     })
 
 if __name__ == "__main__":
-    print("[*] Starting Live Verification Dashboard on http://localhost:5000")
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    import os
+    _port = int(os.environ.get("PORT", "5000"))
+    _debug = os.environ.get("FLASK_DEBUG", "false").lower() in ("1", "true", "yes")
+    print(f"[*] Starting Live Verification Dashboard on http://0.0.0.0:{_port}  (debug={_debug})")
+    app.run(debug=_debug, host="0.0.0.0", port=_port)
