@@ -20,6 +20,11 @@ on:
         type: boolean
         required: false
         default: false
+      deploy:
+        description: 'Deploy dashboard to Firebase after run'
+        type: boolean
+        required: false
+        default: true
 
 jobs:
   verify:
@@ -71,6 +76,7 @@ jobs:
         continue-on-error: true
 
       - name: Run verifier
+        id: verifier
         env:
           VERIFIER_NO_FORCE_EXIT: true
           OPENROUTER_KEY_1: ${{ secrets.OPENROUTER_KEY_1 }}
@@ -82,6 +88,10 @@ jobs:
           BROWSERS="${{ inputs.browsers }}"
           sed -i "s/NUM_BROWSERS = 6/NUM_BROWSERS = ${BROWSERS}/g" autonomous_course_verifier.py
           python run_verifier_pages.py link_compile.pdf --pages ${{ inputs.start_page }} ${{ inputs.end_page }} --no-email
+
+      - name: Generate static API files
+        if: always()
+        run: python -c "import dashboard"
 
       - name: Upload PDF report
         if: always()
@@ -118,6 +128,15 @@ jobs:
           path: verification_screenshots/**
           retention-days: 14
           if-no-files-found: warn
+
+      - name: Deploy to Firebase Hosting
+        if: ${{ always() && inputs.deploy }}
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_AAKYAREPATSE }}
+          channelId: live
+          projectId: aakyarepatse
 
       - name: Send email notification
         if: always()
