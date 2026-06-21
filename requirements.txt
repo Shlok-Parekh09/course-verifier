@@ -17,3 +17,5 @@ Werkzeug
 firebase-admin
 python-dotenv
 gunicorn
+rapidfuzz
+googlesearch

@@ -7509,11 +7509,18 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 pass
 
         # ── Unload Ollama models from VRAM immediately ──
+        # Only meaningful when a local Ollama python client helper (get_client)
+        # and VISION_MODEL/TEXT_MODEL are defined. In Colab/CI they are not, so
+        # skip cleanly rather than printing a confusing 'get_client not defined' warning.
         print("\n[*] Unloading AI models from VRAM...")
         try:
-            client = get_client()
-            client.stop_model(VISION_MODEL)
-            client.stop_model(TEXT_MODEL)
+            import inspect
+            if 'get_client' in globals() and 'VISION_MODEL' in globals() and 'TEXT_MODEL' in globals():
+                client = get_client()
+                client.stop_model(VISION_MODEL)
+                client.stop_model(TEXT_MODEL)
+            else:
+                print("    -> No local Ollama client to unload (cloud-only run). Skipped.")
         except Exception as e:
             print(f"    -> Warning: Could not unload models: {e}")
 

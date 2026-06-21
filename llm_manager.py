@@ -261,13 +261,30 @@ class LLMManager:
         if ollama_key:
             headers["Authorization"] = f"Bearer {ollama_key}"
 
-        try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=60)
-            if resp.status_code == 200:
-                return resp.json().get("response")
-            return None
-        except Exception:
-            return None
+        # Retry transient failures (rate limit 429, 5xx, timeouts) with backoff so
+        # rapid successive calls don't silently fail and drop verification quality.
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                resp = requests.post(url, headers=headers, json=payload, timeout=90)
+                if resp.status_code == 200:
+                    return resp.json().get("response")
+                if resp.status_code in (429, 500, 502, 503, 504):
+                    wait = min(2 ** attempt, 10)
+                    print(f"      -> [LLM Manager] Ollama HTTP {resp.status_code}; retrying in {wait}s (attempt {attempt+1}/{max_attempts})...")
+                    time.sleep(wait)
+                    continue
+                # Non-retryable (e.g. 401 bad key, 404 bad model). Surface the real error.
+                print(f"      -> [LLM Manager] Ollama HTTP {resp.status_code}: {resp.text[:200]}")
+                return None
+            except requests.exceptions.Timeout:
+                wait = min(2 ** attempt, 10)
+                print(f"      -> [LLM Manager] Ollama timed out; retrying in {wait}s (attempt {attempt+1}/{max_attempts})...")
+                time.sleep(wait)
+            except Exception as e:
+                print(f"      -> [LLM Manager] Ollama request error: {e}")
+                return None
+        return None
 
     def _call_openrouter(self, api_key: str, prompt: str, system: Optional[str], format: str, temperature: float) -> Optional[str]:
         url = "https://openrouter.ai/api/v1/chat/completions"
@@ -519,16 +536,29 @@ class LLMManager:
         if ollama_key:
             headers["Authorization"] = f"Bearer {ollama_key}"
 
-        try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=60)
-            if resp.status_code == 200:
-                return resp.json().get("response")
-            else:
-                print(f"      -> [LLM Manager] Ollama Vision Error {resp.status_code}: {resp.text}")
-            return None
-        except Exception as e:
-            print(f"      -> [LLM Manager] Ollama Vision Exception: {e}")
-            return None
+        # Vision calls are heavier (image payload) and prone to timeouts/rate limits;
+        # use a longer timeout and retry transient failures with backoff.
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                resp = requests.post(url, headers=headers, json=payload, timeout=120)
+                if resp.status_code == 200:
+                    return resp.json().get("response")
+                if resp.status_code in (429, 500, 502, 503, 504):
+                    wait = min(2 ** attempt, 10)
+                    print(f"      -> [LLM Manager] Ollama Vision HTTP {resp.status_code}; retrying in {wait}s (attempt {attempt+1}/{max_attempts})...")
+                    time.sleep(wait)
+                    continue
+                print(f"      -> [LLM Manager] Ollama Vision Error {resp.status_code}: {resp.text[:200]}")
+                return None
+            except requests.exceptions.Timeout:
+                wait = min(2 ** attempt, 10)
+                print(f"      -> [LLM Manager] Ollama Vision timed out; retrying in {wait}s (attempt {attempt+1}/{max_attempts})...")
+                time.sleep(wait)
+            except Exception as e:
+                print(f"      -> [LLM Manager] Ollama Vision Exception: {e}")
+                return None
+        return None
 
 # Global Singleton for easy import
 _llm_manager = None
