@@ -511,9 +511,16 @@ class LLMManager:
         }
         if system:
             payload["system"] = system
-            
+
+        # Cloud Ollama (ollama.com) requires a Bearer API key. This was missing,
+        # so every vision call returned 401 Unauthorized even with a valid key.
+        headers = {"Content-Type": "application/json"}
+        ollama_key = os.environ.get("OLLAMA_API_KEY")
+        if ollama_key:
+            headers["Authorization"] = f"Bearer {ollama_key}"
+
         try:
-            resp = requests.post(url, json=payload, timeout=60)
+            resp = requests.post(url, headers=headers, json=payload, timeout=60)
             if resp.status_code == 200:
                 return resp.json().get("response")
             else:
