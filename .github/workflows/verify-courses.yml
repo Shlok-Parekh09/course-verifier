@@ -4,19 +4,19 @@ on:
   workflow_dispatch:
     inputs:
       start_page:
-        description: Start page
+        description: 'Start PDF page'
         required: true
         default: '602'
       end_page:
-        description: End page
+        description: 'End PDF page'
         required: true
         default: '1890'
       browsers:
-        description: Number of parallel browsers
+        description: 'Number of parallel browsers'
         required: true
         default: '2'
       resume:
-        description: Resume from checkpoint
+        description: 'Resume from checkpoint'
         type: boolean
         required: false
         default: false
@@ -34,17 +34,22 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Setup Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+          install-dependencies: true
+
       - name: Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget gnupg2 ca-certificates fonts-liberation libglib2.0-0 libnss3 libgconf-2-4 libfontconfig1 libxss1 libappindicator3-1 libatk-bridge2.0-0 libgtk-3-0 libxcomposite1 libxcursor1 libxdamage1 libxi6 libxtst6 libxrandr2 libasound2 libpangocairo-1.0-0 libatspi2.0-0 libcups2 libdrm2 libgbm1 libxkbcommon0 tesseract-ocr tesseract-ocr-eng unzip curl
-
-      - name: Install Chrome
-        run: |
-          wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-          sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google.list'
-          sudo apt-get update
-          sudo apt-get install -y google-chrome-stable
+          sudo apt-get install -y --no-install-recommends \
+            fonts-liberation libglib2.0-0 libnss3 libgconf-2-4 \
+            libfontconfig1 libxss1 libappindicator3-1 libatk-bridge2.0-0 \
+            libgtk-3-0 libxcomposite1 libxcursor1 libxdamage1 libxi6 libxtst6 \
+            libxrandr2 libasound2 libpangocairo-1.0-0 libatspi2.0-0 libcups2 \
+            libdrm2 libgbm1 libxkbcommon0 tesseract-ocr tesseract-ocr-eng \
+            unzip curl
 
       - name: Cache pip
         uses: actions/cache@v4
@@ -52,14 +57,14 @@ jobs:
           path: ~/.cache/pip
           key: pip-${{ hashFiles('requirements.txt') }}
 
-      - name: Install pip deps
+      - name: Install Python deps
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
           playwright install chromium || true
 
       - name: Restore checkpoint
-        if: inputs.resume
+        if: ${{ inputs.resume }}
         uses: actions/download-artifact@v4
         with:
           name: verifier-checkpoint
@@ -78,31 +83,43 @@ jobs:
           sed -i "s/NUM_BROWSERS = 6/NUM_BROWSERS = ${BROWSERS}/g" autonomous_course_verifier.py
           python run_verifier_pages.py link_compile.pdf --pages ${{ inputs.start_page }} ${{ inputs.end_page }} --no-email
 
-      - name: Upload PDF
+      - name: Upload PDF report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: report-pdf
           path: Verification_Report_Pages_*.pdf
+          retention-days: 30
+          if-no-files-found: warn
 
       - name: Upload checkpoint
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: verifier-checkpoint
           path: autonomous_verified_link_compile.pdf.json
+          retention-days: 30
+          if-no-files-found: warn
 
       - name: Upload Excel
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: report-excel
           path: '*.xlsx'
+          retention-days: 30
+          if-no-files-found: warn
 
       - name: Upload screenshots
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: screenshots
           path: verification_screenshots/**
+          retention-days: 14
+          if-no-files-found: warn
 
-      - name: Send email
+      - name: Send email notification
         if: always()
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
