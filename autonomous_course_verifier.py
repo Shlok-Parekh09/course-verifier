@@ -1016,6 +1016,38 @@ def headless_args():
     return []
 
 
+def _safe_google_search(query, limit=3):
+    """Call googlesearch.search() across incompatible package versions.
+
+    Two common PyPI packages both expose ``from googlesearch import search``
+    but with different signatures:
+      * ``googlesearch-python``: ``search(query, num_results=10, lang=...)``
+      * Mario Vilas ``google``:  ``search(query, stop=N, num=10, ...)``
+    Passing ``num_results=`` to the latter raises
+    ``TypeError: search() got an unexpected keyword argument 'num_results'``.
+    This tries each convention in turn and returns a plain list of result items
+    (URL strings or rich objects), sliced to ``limit``. Downstream code already
+    handles both str and object results via ``hasattr(item, 'description')``.
+    """
+    try:
+        from googlesearch import search
+    except Exception:
+        return []
+    for call in (
+        lambda: search(query, num_results=limit),
+        lambda: search(query, stop=limit),
+        lambda: search(query, num=limit),
+        lambda: search(query),
+    ):
+        try:
+            return list(call())[:limit]
+        except TypeError:
+            continue
+        except Exception:
+            return []
+    return []
+
+
 
 KNOWN_INSTITUTES = [
     "A J Institute Of Engineering And Technology.Kottar chowki Boloor Village Mangalore (Visvesvaraya Technological University",
@@ -2951,7 +2983,7 @@ class AutonomousCourseVerifier:
                             college_only_expanded = self._expand_abbreviations(college_only)
                             g_query = f'"{college_only_expanded}" affiliated university'
                             print(f"      -> Searching Google for Affiliation: {g_query}")
-                            for j, g_url in enumerate(search(g_query, num_results=2, sleep_interval=1)):
+                            for j, g_url in enumerate(_safe_google_search(g_query, limit=2)):
                                 try:
                                     res = requests.get(g_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
                                     soup = BeautifulSoup(res.text, 'html.parser')
@@ -5929,6 +5961,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
 
         def process_course(item):
             sys.stdout.local.buffer = StringIO()
+            import re  # bound first: a later `import re` deeper in this fn makes `re` local to the whole scope, which caused UnboundLocalError on early code paths
             import numpy as np
             i, course = item
             course['processed_this_run'] = True
@@ -6966,10 +6999,10 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     if not country_match and course_uni_check:
                         print(f"    -> Missing country match. Searching Google in background for {course_uni_check} country...")
                         try:
-                            from googlesearch import search
+                            from googlesearch import search  # noqa: kept for parity; _safe_google_search imports internally
                             g_query = f'"{course_uni_check}" country location'
                             g_results = []
-                            for j, g_url in enumerate(search(g_query, num_results=3, sleep_interval=1, advanced=True)):
+                            for j, g_url in enumerate(_safe_google_search(g_query, limit=3)):
                                 if hasattr(g_url, 'description'):
                                     g_results.append((str(g_url.title) + " " + str(g_url.description)).lower())
                                 else:

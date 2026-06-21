@@ -29,6 +29,15 @@ class LLMManager:
         self.ollama_model   = os.environ.get("OLLAMA_MODEL", "llama3")
         self.ollama_vision_model = os.environ.get("OLLAMA_VISION_MODEL", "gemma4:31b-cloud")
 
+        # Local (localhost) Ollama emergency fallback. Distinct from the cloud
+        # Ollama above: this always targets localhost:11434 so that if a local
+        # Ollama server is running (e.g. on a beefy laptop/VM), it is used as the
+        # last resort. In environments with no local Ollama (Colab/CI), the call
+        # simply fails and is caught gracefully instead of raising
+        # AttributeError because the attributes were never defined.
+        self.local_ollama_url = os.environ.get("OLLAMA_LOCAL_URL", "http://localhost:11434/api/generate")
+        self.local_ollama_model = os.environ.get("OLLAMA_LOCAL_MODEL", self.ollama_model)
+
         # Track last call time per provider to enforce rate limits
         # Track last call time per key to enforce rate limits individually
         self.last_call = {}
