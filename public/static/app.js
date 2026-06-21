@@ -1255,7 +1255,7 @@ function initUpload() {
         const fd = new FormData();
         for (const f of input.files) fd.append('files[]', f);
         try {
-            const res    = await fetch('/api/upload', { method:'POST', body:fd });
+            const res    = await fetch('./api/upload', { method:'POST', body:fd });
             const result = await res.json();
             alert(result.status === 'success' ? `✓ ${result.message}` : `✗ ${result.message}`);
             if (result.status === 'success') { allCoursesData = []; fetchData(); }

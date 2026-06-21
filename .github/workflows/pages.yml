@@ -1,0 +1,70 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main, yug-render-deploy]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure static API files exist
+        run: |
+          # If public/api/*.json are missing, copy from root backups
+          mkdir -p public/api
+          [ ! -f public/api/courses.json ] && cp -f 1.json public/api/courses.json 2>/dev/null || true
+          [ ! -f public/api/courses.json ] && cp -f autonomous_verified_link_compile.pdf.json public/api/courses.json 2>/dev/null || true
+          # Generate a minimal data.json if missing
+          if [ ! -f public/api/data.json ]; then
+            python3 <<'PYEOF'
+          import json, os
+          courses = []
+          if os.path.exists('public/api/courses.json'):
+              with open('public/api/courses.json', 'r', encoding='utf-8') as f:
+                  raw = json.load(f)
+                  if isinstance(raw, dict): courses = raw.get('courses', [])
+                  elif isinstance(raw, list): courses = raw
+          total = len(courses)
+          verified = sum(1 for c in courses if c.get('status')=='Verified')
+          disc = sum(1 for c in courses if c.get('status')=='Discrepancy')
+          err = sum(1 for c in courses if c.get('status')=='Error')
+          unv = sum(1 for c in courses if c.get('status')=='Unverified')
+          data = {
+              "status": "success",
+              "stats": {"total": total, "verified": verified, "discrepancies": disc, "errors": err, "unverified": unv,
+                        "website_issues": 0, "course_issues": 0},
+              "website_sub_counts": {}, "course_sub_counts": {}, "domain_warnings": [],
+              "domain_counts": {}, "country_counts": {},
+              "discrepancy_list": [], "website_issue_list": [], "course_issue_list": [],
+              "recent": []
+          }
+          with open('public/api/data.json', 'w', encoding='utf-8') as f:
+              json.dump(data, f, indent=2)
+          PYEOF
+          fi
+          ls -lh public/api/
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
