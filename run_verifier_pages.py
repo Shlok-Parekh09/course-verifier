@@ -62,9 +62,18 @@ if not PDF_PATH:
     print("Usage: python run_verifier_pages.py <pdf> [--pages START END] [--resume] [--all] [--no-email]")
     sys.exit(1)
 
+# Resume-only mode: if the original PDF is absent but a checkpoint JSON exists,
+# we can still run web verification / rankings / PDF report from the checkpoint
+# (extraction is skipped on resume). This lets the pipeline run in environments
+# that only have the small checkpoint committed — e.g. GitHub Actions without
+# the 139 MB source PDF.
+_resume_checkpoint_path = f"autonomous_verified_{os.path.basename(PDF_PATH)}.json"
 if not os.path.exists(PDF_PATH):
-    print(f"[X] PDF not found: {PDF_PATH}")
-    sys.exit(1)
+    if os.path.exists(_resume_checkpoint_path):
+        print(f"[!] PDF not found: {PDF_PATH} — proceeding in resume-only mode from checkpoint: {_resume_checkpoint_path}")
+    else:
+        print(f"[X] PDF not found: {PDF_PATH} and no checkpoint available. Nothing to do.")
+        sys.exit(1)
 
 # ── Import verifier after env is loaded ──
 from autonomous_course_verifier import AutonomousCourseVerifier, check_runtime_dependencies
