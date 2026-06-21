@@ -18,4 +18,4 @@ firebase-admin
 python-dotenv
 gunicorn
 rapidfuzz
-googlesearch
+googlesearch-python
