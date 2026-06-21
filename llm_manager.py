@@ -245,9 +245,15 @@ class LLMManager:
             payload["system"] = system
         if format == "json":
             payload["format"] = "json"
-            
+
+        # Cloud Ollama providers (RunPod, Together, Groq, etc.) often require an API key
+        headers = {"Content-Type": "application/json"}
+        ollama_key = os.environ.get("OLLAMA_API_KEY")
+        if ollama_key:
+            headers["Authorization"] = f"Bearer {ollama_key}"
+
         try:
-            resp = requests.post(url, json=payload, timeout=60)
+            resp = requests.post(url, headers=headers, json=payload, timeout=60)
             if resp.status_code == 200:
                 return resp.json().get("response")
             return None

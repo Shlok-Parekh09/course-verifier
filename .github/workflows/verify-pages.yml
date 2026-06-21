@@ -1,0 +1,192 @@
+name: Course Verifier – Pages 602-1890
+
+on:
+  # Run manually from the Actions tab
+  workflow_dispatch:
+    inputs:
+      start_page:
+        description: 'Start page (default 602)'
+        required: true
+        default: '602'
+      end_page:
+        description: 'End page (default 1890)'
+        required: true
+        default: '1890'
+      num_browsers:
+        description: 'Parallel browsers (2 recommended for GitHub runner RAM)'
+        required: true
+        default: '2'
+      resume:
+        description: 'Resume from previous checkpoint JSON?'
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hours max per GitHub job
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            wget gnupg2 ca-certificates fonts-liberation \
+            libglib2.0-0 libnss3 libgconf-2-4 libfontconfig1 \
+            libxss1 libappindicator3-1 libatk-bridge2.0-0 \
+            libgtk-3-0 libxcomposite1 libxcursor1 libxdamage1 \
+            libxi6 libxtst6 libxrandr2 libasound2 \
+            libpangocairo-1.0-0 libatspi2.0-0 libcups2 \
+            libdrm2 libgbm1 libxkbcommon0 \
+            tesseract-ocr tesseract-ocr-eng \
+            unzip curl
+
+      - name: Install Google Chrome
+        run: |
+          wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google.list'
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          playwright install chromium || true
+
+      - name: Restore previous checkpoint
+        if: github.event.inputs.resume == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: verifier-checkpoint
+          path: .
+        continue-on-error: true
+
+      - name: Run course verifier
+        env:
+          VERIFIER_NO_FORCE_EXIT: "true"
+          SEND_EMAIL_ON_COMPLETE: "true"
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          SMTP_TO: ${{ secrets.SMTP_TO }}
+          OPENROUTER_KEY_1: ${{ secrets.OPENROUTER_KEY_1 }}
+          GEMINI_KEY_1: ${{ secrets.GEMINI_KEY_1 }}
+          # Inject remaining keys as blanks if not set
+          OPENROUTER_KEY_2: ""
+          OPENROUTER_KEY_3: ""
+          OPENROUTER_KEY_4: ""
+          OPENROUTER_KEY_5: ""
+          OPENROUTER_KEY_6: ""
+          GEMINI_KEY_2: ""
+          GEMINI_KEY_3: ""
+          GEMINI_KEY_4: ""
+          GEMINI_KEY_5: ""
+          GEMINI_KEY_6: ""
+          NVIDIA_KEY_1: ""
+          GROQ_API_KEY_1: ""
+          MISTRAL_API_KEY_1: ""
+          SAMBANOVA_API_KEY_1: ""
+          OLLAMA_API_URL: ${{ secrets.OLLAMA_API_URL }}
+          OLLAMA_MODEL: ${{ secrets.OLLAMA_MODEL }}
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          START="${{ github.event.inputs.start_page }}"
+          END="${{ github.event.inputs.end_page }}"
+          BROWSERS="${{ github.event.inputs.num_browsers }}"
+
+          # Patch NUM_BROWSERS dynamically for the weak GitHub runner
+          sed -i "s/NUM_BROWSERS = 6/NUM_BROWSERS = ${BROWSERS}/g" autonomous_course_verifier.py
+
+          echo "[*] Running verifier for pages ${START}-${END} with ${BROWSERS} browsers"
+          python run_verifier_pages.py link_compile.pdf --pages "$START" "$END" --no-email
+
+      - name: Upload PDF report
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-report-pdf
+          path: Verification_Report_Pages_*.pdf
+          retention-days: 30
+
+      - name: Upload checkpoint JSON
+        uses: actions/upload-artifact@v4
+        with:
+          name: verifier-checkpoint
+          path: autonomous_verified_link_compile.pdf.json
+          retention-days: 30
+
+      - name: Upload Excel report
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-report-excel
+          path: "*.xlsx"
+          retention-days: 30
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-screenshots
+          path: verification_screenshots/**
+          retention-days: 7
+
+      - name: Send email notification
+        if: always()
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          SMTP_TO: ${{ secrets.SMTP_TO }}
+        run: |
+          REPORT_PDF=$(ls Verification_Report_Pages_*.pdf 2>/dev/null | head -n 1)
+          if [ -n "$REPORT_PDF" ]; then
+            echo "Sending email with $REPORT_PDF ..."
+            python -c "
+import os, sys
+from email_sender import send_report
+ok, msg = send_report(
+    'Course Verification Complete – GitHub Actions',
+    f'Run finished. Report: {os.path.basename('$REPORT_PDF')}',
+    '$REPORT_PDF'
+)
+print(msg)
+sys.exit(0 if ok else 1)
+"
+          else
+            echo "[!] No report PDF found"
+          fi
+
+      - name: Job summary
+        if: always()
+        run: |
+          echo "## Course Verifier – GitHub Actions" >> $GITHUB_STEP_SUMMARY
+          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Pages | ${{ github.event.inputs.start_page }} – ${{ github.event.inputs.end_page }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Browsers | ${{ github.event.inputs.num_browsers }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Resume | ${{ github.event.inputs.resume }} |" >> $GITHUB_STEP_SUMMARY
+          PDF=$(ls Verification_Report_Pages_*.pdf 2>/dev/null | head -n 1)
+          if [ -n "$PDF" ]; then
+            echo "| Report | $(basename $PDF) |" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Download artifacts: **Actions → Artifacts**" >> $GITHUB_STEP_SUMMARY

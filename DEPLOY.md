@@ -65,6 +65,22 @@ python run_verifier_pages.py link_compile.pdf --pages 602 1890
    SEND_EMAIL_ON_COMPLETE=true
    ```
 
+## Ollama Cloud Setup (GitHub Actions / Servers)
+
+If your local Ollama GPU is not available, the verifier can use a **cloud-hosted Ollama** endpoint (RunPod, Together AI, any OpenAI-compatible proxy, etc.).
+
+1. Add these secrets to **GitHub → Settings → Secrets and variables → Actions**:
+   | Secret | Example Value |
+   |---|---|
+   | `OLLAMA_API_URL` | `https://api.runpod.ai/v2/your-endpoint/openai/v1/chat/completions` |
+   | `OLLAMA_MODEL` | `nemotron-3-super:cloud` |
+   | `OLLAMA_API_KEY` | `rp_xxxxxxxxxxxxxxxx` |
+
+2. The workflow automatically passes them as environment variables.
+3. `llm_manager.py` sends the `Authorization: Bearer <key>` header when `OLLAMA_API_KEY` is set.
+
+Leave the secrets blank if you only want local Ollama (not available in GitHub Actions).
+
 ## Architecture
 
 - **`run_verifier_pages.py`** – Entry point. No interactive prompts. Maps page numbers to course indices, drives the verifier, triggers e-mail.

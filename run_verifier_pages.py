@@ -28,7 +28,7 @@ load_dotenv()
 
 # ── Parse CLI ──
 PDF_PATH = None
-START_PAGE = 602
+START_PAGE = 782
 END_PAGE = 1890
 RESUME = False
 NO_EMAIL = False

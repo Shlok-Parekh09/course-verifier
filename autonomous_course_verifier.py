@@ -7901,5 +7901,7 @@ if __name__ == "__main__":
         print("\n[*] Saved permanent dashboard results to master_dashboard_results.json")
     
     # Prevent undetected_chromedriver from spamming WinError 6 during Python teardown
-    import os
-    os._exit(0)
+    # Skip forced exit when running under a server / automated caller so the
+    # process can continue to email syncing, etc.
+    if os.getenv("VERIFIER_NO_FORCE_EXIT", "").lower() not in ("true", "1", "yes"):
+        os._exit(0)
