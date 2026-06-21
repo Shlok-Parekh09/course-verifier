@@ -1,2 +1,2 @@
 INSERT INTO qs_ranking (university) 
-VALUES ('Vancouver Island University');
+VALUES ('fanshawe college');
