@@ -1012,7 +1012,16 @@ def headless_args():
     import sys as _sys
     if _sys.platform == "linux" and not os.environ.get("DISPLAY"):
         print("[*] No display detected (headless server / Colab). Running Chrome headless.")
-        return ["--headless=new"]
+        # --headless=new plus RAM/render-churn reducers to cut OOM-kill crashes when
+        # many browsers run in parallel on CI. Returned on every Linux/headless build
+        # so init, the fallback path, and crash-recovery all pick them up uniformly.
+        return [
+            "--headless=new",
+            "--memory-pressure-off",
+            "--disable-renderer-backgrounding",
+            "--disable-background-timer-throttling",
+            "--disable-features=site-per-process,IsolateOrigins,Translate,BackForwardCache",
+        ]
     return []
 
 
@@ -5904,6 +5913,11 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 blocked_urls = [
                     '*admissionportal*', '*login*', '*Login*',
                     '*.mp4', '*.webm', '*.avi', '*.gif',
+                    # Images + web fonts: biggest RAM and load-time hog. Badge OCR
+                    # uses the PDF via fitz, not website images, so blocking these
+                    # does not hurt verification quality and sharply cuts OOM crashes.
+                    '*.png', '*.jpg', '*.jpeg', '*.webp', '*.bmp', '*.svg', '*.ico',
+                    '*.woff', '*.woff2', '*.ttf',
                     '*youtube.com/*', '*vimeo.com/*',
                     '*google-analytics.com/*', '*googletagmanager.com/*',
                     '*doubleclick.net/*', '*facebook.com/tr*'
@@ -5971,8 +5985,23 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             course['processed_this_run'] = True
             worker_id, driver, usage_count = browser_pool.get()
             usage_count += 1
-            
-            # Removed psutil sleep loop to prevent deadlocks and CPU stalling
+
+            # Proactive health-check: never hand a zombie/near-dead driver to a course.
+            # A pooled driver that became unresponsive would crash on first navigation
+            # and waste a course attempt. Recycle it before use instead.
+            try:
+                _ = driver.current_url
+            except Exception:
+                original_stdout.write(f"    -> [Thread {worker_id}] Pooled driver unresponsive; recycling before use.\n")
+                original_stdout.flush()
+                try: driver.quit()
+                except Exception: pass
+                try:
+                    worker_id, driver = init_browser_parallel(worker_id)
+                    usage_count = 1
+                except Exception as _re:
+                    original_stdout.write(f"    -> [Thread {worker_id}] Pre-use recycle failed: {_re}\n")
+                    original_stdout.flush()
             
             # Print to global stdout immediately so user knows it isn't stuck
             course_name = course.get("name", "Unknown")
@@ -7375,7 +7404,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 driver.set_page_load_timeout(60)
                                 driver.set_script_timeout(30)
                                 try:
-                                    driver.execute_cdp_cmd('Network.setBlockedURLs', {'urls': ['*admissionportal*', '*login*', '*Login*']})
+                                    driver.execute_cdp_cmd('Network.setBlockedURLs', {'urls': ['*admissionportal*', '*login*', '*Login*', '*.png', '*.jpg', '*.jpeg', '*.webp', '*.svg', '*.ico', '*.woff', '*.woff2']})
                                     driver.execute_cdp_cmd('Network.enable', {})
                                 except: pass
                                 success = True
@@ -7428,8 +7457,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 except Exception:
                     pass
                     
-                if not driver_is_alive or usage_count >= 15:
-                    reason = "Memory leak prevention (recycling after 15 courses)" if driver_is_alive else "Browser died/killed"
+                if not driver_is_alive or usage_count >= 8:
+                    reason = "Memory leak prevention (recycling after 8 courses)" if driver_is_alive else "Browser died/killed"
                     print(f"    -> Proactively restarting browser {worker_id}: {reason}.")
                     # SYNCHRONOUS kill - old browser MUST be fully dead before new one starts
                     import subprocess
