@@ -6590,23 +6590,38 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                         // SKIP elements inside top navigation, header, or navbar
                                         let navParent = b.closest('nav, header, .navbar, .main-nav, .top-nav, .site-header, .header-menu, .mega-menu, .main-menu, .primary-menu, #main-nav, #header');
                                         if (navParent) continue;
-                                        
+
+                                        // NEVER click a real navigable link. Clicking an <a href="..."> navigates
+                                        // the page while execute_async_script is still waiting on its callback,
+                                        // which destroys the script context, blows the 30s script timeout, and
+                                        // corrupts the chromedriver session -> "HTTPConnectionPool connection
+                                        // refused" -> driver death -> full Chrome rebuild every course. Keep
+                                        // in-page tab anchors (href="#...") and javascript: pseudo-links.
+                                        if (b.tagName === 'A') {{
+                                            let href = (b.getAttribute('href') || '');
+                                            if (href && !href.startsWith('#') && !href.toLowerCase().startsWith('javascript:')) continue;
+                                        }}
+
                                         let txt = (b.innerText || '').toLowerCase().trim();
                                         if (txt.length < 2 || txt.length > 120) continue;
-                                        
+
                                         if (keywords.some(k => txt.includes(k))) {{
-                                            if (clicked >= 15) {{
-                                                console.log("Max accordion clicks (15) reached. Stopping to prevent memory leak.");
+                                            if (clicked >= 10) {{
+                                                console.log("Max accordion clicks (10) reached. Stopping to prevent memory leak.");
                                                 break;
                                             }}
                                             if (window.moveBeautifulCursorToElement) window.moveBeautifulCursorToElement(b);
-                                            await new Promise(r => setTimeout(r, 400));
+                                            await new Promise(r => setTimeout(r, 200));
                                             if (window.aiClickAnimation) {{
                                                 let rect = b.getBoundingClientRect();
                                                 window.aiClickAnimation(rect.left + rect.width/2, rect.top + rect.height/2);
                                             }}
+                                            // Belt-and-suspenders: stop any click handler from navigating,
+                                            // even on elements we didn't catch above (JS-framework routers).
+                                            let stopNav = (ev) => {{ ev.preventDefault(); ev.stopPropagation(); }};
+                                            b.addEventListener('click', stopNav, {{ capture: true, once: true }});
                                             try {{ b.click(); clicked++; }} catch(e) {{}}
-                                            await new Promise(r => setTimeout(r, 400));
+                                            await new Promise(r => setTimeout(r, 200));
                                             
                                             try {{
                                                 let targetId = b.getAttribute('aria-controls') || b.getAttribute('data-bs-target') || b.getAttribute('data-target') || b.getAttribute('href');
@@ -6633,10 +6648,16 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             """
                             if not is_upes:
                                 driver.set_script_timeout(30)
-                                clicks = driver.execute_async_script(js_accordions)
-                                if clicks and clicks > 0:
-                                    print(f"      -> Auto-clicked {clicks} targeted accordions/buttons.")
-                                    time.sleep(1.5)
+                                try:
+                                    clicks = driver.execute_async_script(js_accordions)
+                                    if clicks and clicks > 0:
+                                        print(f"      -> Auto-clicked {clicks} targeted accordions/buttons.")
+                                        time.sleep(1.5)
+                                except Exception as _acc_e:
+                                    # A timeout/crash here used to propagate to the big catch-all and
+                                    # kill the driver, forcing a full Chrome rebuild. page_text is already
+                                    # captured, so absorb the failure and keep going with what we have.
+                                    print(f"      -> Accordion click script failed ({str(_acc_e).split(chr(10))[0][:80]}); continuing with already-captured text.")
                                 # FIX: Re-extract page text because hidden tabs were just opened!
                                 print(f"      -> Re-extracting text after opening tabs...")
                                 
