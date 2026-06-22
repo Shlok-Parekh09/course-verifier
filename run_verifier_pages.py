@@ -34,6 +34,7 @@ RESUME = False
 NO_EMAIL = False
 FRESH = False
 PAGE_OFFSET = 0
+START_IDX = None
 
 args = sys.argv[1:]
 i = 0
@@ -52,6 +53,9 @@ while i < len(args):
     elif a in ("--page-offset"):
         PAGE_OFFSET = int(args[i + 1])
         i += 2
+    elif a in ("--start-idx"):
+        START_IDX = int(args[i + 1])
+        i += 2
     elif a in ("--all"):
         START_PAGE = 1
         END_PAGE = 99999
@@ -67,7 +71,7 @@ while i < len(args):
         i += 1
 
 if not PDF_PATH:
-    print("Usage: python run_verifier_pages.py <pdf> [--pages START END] [--fresh] [--page-offset N] [--resume] [--all] [--no-email]")
+    print("Usage: python run_verifier_pages.py <pdf> [--pages START END] [--fresh] [--page-offset N] [--start-idx N] [--resume] [--all] [--no-email]")
     sys.exit(1)
 
 # Resume-only mode: if the original PDF is absent but a checkpoint JSON exists,
@@ -207,10 +211,17 @@ try:
 except Exception as e:
     print(f"[!] Rankings step crashed: {e}")
 
+# ── fees.xlsx fee fallback ── (only fills fees for courses where the website had none)
+print("\n[*] Applying fees.xlsx fee fallback for courses missing a web fee...")
+try:
+    agent.apply_excel_fee_fallback_range(start_idx=s_idx, end_idx=e_idx)
+except Exception as e:
+    print(f"[!] Fee fallback step crashed: {e}")
+
 # ── PDF Report ── (always attempted, even if web verify / rankings failed)
 pdf_name = f"Verification_Report_Pages_{START_PAGE}_to_{END_PAGE}"
 try:
-    agent.generate_pdf_report(start_idx=s_idx, end_idx=e_idx, pdf_name=pdf_name)
+    agent.generate_pdf_report(start_idx=s_idx, end_idx=e_idx, pdf_name=pdf_name, start_number=START_IDX)
 except Exception as e:
     print(f"[!] PDF report generation crashed: {e}")
     print(f"[!] JSON checkpoint is still safe at: {checkpoint_path}")
@@ -230,7 +241,8 @@ if not NO_EMAIL:
             f"Verification finished for {PDF_PATH}\n"
             f"Page range: {START_PAGE} – {END_PAGE}\n"
             f"Courses processed: {e_idx - s_idx}\n"
-            f"Report attached: {report_pdf}\n"
+            + (f"Report numbering starts at: {START_IDX}\n" if START_IDX else "")
+            + f"Report attached: {report_pdf}\n"
         )
         if os.path.exists(report_pdf):
             ok, msg = send_report(subject, body, report_pdf)

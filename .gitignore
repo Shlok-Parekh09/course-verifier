@@ -18,6 +18,7 @@ chrome_profile_fallback_*/
 # ── Data / Reports / PDFs ─────────────────────────────────────────────────────
 *.xlsx
 !CombinedWork.xlsx
+!fees.xlsx
 *.json
 !firebase.json
 !public/api/courses.json

@@ -3751,6 +3751,188 @@ class AutonomousCourseVerifier:
             print(f"      -> Failed to fetch URL robustly: {e}")
             return ""
 
+    # Sentinels that mean "no fee/cost was found" — union of the _clean set (line ~2100),
+    # the report fmt_web/draw_row sets (~8165-8230), and the generic policy-text fallbacks.
+    _FEE_NOT_FOUND_SENTINELS = {
+        "", "n/a", "nan", "none", "-", "error", "error/unreachable",
+        "not found", "not found on website", "not found / mentioned on website",
+        "not provided in source", "information not explicitly mentioned on the webpage.",
+        "tuition fees are subject to standard university policies.",
+        "not specified", "not explicitly stated", "not explicitly mentioned",
+        "no information", "information not found", "details not found",
+        "not given", "not provided",
+    }
+
+    @staticmethod
+    def _fee_is_missing(web_cost):
+        v = str(web_cost or "").strip().lower()
+        if not v:
+            return True
+        # strip trailing punctuation/ellipsis variants before checking
+        cleaned = v.strip('.').strip()
+        if cleaned in {"", "...", "...."}:
+            return True
+        return v in AutonomousCourseVerifier._FEE_NOT_FOUND_SENTINELS or cleaned in AutonomousCourseVerifier._FEE_NOT_FOUND_SENTINELS
+
+    def _extract_fee_from_text(self, text, course, worker_id=None):
+        """Focused, fee-only LLM extraction from a fees page. Returns the fee string or ''.
+
+        Cheaper than _verify_details_with_llm (single field, short prompt) — used by the
+        fees.xlsx fallback so the post-pass stays fast.
+        """
+        if not text or not str(text).strip():
+            return ""
+        try:
+            from llm_manager import get_llm_manager
+            llm = get_llm_manager()
+            snippet = str(text)[:8000]
+            prompt = (
+                "You are extracting the course fee/tuition from a fees page.\n"
+                f"Course: \"{course.get('name', '')}\"\n"
+                f"Institute: \"{course.get('uni', '')}\"\n\n"
+                "Find the total course fee, tuition fee, or program fee for this course. "
+                "Look for amounts with a currency symbol or code (₹, Rs, Rs., INR, $, USD, €, £, GBP) "
+                "or the word 'Free'. Prefer the total/overall fee; if only per-semester is given, "
+                "include the per-semester amount and note it.\n\n"
+                "Respond as JSON ONLY:\n"
+                '{"fee_found": true/false, "fee": "<fee string exactly as on the page, e.g. \\"₹50,000\\" or \\"Free\\" or \\"₹2,00,000 per semester\\">"}\n'
+                "If no fee is present on the page, respond {\"fee_found\": false, \"fee\": \"\"}.\n\n"
+                f"PAGE TEXT:\n{snippet}"
+            )
+            res_str = llm.generate(prompt, worker_id=worker_id, format="json")
+            if not res_str or not str(res_str).strip():
+                return ""
+            import json as _json, re as _re, ast as _ast
+            clean = str(res_str).strip()
+            if clean.startswith("```json"): clean = clean[7:]
+            elif clean.startswith("```"): clean = clean[3:]
+            if clean.endswith("```"): clean = clean[:-3]
+            clean = clean.strip()
+            m = _re.search(r'\{.*\}', clean, _re.DOTALL)
+            blob = m.group(0) if m else clean
+            try:
+                res = _json.loads(blob)
+            except Exception:
+                try:
+                    res = _ast.literal_eval(blob)
+                except Exception:
+                    res = {}
+            if not isinstance(res, dict):
+                return ""
+            fee = res.get("fee", "")
+            found = res.get("fee_found", False)
+            if isinstance(fee, str):
+                fee = fee.strip()
+            if not fee or str(fee).strip().lower() in self._FEE_NOT_FOUND_SENTINELS:
+                return ""
+            if not found and not fee:
+                return ""
+            return str(fee).strip()
+        except Exception as e:
+            print(f"      -> [fees.xlsx fallback] fee extraction failed: {e}")
+            return ""
+
+    def _apply_excel_fee_fallback(self, course, worker_id=None):
+        """If the website had no fee, look up the fee link in fees.xlsx, fetch it, and
+        extract the fee. Only acts when the web fee is missing — never overrides a
+        website-found fee. Returns True if a fee was recovered.
+        """
+        try:
+            # Only if not found on the website.
+            if course.get('cost_match'):
+                return False
+            if course.get('web_status') not in ("MATCH", "FALSE"):
+                return False
+            if not self._fee_is_missing(course.get('web_cost')):
+                return False
+
+            uni = course.get('uni', '') or ''
+            name = course.get('name', '') or ''
+            if not uni or not name:
+                return False
+
+            links = self._search_excel_for_links(uni, name)
+            fee_url = links.get('fees') if links else None
+            if not fee_url:
+                return False
+
+            ft = self._fetch_url_robust(fee_url)
+            if not ft or not str(ft).strip():
+                return False
+
+            fee = self._extract_fee_from_text(ft, course, worker_id=worker_id)
+            if not fee:
+                return False
+
+            course['web_cost'] = fee
+            course['cost_match'] = True
+            course['fee_source'] = "fees.xlsx"
+            reason = str(course.get('reason', '') or '')
+            note = " Fee sourced from fees.xlsx (not found on main website)."
+            if "fees.xlsx" not in reason:
+                course['reason'] = (reason + note).strip()
+            print(f"      -> [fees.xlsx fallback] Recovered fee for '{name}': {fee}")
+            return True
+        except Exception as e:
+            print(f"      -> [fees.xlsx fallback] error for '{course.get('name','?')}': {e}")
+            return False
+
+    def apply_excel_fee_fallback_range(self, start_idx=0, end_idx=None, max_workers=6):
+        """Post-pass: for every course in [start_idx, end_idx) whose fee was NOT found on
+        the website, try to recover it from fees.xlsx. Runs concurrently for speed and
+        saves the checkpoint once at the end.
+        """
+        if end_idx is None:
+            end_idx = len(self.courses)
+        targets = []
+        for i in range(start_idx, min(end_idx, len(self.courses))):
+            c = self.courses[i]
+            if c.get('cost_match'):
+                continue
+            if c.get('web_status') not in ("MATCH", "FALSE"):
+                continue
+            if self._fee_is_missing(c.get('web_cost')):
+                targets.append((i, c))
+
+        if not targets:
+            print("[*] fees.xlsx fallback: no courses missing a web fee. Nothing to do.")
+            return 0
+
+        print(f"[*] fees.xlsx fallback: {len(targets)} course(s) missing a web fee — attempting recovery (max_workers={max_workers}).")
+        recovered = 0
+        no_link = 0
+
+        def _do(item):
+            idx, c = item
+            ok = self._apply_excel_fee_fallback(c, worker_id=(idx % max(max_workers, 1)))
+            return ok
+
+        if max_workers <= 1 or len(targets) == 1:
+            for item in targets:
+                if _do(item):
+                    recovered += 1
+        else:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                futs = {ex.submit(_do, item): item for item in targets}
+                for f in as_completed(futs):
+                    try:
+                        if f.result():
+                            recovered += 1
+                    except Exception as e:
+                        print(f"      -> [fees.xlsx fallback] worker error: {e}")
+
+        # Save checkpoint once at the end (thread-safe enough: post-pass is done now).
+        try:
+            with open(f"autonomous_verified_{os.path.basename(self.input_pdf)}.json", 'w', encoding='utf-8') as f:
+                json.dump(self.courses, f, indent=4, ensure_ascii=False)
+            self.export_to_excel(quiet=True)
+        except Exception as e:
+            print(f"[!] fees.xlsx fallback checkpoint save failed: {e}")
+
+        print(f"[*] fees.xlsx fallback: recovered fees for {recovered}/{len(targets)} course(s) missing a web fee.")
+        return recovered
+
     def _fetch_fee_link_with_browser(self, driver, fee_url, course_name=""):
         """Navigate browser to fee URL to visibly load the page, click semester/fee tabs, extract text."""
         if not fee_url:
@@ -8118,10 +8300,14 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         # Disabled per user request (and it also caused False propagation bugs)
         pass
 
-    def generate_pdf_report(self, start_idx=0, end_idx=None, pdf_name=None):
+    def generate_pdf_report(self, start_idx=0, end_idx=None, pdf_name=None, start_number=None):
         if pdf_name:
             self.output_pdf = f"{pdf_name}.pdf"
-        print(f"\n[*] Step 4/4: Generating PDF report: {self.output_pdf} (Courses {start_idx+1} to {end_idx if end_idx else len(self.courses)})")
+        # start_number: when set (e.g. 602), the printed course numbering starts there
+        # instead of the 1-based position within this slice. Used so a rerun from page 172
+        # can number courses by their original compilation index.
+        display_start = start_number if start_number else start_idx + 1
+        print(f"\n[*] Step 4/4: Generating PDF report: {self.output_pdf} (Courses numbered from {display_start})")
 
         pdf = FPDF()
         pdf.set_auto_page_break(auto=False)
@@ -8229,7 +8415,10 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     return "Not Found / Mentioned on Website"
                 return v
 
-            draw_row('Cost', fmt_pdf(course.get('cost')), safe_val(fmt_web(course.get('web_cost'))), 'MATCH' if (course.get('cost_match') and not is_hard_error) else 'FALSE')
+            _cost_web = safe_val(fmt_web(course.get('web_cost')))
+            if course.get('fee_source') == 'fees.xlsx' and _cost_web and 'Not Found' not in str(_cost_web):
+                _cost_web = f"{_cost_web} (via fees.xlsx)"
+            draw_row('Cost', fmt_pdf(course.get('cost')), _cost_web, 'MATCH' if (course.get('cost_match') and not is_hard_error) else 'FALSE')
             draw_row('Duration', fmt_pdf(course.get('duration')), safe_val(fmt_web(course.get('web_duration'))), 'MATCH' if (course.get('duration_match') and not is_hard_error) else 'FALSE')
             draw_row('Mode', fmt_pdf(course.get('mode')), safe_val(fmt_web(course.get('web_mode'))), 'MATCH' if (course.get('mode_match') and not is_hard_error) else 'FALSE')
             draw_row('Language', fmt_pdf(course.get('language')), safe_val(fmt_web(course.get('web_language'))), 'MATCH' if (course.get('lang_match') and not is_hard_error) else 'FALSE')
@@ -8339,7 +8528,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             pdf.multi_cell(0, 5, desc, border='LRB')
 
         # Render sequentially
-        counter = start_idx + 1
+        counter = start_number if start_number else start_idx + 1
         end_val = end_idx if end_idx is not None else len(self.courses)
         rendered_count = 0
         for c in self.courses[start_idx:end_val]:
