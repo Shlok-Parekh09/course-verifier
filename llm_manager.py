@@ -32,19 +32,29 @@ class LLMManager:
         # and wasted a retry round before returning None. The cloud endpoint is
         # required to be set via OLLAMA_API_URL.
         #
-        # Normalize the base URL so the call endpoint is always "<base>/api/generate",
-        # no matter which form the env var takes:
-        #   https://ollama.com              -> https://ollama.com/api/generate
-        #   https://ollama.com/api          -> https://ollama.com/api/generate
-        #   https://ollama.com/api/generate -> https://ollama.com/api/generate
-        # Without this, an env value of "https://ollama.com/api" produced the
-        # doubled path "https://ollama.com/api/api/generate", which 404s.
-        raw_ollama_url = os.environ.get("OLLAMA_API_URL", "").strip().rstrip("/")
-        if raw_ollama_url.endswith("/api/generate"):
-            raw_ollama_url = raw_ollama_url[: -len("/api/generate")]
-        elif raw_ollama_url.endswith("/api"):
-            raw_ollama_url = raw_ollama_url[: -len("/api")]
-        self.ollama_api_url = raw_ollama_url
+        # Normalize to just scheme://host so the call endpoint is ALWAYS
+        # "<host>/api/generate", no matter which form the env/secret takes:
+        #   https://ollama.com                        -> https://ollama.com/api/generate
+        #   https://ollama.com/api                    -> https://ollama.com/api/generate
+        #   https://ollama.com/api/generate           -> https://ollama.com/api/generate
+        #   https://ollama.com/api/generate.          -> https://ollama.com/api/generate
+        #   https://ollama.com/api/generate./api/...  -> https://ollama.com/api/generate
+        # String-suffix stripping was not robust: it produced "/api/api/generate"
+        # and "/api/generate./api/generate" 404s on different secret shapes.
+        # Parsing with urlsplit and discarding the path is the only form that
+        # survives every variant a secret store can hand us.
+        raw_ollama_url = os.environ.get("OLLAMA_API_URL", "").strip()
+        if raw_ollama_url and "://" not in raw_ollama_url:
+            raw_ollama_url = "https://" + raw_ollama_url
+        try:
+            from urllib.parse import urlsplit
+            parts = urlsplit(raw_ollama_url)
+            if parts.scheme and parts.netloc:
+                self.ollama_api_url = f"{parts.scheme}://{parts.netloc}"
+            else:
+                self.ollama_api_url = raw_ollama_url.rstrip("/")
+        except Exception:
+            self.ollama_api_url = raw_ollama_url.rstrip("/")
         self.ollama_model   = os.environ.get("OLLAMA_MODEL", "llama3").strip()
         self.ollama_vision_model = os.environ.get("OLLAMA_VISION_MODEL", "gemma4:31b-cloud").strip()
 
