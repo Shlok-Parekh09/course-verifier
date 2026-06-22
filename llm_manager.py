@@ -63,6 +63,27 @@ class LLMManager:
         self.last_call = {}
         self.lock = threading.Lock()
 
+        # Tunable Ollama timeouts / retries (env-overridable). Defaults raised from
+        # 30s/45s so genuinely-slow-but-working ollama.com responses complete instead
+        # of timing out into the error path (which yields cost_match=False). The
+        # failover chain (Gemini -> OpenRouter -> NVIDIA) still kicks in once Ollama
+        # gives up, so worst case is bounded.
+        self.ollama_timeout = int(os.environ.get("OLLAMA_TIMEOUT", "45"))
+        self.ollama_vision_timeout = int(os.environ.get("OLLAMA_VISION_TIMEOUT", "75"))
+        self.ollama_max_attempts = int(os.environ.get("OLLAMA_MAX_ATTEMPTS", "3"))
+
+        # One-time diagnostic: show which failover providers actually have keys.
+        # In CI this reveals whether OLLAMA-only failures can fall back at all
+        # (e.g. if GEMINI_KEY_1 / OPENROUTER_KEY_1 secrets are unset, every Ollama
+        # timeout goes straight to None -> cost_match=False).
+        print(f"      -> [LLM Manager] Providers configured — Ollama: "
+              f"{'yes' if self.ollama_api_url else 'NO (OLLAMA_API_URL unset)'}, "
+              f"Gemini keys: {len(self.gemini_keys)}, "
+              f"OpenRouter keys: {len(self.openrouter_keys)}, "
+              f"NVIDIA keys: {len(self.nvidia_keys)} | "
+              f"timeouts text={self.ollama_timeout}s vision={self.ollama_vision_timeout}s "
+              f"attempts={self.ollama_max_attempts}")
+
     def _rate_limit(self, key_identifier: str, min_interval: float = 4.29):
         """Enforces a minimum interval (in seconds) between API calls for a given key."""
         with self.lock:
@@ -274,12 +295,14 @@ class LLMManager:
         # Tuned for SPEED: a 90s timeout x 5 attempts used to burn up to 7.5 min
         # on a single slow/overloaded model call before returning None. The model
         # normally replies in <20s; if it hasn't in 30s it is overloaded and
-        # retrying many more times just wastes wall-clock. 3 attempts x 30s caps
-        # the worst case at ~95s per course while still riding out transient blips.
-        max_attempts = 3
+        # retrying many more times just wastes wall-clock. Defaults are now env-
+        # tunable (OLLAMA_TIMEOUT / OLLAMA_MAX_ATTEMPTS) and raised to 45s x 3 so
+        # slow-but-working ollama.com responses complete; the Gemini/OpenRouter
+        # failover chain catches the rest.
+        max_attempts = self.ollama_max_attempts
         for attempt in range(max_attempts):
             try:
-                resp = requests.post(url, headers=headers, json=payload, timeout=30)
+                resp = requests.post(url, headers=headers, json=payload, timeout=self.ollama_timeout)
                 if resp.status_code == 200:
                     return resp.json().get("response")
                 if resp.status_code in (429, 500, 502, 503, 504):
@@ -554,11 +577,12 @@ class LLMManager:
 
         # Vision calls are heavier (image payload) and prone to timeouts/rate
         # limits; retry transient failures (including connection errors) with
-        # backoff. Tuned for speed: 45s x 3 attempts caps worst case at ~140s.
-        max_attempts = 3
+        # backoff. Tuned for speed: defaults env-tunable (OLLAMA_VISION_TIMEOUT /
+        # OLLAMA_MAX_ATTEMPTS), 75s x 3 attempts.
+        max_attempts = self.ollama_max_attempts
         for attempt in range(max_attempts):
             try:
-                resp = requests.post(url, headers=headers, json=payload, timeout=45)
+                resp = requests.post(url, headers=headers, json=payload, timeout=self.ollama_vision_timeout)
                 if resp.status_code == 200:
                     return resp.json().get("response")
                 if resp.status_code in (429, 500, 502, 503, 504):

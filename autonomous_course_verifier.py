@@ -3414,6 +3414,7 @@ class AutonomousCourseVerifier:
                 
                 if inst_col and course_col and fee_link_col:
                     best_score = -1
+                    best_inst_score = -1
                     for row in range(2, ws_d.max_row + 1):
                         cell_inst = ws_d.cell(row=row, column=inst_col)
                         cell_course = ws_d.cell(row=row, column=course_col)
@@ -3429,40 +3430,55 @@ class AutonomousCourseVerifier:
                             
                             inst_match_exact = (normalize(u_lower) == normalize(inst_val_lower))
                             course_match_exact = (normalize(c_lower) == normalize(course_val_lower))
-                            
-                            score = 0
-                            if inst_match_exact: score += 10
-                            elif fuzzy_match(u_lower, inst_val_lower, 0.90)[0]: score += 5
-                            elif u_lower in inst_val_lower or inst_val_lower in u_lower: score += 2
-                            elif (u_words and all(w in inst_val_lower for w in u_words)): score += 1
-                            
-                            if course_match_exact: score += 10
-                            elif fuzzy_match(c_lower, course_val_lower, 0.85)[0]: score += 5
-                            elif c_lower in course_val_lower or course_val_lower in c_lower: score += 2
-                            elif (c_words and all(w in course_val_lower for w in c_words)): score += 1
-                            
+
+                            # Score institute and course INDEPENDENTLY so we can gate on
+                            # a real institute match. Previously a common course name
+                            # (e.g. "B.Tech CSE (IoT & Cyber Security including Blockchain
+                            # Technology)") matched a fees.xlsx row for a COMPLETELY DIFFERENT
+                            # institute (course exact = +10, institute = 0, total 10 >= 3) and
+                            # the wrong institute's fee page was fed in — producing bogus
+                            # fees / false verdicts (e.g. Lokmanya Tilak -> Adamas University,
+                            # Ara -> BITS Pilani). Now we require the institute itself to
+                            # match (inst_score >= 2 = substring overlap or better).
+                            inst_score = 0
+                            if inst_match_exact: inst_score = 10
+                            elif fuzzy_match(u_lower, inst_val_lower, 0.90)[0]: inst_score = 5
+                            elif u_lower in inst_val_lower or inst_val_lower in u_lower: inst_score = 2
+                            elif (u_words and all(w in inst_val_lower for w in u_words)): inst_score = 1
+
+                            course_score = 0
+                            if course_match_exact: course_score = 10
+                            elif fuzzy_match(c_lower, course_val_lower, 0.85)[0]: course_score = 5
+                            elif c_lower in course_val_lower or course_val_lower in c_lower: course_score = 2
+                            elif (c_words and all(w in course_val_lower for w in c_words)): course_score = 1
+
+                            if inst_score < 2:
+                                continue
+                            score = inst_score + course_score
+
                             if score >= 3: # Must have at least some match on both
                                 cell_f = ws_f.cell(row=row, column=fee_link_col)
                                 cell_d = ws_d.cell(row=row, column=fee_link_col)
-                                
+
                                 extracted_link = None
-                                
+
                                 # Try regex on formula first
                                 if cell_f.value and isinstance(cell_f.value, str) and str(cell_f.value).upper().startswith("=HYPERLINK"):
                                     match = re.search(r'=HYPERLINK\(\s*"([^"]+)"', str(cell_f.value), re.IGNORECASE)
                                     if match:
                                         extracted_link = match.group(1).strip()
-                                
+
                                 # Fallback to standard hyperlink object
                                 if not extracted_link and cell_d.hyperlink and cell_d.hyperlink.target:
                                     extracted_link = cell_d.hyperlink.target
-                                    
+
                                 # Fallback to standard text
                                 if not extracted_link and cell_d.value and isinstance(cell_d.value, str) and cell_d.value.startswith('http'):
                                     extracted_link = cell_d.value.strip()
-                                
-                                if extracted_link and score > best_score:
+
+                                if extracted_link and (score > best_score or (score == best_score and inst_score > best_inst_score)):
                                     best_score = score
+                                    best_inst_score = inst_score
                                     links['fees'] = extracted_link
                     
                     if 'fees' in links:
@@ -3516,6 +3532,7 @@ class AutonomousCourseVerifier:
                 return None
             
             best_score = -1
+            best_inst_score = -1
             best_links = {}
             for row in range(2, ws_data.max_row + 1):
                 if not uni_col or not course_col: continue
@@ -3534,21 +3551,30 @@ class AutonomousCourseVerifier:
                     
                     inst_match_exact = (normalize(u_lower) == normalize(inst_val_lower))
                     course_match_exact = (normalize(c_lower) == normalize(course_val_lower))
-                    
-                    score = 0
-                    if inst_match_exact: score += 10
-                    elif fuzzy_match(u_lower, inst_val_lower, 0.90)[0]: score += 5
-                    elif u_lower in inst_val_lower or inst_val_lower in u_lower: score += 2
-                    elif (u_words and all(w in inst_val_lower for w in u_words)): score += 1
-                    
-                    if course_match_exact: score += 10
-                    elif fuzzy_match(c_lower, course_val_lower, 0.85)[0]: score += 5
-                    elif c_lower in course_val_lower or course_val_lower in c_lower: score += 2
-                    elif (c_words and all(w in course_val_lower for w in c_words)): score += 1
-                    
+
+                    # Same institute-gate as the fees.xlsx block above: reject rows
+                    # whose institute does not genuinely match (inst_score < 2), so a
+                    # common course name never pulls in a different institute's links.
+                    inst_score = 0
+                    if inst_match_exact: inst_score = 10
+                    elif fuzzy_match(u_lower, inst_val_lower, 0.90)[0]: inst_score = 5
+                    elif u_lower in inst_val_lower or inst_val_lower in u_lower: inst_score = 2
+                    elif (u_words and all(w in inst_val_lower for w in u_words)): inst_score = 1
+
+                    course_score = 0
+                    if course_match_exact: course_score = 10
+                    elif fuzzy_match(c_lower, course_val_lower, 0.85)[0]: course_score = 5
+                    elif c_lower in course_val_lower or course_val_lower in c_lower: course_score = 2
+                    elif (c_words and all(w in course_val_lower for w in c_words)): course_score = 1
+
+                    if inst_score < 2:
+                        continue
+                    score = inst_score + course_score
+
                     if score >= 3:
-                        if score > best_score:
+                        if score > best_score or (score == best_score and inst_score > best_inst_score):
                             best_score = score
+                            best_inst_score = inst_score
                             current_links = {}
                             if link_col:
                                 url = extract_url(ws.cell(row=row, column=link_col), ws_data.cell(row=row, column=link_col))
@@ -3833,17 +3859,18 @@ class AutonomousCourseVerifier:
             return ""
 
     def _apply_excel_fee_fallback(self, course, worker_id=None):
-        """If the website had no fee, look up the fee link in fees.xlsx, fetch it, and
-        extract the fee. Only acts when the web fee is missing — never overrides a
-        website-found fee. Returns True if a fee was recovered.
+        """If the course was NOT fee-verified on the website (cost_match False), look up
+        the fee link in fees.xlsx, fetch it, and extract the fee. fees.xlsx is treated as
+        a trusted curated source — so when a fee is recovered from a correctly-matched
+        institute's fee page, cost_match is forced True (consistent with the uni_match
+        trust precedent). Never touches a course already fee-verified. Returns True if a
+        fee was recovered.
         """
         try:
-            # Only if not found on the website.
+            # Only act on courses whose fee was NOT verified on the website.
             if course.get('cost_match'):
                 return False
             if course.get('web_status') not in ("MATCH", "FALSE"):
-                return False
-            if not self._fee_is_missing(course.get('web_cost')):
                 return False
 
             uni = course.get('uni', '') or ''
@@ -3868,7 +3895,7 @@ class AutonomousCourseVerifier:
             course['cost_match'] = True
             course['fee_source'] = "fees.xlsx"
             reason = str(course.get('reason', '') or '')
-            note = " Fee sourced from fees.xlsx (not found on main website)."
+            note = " Fee sourced from fees.xlsx (trusted curated source)."
             if "fees.xlsx" not in reason:
                 course['reason'] = (reason + note).strip()
             print(f"      -> [fees.xlsx fallback] Recovered fee for '{name}': {fee}")
@@ -3878,9 +3905,10 @@ class AutonomousCourseVerifier:
             return False
 
     def apply_excel_fee_fallback_range(self, start_idx=0, end_idx=None, max_workers=6):
-        """Post-pass: for every course in [start_idx, end_idx) whose fee was NOT found on
-        the website, try to recover it from fees.xlsx. Runs concurrently for speed and
-        saves the checkpoint once at the end.
+        """Post-pass: for every course in [start_idx, end_idx) whose fee was NOT verified
+        on the website (cost_match False — whether the fee was missing OR found-but-not-
+        matched), try to recover/confirm it from the trusted fees.xlsx source. Runs
+        concurrently for speed and saves the checkpoint once at the end.
         """
         if end_idx is None:
             end_idx = len(self.courses)
@@ -3891,14 +3919,13 @@ class AutonomousCourseVerifier:
                 continue
             if c.get('web_status') not in ("MATCH", "FALSE"):
                 continue
-            if self._fee_is_missing(c.get('web_cost')):
-                targets.append((i, c))
+            targets.append((i, c))
 
         if not targets:
-            print("[*] fees.xlsx fallback: no courses missing a web fee. Nothing to do.")
+            print("[*] fees.xlsx fallback: no courses with an unverified fee. Nothing to do.")
             return 0
 
-        print(f"[*] fees.xlsx fallback: {len(targets)} course(s) missing a web fee — attempting recovery (max_workers={max_workers}).")
+        print(f"[*] fees.xlsx fallback: {len(targets)} course(s) with an unverified fee — attempting recovery from fees.xlsx (max_workers={max_workers}).")
         recovered = 0
         no_link = 0
 
