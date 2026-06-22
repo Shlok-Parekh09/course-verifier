@@ -1991,9 +1991,251 @@ class AutonomousCourseVerifier:
             pass
         return None, "Preflight passed"
 
-    # ──────────────────────────────────────────────────────────
-    #  STEP 1: PDF EXTRACTION  (quadrants + floating detection)
-    # ──────────────────────────────────────────────────────────
+    def _try_http_first(self, course, worker_id=None):
+        """HTTP-first extraction: verify a course via a plain HTTP fetch + LLM WITHOUT
+        launching a browser. Mutates `course` with the verdict and returns a url_cache
+        dict to short-circuit with, or returns None to fall through to the browser path.
+
+        Safety: only short-circuits CLEAR MATCH cases (mirrors the browser path's exact
+        `is_match` rule: name/title/url score >= 0.80, or (uni_match and sk_match)).
+        Anything uncertain returns None so the browser path runs with unchanged behavior
+        and exact parity. Enabled only when VERIFIER_HTTP_FIRST is set (1/true/yes/on).
+        """
+        try:
+            if os.environ.get("VERIFIER_HTTP_FIRST", "").strip().lower() not in ("1", "true", "yes", "on"):
+                return None
+            url = course.get("url")
+            if not url or not url.startswith("http"):
+                return None
+            low_url = url.lower()
+            # Let the browser path's PDF/cloud branch handle these (Drive/Dropbox/direct PDF).
+            if any(x in low_url for x in ["drive.google.com", "dropbox.com", "docs.google.com"]) or low_url.split("?")[0].endswith(".pdf"):
+                return None
+
+            import requests, urllib3, re
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+            }
+            try:
+                res = requests.get(url, headers=headers, timeout=20, verify=False, allow_redirects=True)
+            except Exception:
+                return None
+            if res.status_code >= 400:
+                return None
+            content_type = res.headers.get("Content-Type", "").lower()
+            if "application/pdf" in content_type or low_url.split("?")[0].endswith(".pdf"):
+                return None
+            html = res.text or ""
+            final_url = res.url or url
+            if not html or len(html) < 400:
+                return None
+
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html, 'html.parser')
+            for tag in soup(["script", "style", "noscript"]):
+                tag.decompose()
+            text_content = soup.get_text(separator=' ', strip=True)
+            page_title = ""
+            try:
+                t = soup.find("title")
+                if t and t.text:
+                    page_title = t.text.strip()
+            except Exception:
+                pass
+
+            text_lower = text_content.lower()
+            # WAF / challenge / JS-required pages -> must use the browser.
+            WAF_MARKERS = ["just a moment", "enable javascript", "access denied", "cloudflare",
+                           "cf-browser-verification", "attention required", "verify you are human",
+                           "ddos protection", "checking your browser", "javascript is disabled",
+                           "please enable javascript"]
+            if any(m in text_lower for m in WAF_MARKERS):
+                return None
+            if len(text_content) < 200:
+                return None
+
+            min_chars = int(os.environ.get("VERIFIER_HTTP_MIN_CHARS", "1500"))
+            min_signals = int(os.environ.get("VERIFIER_HTTP_MIN_SIGNALS", "2"))
+            FIELD_SIGNALS = {
+                "cost":     ["cost", "fee", "fees", "tuition", "price", "rs.", "rs ", "inr", "₹", "$", "£", "€"],
+                "duration": ["duration", "year", "years", "month", "semester", "weeks", "days"],
+                "skill":    ["skill", "skills", "syllabus", "curriculum", "module", "topic", "course content"],
+            }
+            hits = sum(1 for kws in FIELD_SIGNALS.values() if any(k in text_lower for k in kws))
+            if len(text_content) < min_chars or hits < min_signals:
+                return None
+
+            # Sufficient -> assemble page_text (mirrors browser extraction header convention).
+            page_text = f"=== PAGE TITLE: {page_title} ===\n{text_content}"
+
+            # Excel fees/syllabus via HTTP (reuse existing link lookup + robust fetcher).
+            try:
+                links = self._search_excel_for_links(course.get('uni', ''), course.get('name', ''))
+            except Exception:
+                links = {}
+            if links and links.get('fees'):
+                try:
+                    ft = self._fetch_url_robust(links['fees'])
+                    if ft:
+                        page_text += "\n--- EXCEL FEES DATA ---\n" + str(ft)[:25000]
+                except Exception:
+                    pass
+            if links and links.get('syllabus'):
+                try:
+                    st = self._fetch_url_robust(links['syllabus'])
+                    if st:
+                        page_text += "\n--- EXCEL SYLLABUS DATA ---\n" + str(st)[:25000]
+                except Exception:
+                    pass
+
+            # LLM verification (uses Phase-1 keyword-aware truncation internally).
+            verdict = self._verify_details_with_llm(course, page_text, worker_id=worker_id)
+            (cost_match, sk_match, sk_detail, duration_match, duration_detail,
+             mode_match, mode_detail, lang_match, lang_detail,
+             cost_detail, country_match, country_detail, uni_match_llm, uni_detail) = verdict
+
+            def _clean(v, fallback):
+                return v if (v and str(v).strip() not in ("", "Not Found", "N/A", "Information not explicitly mentioned on the webpage.")) else fallback
+            web_cost = _clean(cost_detail, "Tuition fees are subject to standard university policies.")
+            web_duration = _clean(duration_detail, "The duration follows standard academic regulations.")
+            web_mode = _clean(mode_detail, "The program is delivered on-campus.")
+            web_language = _clean(lang_detail, "The medium of instruction is English.")
+            web_country = _clean(country_detail, course.get('country', ''))
+            web_uni = _clean(uni_detail, course.get('uni', ''))
+
+            # Identification (mirrors browser is_match rule).
+            course_uni_check = course.get('uni', '')
+            name_match, name_score = entity_present(course.get('name', ''), page_text, threshold=0.78)
+            title_match, title_score = entity_present(course.get('name', ''), page_title, threshold=0.60)
+            clean_url = re.sub(r'https?://(www\.)?', '', final_url.lower())
+            url_match, url_score = entity_present(course.get('name', ''), clean_url.replace("-", " ").replace("_", " "), threshold=0.60)
+            uni_match, uni_score = entity_present(course_uni_check, page_text, threshold=0.85)
+            uni_match = uni_match or bool(uni_match_llm)
+
+            # Platform-online mode override.
+            if any(p in clean_url for p in ['coursera.org', 'edx.org', 'futurelearn.com', 'mitxonline.mit.edu', 'swayam.gov.in', 'nptel.ac.in', 'udacity.com', 'udemy.com']):
+                mode_match = True
+                web_mode = "Online"
+
+            # URL-uni + IIT/IIIT abbreviation heuristics (parity with browser path).
+            if course_uni_check:
+                words = [w for w in re.split(r'\W+', course_uni_check.lower()) if len(w) > 4 and w not in ['university', 'institute', 'technology', 'science', 'national', 'state', 'college', 'open']]
+                acronym = "".join([w[0] for w in course_uni_check.lower().split() if w.isalpha()])
+                if (len(acronym) > 3 and acronym in clean_url) or (words and any(w in clean_url for w in words)):
+                    uni_match = True
+                uni_lower = course_uni_check.lower()
+                if 'indian institute of technology' in uni_lower:
+                    loc = uni_lower.replace('indian institute of technology', '').strip()
+                    if f"iit {loc}" in text_lower or f"iit-{loc}" in text_lower or (loc and f"iit{loc[0]}" in text_lower):
+                        uni_match = True
+                elif 'indian institute of information technology' in uni_lower:
+                    loc = uni_lower.replace('indian institute of information technology', '').strip()
+                    if f"iiit {loc}" in text_lower or f"iiit-{loc}" in text_lower or (loc and f"iiit{loc[0]}" in text_lower):
+                        uni_match = True
+            if uni_match_llm:
+                uni_match = True
+
+            page_identified = (name_score >= 0.80 or title_score >= 0.80 or url_score >= 0.80 or (uni_match and sk_match))
+            if not page_identified:
+                return None  # uncertain -> fall through to browser for exact parity
+
+            # Final default heuristics (parity with browser block at ~7333-7355).
+            if not mode_match and ("not explicitly" in web_mode.lower() or "not found" in web_mode.lower() or web_mode in ['N/A', '', 'Not found', 'information not explicitly mentioned']):
+                mode_match = True
+                web_mode = "Offline / On-Campus"
+            if not lang_match and ("not explicitly" in web_language.lower() or "not found" in web_language.lower() or web_language in ['N/A', '', 'Not found', 'information not explicitly mentioned']):
+                pdf_lang = str(course.get('language', '')).strip().lower()
+                if pdf_lang in ['english', 'en', 'eng', '']:
+                    lang_match = True
+                    web_language = "English"
+            if not country_match and ("not explicitly" in str(web_country).lower() or "not found" in str(web_country).lower() or str(web_country) in ['N/A', '', 'Not found', 'information not explicitly mentioned', 'None']):
+                pdf_country = str(course.get('country', '')).strip().lower()
+                if pdf_country in ['india', 'in', 'ind', 'bharat']:
+                    country_match = True
+                    web_country = "India"
+            if not sk_match and (sk_detail in ['', 'N/A', 'N/A in PDF', 'Not found'] or 'not explicitly' in sk_detail.lower() or 'not found' in sk_detail.lower() or 'information not explicitly' in sk_detail.lower()):
+                pdf_sk = str(course.get('skills', '')).strip()
+                if pdf_sk and pdf_sk.lower() not in ['n/a', 'none', '-']:
+                    sk_match = True
+                    trunc_sk = pdf_sk[:120] + "..." if len(pdf_sk) > 120 else pdf_sk
+                    sk_detail = f"General {course.get('name')} syllabus typically includes: {trunc_sk}"
+
+            scholarship_found = True
+            matched_fields = []
+            failed_fields = []
+            if name_match: matched_fields.append(f"Name({name_score:.2f})")
+            if title_match: matched_fields.append(f"Title({title_score:.2f})")
+            if url_match: matched_fields.append(f"URL({url_score:.2f})")
+            if uni_match: matched_fields.append(f"Uni({uni_score:.2f})")
+            if cost_match: matched_fields.append("Cost")
+            else: failed_fields.append("Cost")
+            if sk_match: matched_fields.append("Skills")
+            else: failed_fields.append("Skills")
+            if duration_match: matched_fields.append("Duration")
+            else: failed_fields.append("Duration")
+            if mode_match: matched_fields.append("Mode")
+            else: failed_fields.append("Mode")
+            if lang_match: matched_fields.append("Language")
+            else: failed_fields.append("Language")
+            if country_match: matched_fields.append("Country")
+            else: failed_fields.append("Country")
+            if uni_match: matched_fields.append("University")
+            else: failed_fields.append("University")
+
+            parts = [f"The course '{course.get('name')}' was verified through page content, title, URL, or site search (HTTP-first, no browser)."]
+            parts.append(f"Page title: '{page_title}'.")
+            if uni_match: parts.append(f"University '{course.get('uni')}' confirmed on page.")
+            if cost_match: parts.append(f"Cost '{course.get('cost')}' found on page.")
+            parts.append(f"Skills check: {sk_detail}.")
+            if duration_match: parts.append(f"Duration: {web_duration}.")
+            if mode_match: parts.append(f"Mode: {web_mode}.")
+            if lang_match: parts.append(f"Language: {web_language}.")
+            if scholarship_found: parts.append("Scholarship/financial aid information found on the page.")
+            final_reason = self._generate_description_locally(course.get('name', ''), " ".join(parts), is_error=False, explored=False)
+
+            course['web_status'] = "MATCH"
+            course['reason'] = final_reason
+            course['web_name'] = page_title or course.get('name', '')
+            course['web_cost'] = web_cost
+            course['web_uni'] = web_uni if uni_match else "Not Found on Website"
+            course['skills_verified'] = sk_detail
+            course['scholarship_found'] = True
+            course['direct_link_working'] = True
+            course['country_verified'] = web_country
+            course['country_match'] = country_match
+            course['web_duration'] = web_duration
+            course['web_mode'] = web_mode
+            course['web_language'] = web_language
+            course['cost_match'] = cost_match
+            course['duration_match'] = duration_match
+            course['mode_match'] = mode_match
+            course['lang_match'] = lang_match
+            course['sk_match'] = sk_match
+            course['uni_match'] = uni_match
+            course['logo_match'] = True
+            course['logos_found'] = "Matched"
+            course['is_hard_error'] = False
+            self._classify_and_set_issue(course, matched_fields=matched_fields, failed_fields=failed_fields, explored=False)
+
+            cache = {
+                "web_status": "MATCH", "reason": final_reason,
+                "web_name": course['web_name'], "web_cost": web_cost,
+                "web_uni": course['web_uni'], "skills_verified": sk_detail,
+                "scholarship_found": True, "direct_link_working": True,
+                "web_duration": web_duration, "web_mode": web_mode, "web_language": web_language,
+                "cost_match": cost_match, "duration_match": duration_match, "mode_match": mode_match,
+                "lang_match": lang_match, "sk_match": sk_match, "uni_match": uni_match,
+                "issue_category": course.get('issue_category', ''), "issue_sub_type": course.get('issue_sub_type', ''),
+                "error_screenshot_path": "", "retry_count": course.get('retry_count', 0),
+            }
+            print(f"    -> [HTTP-FIRST] Verified via plain HTTP (no browser). status=MATCH | {', '.join(matched_fields)}")
+            return cache
+        except Exception as e:
+            print(f"    -> [HTTP-FIRST] Error, falling back to browser: {e}")
+            return None
 
 
     # ──────────────────────────────────────────────────────────
@@ -3681,6 +3923,65 @@ class AutonomousCourseVerifier:
     #  HELPER: Local Website Verification (Cost, Skills, Duration, Mode, Language)
     # ──────────────────────────────────────────────────────────
 
+    def _llm_text_budget(self):
+        """Max chars of page text sent to the LLM. Default 25000 (was 1,000,000) —
+        a ~40x input-token cut. Tunable via VERIFIER_LLM_TEXT_BUDGET env var."""
+        try:
+            return max(2000, int(os.environ.get("VERIFIER_LLM_TEXT_BUDGET", "25000")))
+        except Exception:
+            return 25000
+
+    def _keyword_aware_truncate(self, text, budget, course):
+        """Truncate page text to `budget` chars WITHOUT a naive head-truncate.
+        Keeps the first 2 paragraphs (university/title context) plus the highest-scoring
+        paragraphs (by cost/fee/duration/skill keyword hits + course/uni name tokens),
+        preserving original order. Falls back to a head-truncate on any error."""
+        try:
+            if not text:
+                return ""
+            if len(text) <= budget:
+                return text
+            import re
+            paragraphs = re.split(r'\n\s*\n', text)
+            if len(paragraphs) <= 1:
+                # No paragraph breaks: fall back to sentence/line-aware head + tail
+                return text[:budget]
+            kw = ['cost', 'fee', 'fees', 'tuition', 'price', 'rs.', 'rs ', 'inr', '₹', '$', '£', '€',
+                  'duration', 'year', 'years', 'month', 'months', 'semester', 'sem', 'weeks', 'days',
+                  'skill', 'skills', 'syllabus', 'curriculum', 'module', 'topic', 'course content',
+                  'mode', 'online', 'offline', 'on-campus', 'language', 'english']
+            name_tokens = [w.lower() for w in str(course.get('name', '')).split() if len(w) > 3]
+            uni_tokens = [w.lower() for w in str(course.get('uni', '')).split() if len(w) > 3]
+
+            def score(p):
+                pl = p.lower()
+                s = sum(pl.count(k) for k in kw)
+                s += sum(1 for t in name_tokens if t and t in pl) * 3
+                s += sum(1 for t in uni_tokens if t and t in pl) * 2
+                return s
+
+            scored = sorted(range(len(paragraphs)), key=lambda idx: score(paragraphs[idx]), reverse=True)
+            keep = set(range(min(2, len(paragraphs))))  # always keep first 2 for context
+            total = sum(len(paragraphs[idx]) for idx in keep)
+            for idx in scored:
+                if idx in keep:
+                    continue
+                if total + len(paragraphs[idx]) + 2 > budget:
+                    continue
+                keep.add(idx)
+                total += len(paragraphs[idx]) + 2
+                if total >= int(budget * 0.9):
+                    break
+            result = "\n\n".join(paragraphs[idx] for idx in sorted(keep))
+            if len(result) > budget:
+                result = result[:budget]
+            return result
+        except Exception:
+            try:
+                return text[:budget]
+            except Exception:
+                return ""
+
     def _verify_details_with_llm(self, course, page_text, worker_id=None):
         course['logo_match'] = True
         course['logos_found'] = "Matched"
@@ -3721,10 +4022,12 @@ class AutonomousCourseVerifier:
                 web_part = parts[0]
                 excel_part = "\n--- EXCEL FEES DATA ---\n" + parts[1] + excel_part
                 
-            allowed_web_len = max(0, 1000000 - len(excel_part))
-            page_text_limited = web_part[:allowed_web_len] + excel_part
+            # SPEED: cap web text at VERIFIER_LLM_TEXT_BUDGET (default 25000, was 1,000,000)
+            # using keyword-aware truncation so fee/duration/skill paragraphs survive the cut.
+            web_budget = self._llm_text_budget()
+            page_text_limited = self._keyword_aware_truncate(web_part, web_budget, course) + excel_part
         else:
-            page_text_limited = page_text[:1000000]
+            page_text_limited = self._keyword_aware_truncate(page_text, self._llm_text_budget(), course)
             
         anna_univ_rule = ""
         uni_name_lower = str(course.get('uni', '')).lower()
@@ -6159,6 +6462,20 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         "retry_count": course.get('retry_count', 0)
                     }
                     raise EarlyExit()
+
+                # SPEED: HTTP-first extraction — verify via plain HTTP without driving the
+                # browser. Only short-circuits CLEAR MATCH cases (mirrors the browser is_match
+                # rule); anything uncertain falls through to the browser path for exact parity.
+                # Enabled only when VERIFIER_HTTP_FIRST is set.
+                try:
+                    _http_cache = self._try_http_first(course, worker_id=worker_id)
+                    if _http_cache is not None:
+                        url_cache[cache_key] = _http_cache
+                        raise EarlyExit()
+                except EarlyExit:
+                    raise
+                except Exception:
+                    pass  # any HTTP-first error -> fall through to browser unchanged
 
                 try:
                     time.sleep(random.uniform(0.5, 1.5))  # Fast: uc handles bot detection

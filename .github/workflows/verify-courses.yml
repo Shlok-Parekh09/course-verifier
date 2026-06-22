@@ -19,6 +19,14 @@ on:
         description: 'Number of parallel browsers'
         required: true
         default: '2'
+      http_first:
+        description: 'Enable HTTP-first extraction (skip browser for static pages) - 1/0'
+        required: false
+        default: '1'
+      llm_text_budget:
+        description: 'Max chars of page text sent to the LLM (default 25000)'
+        required: false
+        default: '25000'
 
 jobs:
   verify:
@@ -66,6 +74,8 @@ jobs:
         id: verifier
         env:
           VERIFIER_NO_FORCE_EXIT: true
+          VERIFIER_HTTP_FIRST: ${{ inputs.http_first }}
+          VERIFIER_LLM_TEXT_BUDGET: ${{ inputs.llm_text_budget }}
           OPENROUTER_KEY_1: ${{ secrets.OPENROUTER_KEY_1 }}
           GEMINI_KEY_1: ${{ secrets.GEMINI_KEY_1 }}
           OLLAMA_API_URL: ${{ secrets.OLLAMA_API_URL }}
