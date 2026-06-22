@@ -3138,66 +3138,116 @@ class AutonomousCourseVerifier:
         # created self.screenshots_dir, so recreate it defensively before saving PNGs.
         os.makedirs(self.screenshots_dir, exist_ok=True)
         os.makedirs(self.error_screenshots_dir, exist_ok=True)
-        doc = fitz.open(self.input_pdf)
-        doc_page_count = len(doc)
         end_limit = end_idx if end_idx is not None else len(self.courses)
-        skipped_out_of_range = 0
-        for c in self.courses[start_idx:end_limit]:
-            # Use the 0-based cropped-PDF index, NOT page_num (which may be
-            # offset-adjusted to original page numbering and thus point past
-            # the end of the cropped PDF). Fall back to page_num-1 only for old
-            # checkpoints that predate the pdf_page_index field.
-            page_num = c.get('pdf_page_index', c['page_num'] - 1)
-            box_idx = c['box_index'] - 1
-            box_position = c['box_position']
 
-            # Defensive guard: a course's PDF page index can exceed the PDF's
-            # actual page count (e.g. a stale checkpoint from a different PDF
-            # version). Skip those courses instead of letting doc[page_num]
-            # raise IndexError and kill the entire run. Initialize badge fields
-            # to safe defaults so downstream ranking/report steps still see
-            # the expected keys.
-            if page_num < 0 or page_num >= doc_page_count:
+        # Page count for the out-of-range guard only. Per-thread Documents are
+        # opened lazily by the workers below (PyMuPDF's Document is NOT
+        # thread-safe, so each worker gets its own).
+        _doc_for_count = fitz.open(self.input_pdf)
+        doc_page_count = len(_doc_for_count)
+        _doc_for_count.close()
+
+        # ── Per-course OCR worker ───────────────────────────────────────────
+        # Parallelized: a single course's render+OCR is independent of every
+        # other's, and _detect_badges_in_quadrant is pure w.r.t. self (it only
+        # reads the image path and returns a fresh dict). Threaded rendering
+        # was validated byte-identical to the old sequential render, so badge
+        # output has exact parity. Each worker opens its own thread-local
+        # Document (reused across that thread's courses) — never shared.
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        _tl = threading.local()
+
+        def _tl_doc():
+            d = getattr(_tl, "doc", None)
+            if d is None:
+                d = fitz.open(self.input_pdf)
+                _tl.doc = d
+            return d
+
+        def _ocr_one(global_idx, c):
+            # global_idx is the 1-based course position in the FULL list
+            # (matches the old self.courses.index(c)+1), preserving report
+            # numbering parity.
+            try:
+                # Use the 0-based cropped-PDF index, NOT page_num (which may be
+                # offset-adjusted to original page numbering and thus point past
+                # the end of the cropped PDF). Fall back to page_num-1 only for
+                # old checkpoints that predate the pdf_page_index field.
+                page_num = c.get('pdf_page_index', c['page_num'] - 1)
+                box_idx = c['box_index'] - 1
+                box_position = c['box_position']
+
+                # Defensive guard: a course's PDF page index can exceed the PDF's
+                # actual page count (e.g. a stale checkpoint from a different PDF
+                # version). Skip instead of letting doc[page_num] raise IndexError
+                # and kill the run. Initialize badge fields to safe defaults so
+                # downstream ranking/report steps still see the expected keys.
+                if page_num < 0 or page_num >= doc_page_count:
+                    c["has_qs_badge"] = False
+                    c["has_nirf_badge"] = False
+                    c["has_free_box"] = False
+                    c["has_scholarship_box"] = False
+                    return (f"    -> Skipping Course {global_idx+1}: pdf_page_index {page_num} (page_num {c['page_num']}) is out of range (PDF has {doc_page_count} pages).", True)
+
+                page = _tl_doc()[page_num]
+                pw, ph = page.rect.width, page.rect.height
+                half_w = pw / 2
+                half_h = ph / 2
+                y_top = ph * 0.08
+                y_bottom = ph * 0.95
+
+                box_rects = [
+                    fitz.Rect(0, y_top, half_w, half_h),
+                    fitz.Rect(half_w, y_top, pw, half_h),
+                    fitz.Rect(0, half_h, half_w, y_bottom),
+                    fitz.Rect(half_w, half_h, pw, y_bottom),
+                ]
+                clip = box_rects[box_idx]
+                pix = page.get_pixmap(clip=clip, dpi=200)
+                img_path = os.path.join(self.screenshots_dir, f"pdf_page{c['page_num']}_box{c['box_index']}_{box_position}.png")
+                pix.save(img_path)
+
+                msg = f"    -> Analyzing image for Course {global_idx+1}..."
+                badges = self._detect_badges_in_quadrant(img_path)
+                c["has_qs_badge"] = badges["qs"]
+                c["has_nirf_badge"] = badges["nirf"]
+                c["has_free_box"] = badges["free_box"]
+                c["has_scholarship_box"] = badges["scholarship_box"]
+                if badges["qs"]: c["qs_ranked"] = True
+                if badges["nirf"]: c["nirf_ranked"] = True
+                return (msg, False)
+            except Exception as e:
+                # Never let one bad course kill Step 1.5; default to no badges.
                 c["has_qs_badge"] = False
                 c["has_nirf_badge"] = False
                 c["has_free_box"] = False
                 c["has_scholarship_box"] = False
-                skipped_out_of_range += 1
-                print(f"    -> Skipping Course {self.courses.index(c)+1}: pdf_page_index {page_num} (page_num {c['page_num']}) is out of range (PDF has {doc_page_count} pages).")
-                continue
+                return (f"    -> [!] Course {global_idx+1} OCR failed: {e}", False)
 
-            page = doc[page_num]
-            pw, ph = page.rect.width, page.rect.height
-            half_w = pw / 2
-            half_h = ph / 2
-            y_top = ph * 0.08
-            y_bottom = ph * 0.95
-            
-            box_rects = [
-                fitz.Rect(0, y_top, half_w, half_h),
-                fitz.Rect(half_w, y_top, pw, half_h),
-                fitz.Rect(0, half_h, half_w, y_bottom),
-                fitz.Rect(half_w, half_h, pw, y_bottom),
-            ]
-            clip = box_rects[box_idx]
-            pix = page.get_pixmap(clip=clip, dpi=200)
-            img_path = os.path.join(self.screenshots_dir, f"pdf_page{c['page_num']}_box{c['box_index']}_{box_position}.png")
-            pix.save(img_path)
-            
-            print(f"    -> Analyzing image for Course {self.courses.index(c)+1}...")
-            badges = self._detect_badges_in_quadrant(img_path)
-            c["has_qs_badge"] = badges["qs"]
-            c["has_nirf_badge"] = badges["nirf"]
-            c["has_free_box"] = badges["free_box"]
-            c["has_scholarship_box"] = badges["scholarship_box"]
-            if badges["qs"]: c["qs_ranked"] = True
-            if badges["nirf"]: c["nirf_ranked"] = True
-            
+        work = [(start_idx + k, c) for k, c in enumerate(self.courses[start_idx:end_limit])]
+        skipped_out_of_range = 0
+        ocr_workers = max(1, min(8, int(os.environ.get("VERIFIER_OCR_WORKERS", "4"))))
+        try:
+            with ThreadPoolExecutor(max_workers=ocr_workers) as ex:
+                # ex.map yields results in input order, so log order is preserved
+                # even though work runs concurrently.
+                for msg, skipped in ex.map(_ocr_one, [gi for gi, _ in work], [c for _, c in work]):
+                    print(msg)
+                    if skipped:
+                        skipped_out_of_range += 1
+        except Exception as e:
+            # Safety net: if the thread pool itself fails, fall back to the
+            # proven sequential loop so the run never dies at Step 1.5.
+            print(f"    [!] Parallel OCR unavailable ({e}); running sequentially.")
+            for global_idx, c in work:
+                msg, skipped = _ocr_one(global_idx, c)
+                print(msg)
+                if skipped:
+                    skipped_out_of_range += 1
+
         if skipped_out_of_range:
             print(f"    [!] Skipped {skipped_out_of_range} course(s) with page_num beyond the PDF's {doc_page_count} pages.")
-
-        try: doc.close()
-        except: pass
 
     def verify_rankings(self, start_idx=0, end_idx=None):
         """Check QS World/Regional and NIRF rankings for each university."""
