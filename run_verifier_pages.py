@@ -32,6 +32,8 @@ START_PAGE = 782
 END_PAGE = 1890
 RESUME = False
 NO_EMAIL = False
+FRESH = False
+PAGE_OFFSET = 0
 
 args = sys.argv[1:]
 i = 0
@@ -44,6 +46,12 @@ while i < len(args):
     elif a in ("--resume", "-r"):
         RESUME = True
         i += 1
+    elif a in ("--fresh"):
+        FRESH = True
+        i += 1
+    elif a in ("--page-offset"):
+        PAGE_OFFSET = int(args[i + 1])
+        i += 2
     elif a in ("--all"):
         START_PAGE = 1
         END_PAGE = 99999
@@ -59,7 +67,7 @@ while i < len(args):
         i += 1
 
 if not PDF_PATH:
-    print("Usage: python run_verifier_pages.py <pdf> [--pages START END] [--resume] [--all] [--no-email]")
+    print("Usage: python run_verifier_pages.py <pdf> [--pages START END] [--fresh] [--page-offset N] [--resume] [--all] [--no-email]")
     sys.exit(1)
 
 # Resume-only mode: if the original PDF is absent but a checkpoint JSON exists,
@@ -69,7 +77,10 @@ if not PDF_PATH:
 # the 139 MB source PDF.
 _resume_checkpoint_path = f"autonomous_verified_{os.path.basename(PDF_PATH)}.json"
 if not os.path.exists(PDF_PATH):
-    if os.path.exists(_resume_checkpoint_path):
+    if FRESH:
+        print(f"[X] --fresh requires the source PDF, which was not found: {PDF_PATH}")
+        sys.exit(1)
+    elif os.path.exists(_resume_checkpoint_path):
         print(f"[!] PDF not found: {PDF_PATH} — proceeding in resume-only mode from checkpoint: {_resume_checkpoint_path}")
     else:
         print(f"[X] PDF not found: {PDF_PATH} and no checkpoint available. Nothing to do.")
@@ -88,7 +99,7 @@ resume = RESUME
 checkpoint_path = f"autonomous_verified_{os.path.basename(PDF_PATH)}.json"
 start_idx = 0
 
-if os.path.exists(checkpoint_path) and not resume:
+if os.path.exists(checkpoint_path) and not resume and not FRESH:
     # Auto-resume if checkpoint exists and we are in the target range
     try:
         with open(checkpoint_path, "r", encoding="utf-8") as f:
@@ -134,6 +145,10 @@ if not resume:
     except Exception as e:
         print(f"[!] Could not flush checkpoint: {e}")
     agent.extract_and_parse()
+    if PAGE_OFFSET:
+        for c in agent.courses:
+            c['page_num'] = c.get('page_num', 0) + PAGE_OFFSET
+        print(f"[*] Applied page offset {PAGE_OFFSET} (cropped PDF page 1 -> original page {1 + PAGE_OFFSET}).")
 
 # ── Map page numbers to course indices ──
 min_page = min((c.get('page_num', 1) for c in agent.courses), default=1)

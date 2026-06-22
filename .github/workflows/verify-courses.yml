@@ -4,27 +4,21 @@ on:
   workflow_dispatch:
     inputs:
       start_page:
-        description: 'Start PDF page'
+        description: 'Start PDF page (original page numbering)'
         required: true
-        default: '602'
+        default: '172'
       end_page:
-        description: 'End PDF page'
+        description: 'End PDF page (original page numbering)'
         required: true
-        default: '1890'
+        default: '172'
+      page_offset:
+        description: 'Original page = cropped page + offset (171 if PDF starts at original p.172)'
+        required: false
+        default: '171'
       browsers:
         description: 'Number of parallel browsers'
         required: true
         default: '2'
-      resume:
-        description: 'Resume from checkpoint'
-        type: boolean
-        required: false
-        default: false
-      deploy:
-        description: 'Deploy dashboard to Firebase after run'
-        type: boolean
-        required: false
-        default: true
 
 jobs:
   verify:
@@ -68,13 +62,6 @@ jobs:
           pip install -r requirements.txt
           playwright install chromium || true
 
-      - name: Restore checkpoint
-        if: ${{ inputs.resume }}
-        uses: actions/download-artifact@v4
-        with:
-          name: verifier-checkpoint
-        continue-on-error: true
-
       - name: Run verifier
         id: verifier
         env:
@@ -87,12 +74,7 @@ jobs:
         run: |
           BROWSERS="${{ inputs.browsers }}"
           sed -i "s/NUM_BROWSERS = 6/NUM_BROWSERS = ${BROWSERS}/g" autonomous_course_verifier.py
-          python run_verifier_pages.py link_compile.pdf --pages ${{ inputs.start_page }} ${{ inputs.end_page }} --no-email
-
-      - name: Generate static API files
-        if: always()
-        continue-on-error: true
-        run: python -c "import dashboard"
+          python run_verifier_pages.py link_compile_trimmed.pdf --pages ${{ inputs.start_page }} ${{ inputs.end_page }} --fresh --page-offset ${{ inputs.page_offset }} --no-email
 
       - name: Upload PDF report
         if: always()
@@ -101,23 +83,14 @@ jobs:
           name: report-pdf
           path: Verification_Report_Pages_*.pdf
           retention-days: 30
-          if-no-files-found: warn
+          if-no-files-found: error
 
       - name: Upload checkpoint
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: verifier-checkpoint
-          path: autonomous_verified_link_compile.pdf.json
-          retention-days: 30
-          if-no-files-found: warn
-
-      - name: Upload Excel
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: report-excel
-          path: '*.xlsx'
+          path: autonomous_verified_link_compile_trimmed.pdf.json
           retention-days: 30
           if-no-files-found: warn
 
@@ -129,16 +102,6 @@ jobs:
           path: verification_screenshots/**
           retention-days: 14
           if-no-files-found: warn
-
-      - name: Deploy to Firebase Hosting
-        if: ${{ always() && inputs.deploy }}
-        continue-on-error: true
-        uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_AAKYAREPATSE }}
-          channelId: live
-          projectId: aakyarepatse
 
       - name: Send email notification
         if: always()
