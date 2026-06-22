@@ -124,6 +124,7 @@ if resume and os.path.exists(checkpoint_path):
         else:
             start_idx = len(agent.courses)
         print(f"[*] Resumed {len(agent.courses)} courses. Web verification resumes at index {start_idx}.")
+        agent.validate_page_nums_against_pdf()
         agent.export_to_excel(quiet=True)
     except Exception as e:
         print(f"[!] Could not load checkpoint: {e}")

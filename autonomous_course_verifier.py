@@ -1794,6 +1794,44 @@ class AutonomousCourseVerifier:
         os.makedirs(self.screenshots_dir, exist_ok=True)
         os.makedirs(self.error_screenshots_dir, exist_ok=True)
 
+    def validate_page_nums_against_pdf(self):
+        """Warn clearly if any course's page_num exceeds the actual PDF page count.
+
+        This catches the most common resume-mode failure: a checkpoint JSON
+        saved against a longer/different PDF being reused with a shorter PDF
+        (e.g. a trimmed or cropped build). Without this check, the first
+        out-of-range course silently degrades visual extraction (skipped) and
+        can still produce misleading reports. Returns True if page_nums are
+        valid (or the PDF is unavailable to check), False if a mismatch is found.
+        """
+        if not self.courses:
+            return True
+        if not os.path.exists(self.input_pdf):
+            # Resume-only mode (checkpoint without the source PDF) — can't
+            # validate. extract_visuals_for_range won't run on resume anyway.
+            return True
+        try:
+            doc = fitz.open(self.input_pdf)
+            page_count = len(doc)
+            doc.close()
+        except Exception as e:
+            print(f"[!] Could not open PDF to validate page numbers: {e}")
+            return True
+
+        max_page = max((c.get('page_num', 0) or 0) for c in self.courses)
+        out_of_range = [c for c in self.courses
+                        if (c.get('page_num', 0) or 0) > page_count]
+        if out_of_range:
+            print(f"[!] WARNING: {len(out_of_range)} course(s) in the checkpoint reference pages "
+                  f"beyond the PDF ({max_page} > {page_count} pages).")
+            print(f"[!] The PDF at {self.input_pdf} is shorter than the checkpoint expects — "
+                  f"likely a trimmed/cropped PDF or a stale checkpoint from a different PDF version.")
+            print(f"[!] Out-of-range courses will be skipped during visual extraction and may "
+                  f"produce incomplete reports. Re-run with --fresh against the full PDF, or "
+                  f"delete the checkpoint to re-parse.")
+            return False
+        return True
+
     def _safe_get(self, driver, url):
         """Wrapper around driver.get() that actively attempts to bypass Captchas."""
         import time
@@ -2852,12 +2890,29 @@ class AutonomousCourseVerifier:
         os.makedirs(self.screenshots_dir, exist_ok=True)
         os.makedirs(self.error_screenshots_dir, exist_ok=True)
         doc = fitz.open(self.input_pdf)
+        doc_page_count = len(doc)
         end_limit = end_idx if end_idx is not None else len(self.courses)
+        skipped_out_of_range = 0
         for c in self.courses[start_idx:end_limit]:
             page_num = c['page_num'] - 1
             box_idx = c['box_index'] - 1
             box_position = c['box_position']
-            
+
+            # Defensive guard: a course's page_num can exceed the PDF's actual
+            # page count (e.g. a trimmed/cropped PDF, a stale checkpoint from a
+            # different PDF version, or a page-offset mismatch). Skip those
+            # courses instead of letting doc[page_num] raise IndexError and kill
+            # the entire run. Initialize badge fields to safe defaults so
+            # downstream ranking/report steps still see the expected keys.
+            if page_num < 0 or page_num >= doc_page_count:
+                c["has_qs_badge"] = False
+                c["has_nirf_badge"] = False
+                c["has_free_box"] = False
+                c["has_scholarship_box"] = False
+                skipped_out_of_range += 1
+                print(f"    -> Skipping Course {self.courses.index(c)+1}: page_num {c['page_num']} is out of range (PDF has {doc_page_count} pages).")
+                continue
+
             page = doc[page_num]
             pw, ph = page.rect.width, page.rect.height
             half_w = pw / 2
@@ -2885,6 +2940,9 @@ class AutonomousCourseVerifier:
             if badges["qs"]: c["qs_ranked"] = True
             if badges["nirf"]: c["nirf_ranked"] = True
             
+        if skipped_out_of_range:
+            print(f"    [!] Skipped {skipped_out_of_range} course(s) with page_num beyond the PDF's {doc_page_count} pages.")
+
         try: doc.close()
         except: pass
 
