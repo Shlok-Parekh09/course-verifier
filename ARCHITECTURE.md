@@ -135,6 +135,44 @@ gh workflow run verify-courses.yml \
   --ref yug-render-deploy
 ```
 
+## 7b. How to run it yourself (no Claude needed)
+
+The only math to remember: your PDF `link_compile_trimmed.pdf` was **cropped**, so its page 1 = **original page 172**. Therefore:
+
+> `original_page = cropped_page + 171`  →  **`page_offset` is always `171`** for this PDF.
+
+The workflow asks for **original** page numbers.
+
+**Way 1 — GitHub website (easiest, no terminal):**
+1. Go to https://github.com/Shlok-Parekh09/course-verifier/actions/workflows/verify-courses.yml
+2. Click the green **"Run workflow" ▾** button (top-right). Branch = `yug-render-deploy`.
+3. Fill in: `start_page`, `end_page` (original pages), `page_offset=171`, `browsers=6`, `http_first=1`, `llm_text_budget=25000`.
+4. Click **"Run workflow"**. Watch on the Actions tab; download `report-pdf` / `verifier-checkpoint` / `screenshots` artifacts when done.
+
+**Way 2 — terminal (one command):**
+```bash
+gh workflow run verify-courses.yml \
+  -f start_page=172 -f end_page=272 -f page_offset=171 \
+  -f browsers=6 -f http_first=1 -f llm_text_budget=25000 \
+  --ref yug-render-deploy
+```
+Check progress:
+```bash
+gh run list --workflow=verify-courses.yml --limit 1     # latest run + RUN_ID
+gh run watch <RUN_ID>                                    # live-follow (q to quit)
+```
+
+**Recipes (change only start_page / end_page; keep the rest the same):**
+
+| You want original pages… | start_page | end_page |
+|---|---|---|
+| 172–177 (test sample) | 172 | 177 |
+| 172–272 (100 pages) | 172 | 272 |
+| 273–372 (next 100) | 273 | 372 |
+| 172–600 (everything) | 172 | 600 |
+
+Every run is already `--fresh`, so re-triggering the same range starts over (it does **not** resume). If you ever want resume-from-checkpoint behavior, that's a separate code path — ask.
+
 **Swap the LLM model** (no code change needed):
 ```bash
 printf 'nemotron-3-nano:30b' | gh secret set OLLAMA_MODEL --repo Shlok-Parekh09/course-verifier
