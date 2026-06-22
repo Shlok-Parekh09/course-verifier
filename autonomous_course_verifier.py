@@ -6235,7 +6235,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         WebDriverWait(driver, 8).until(lambda d: d.execute_script("return document.readyState") == "complete")
                     except:
                         pass
-                    time.sleep(1)  # Brief extra settle time
+                    time.sleep(0.5)  # Brief extra settle time (trimmed from 1s; readyState wait already covers most late loads)
                     
                     # Handling PDF Links and Cloud Links (Google Drive, Dropbox) directly
                     is_cloud_pdf = False

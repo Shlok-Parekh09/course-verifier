@@ -274,9 +274,9 @@ class LLMManager:
         # Tuned for SPEED: a 90s timeout x 5 attempts used to burn up to 7.5 min
         # on a single slow/overloaded model call before returning None. The model
         # normally replies in <20s; if it hasn't in 30s it is overloaded and
-        # retrying 4 more times just wastes wall-clock. 2 attempts x 30s caps the
-        # worst case at ~62s per course.
-        max_attempts = 2
+        # retrying many more times just wastes wall-clock. 3 attempts x 30s caps
+        # the worst case at ~95s per course while still riding out transient blips.
+        max_attempts = 3
         for attempt in range(max_attempts):
             try:
                 resp = requests.post(url, headers=headers, json=payload, timeout=30)
@@ -554,8 +554,8 @@ class LLMManager:
 
         # Vision calls are heavier (image payload) and prone to timeouts/rate
         # limits; retry transient failures (including connection errors) with
-        # backoff. Tuned for speed: 45s x 2 attempts caps worst case at ~90s.
-        max_attempts = 2
+        # backoff. Tuned for speed: 45s x 3 attempts caps worst case at ~140s.
+        max_attempts = 3
         for attempt in range(max_attempts):
             try:
                 resp = requests.post(url, headers=headers, json=payload, timeout=45)
