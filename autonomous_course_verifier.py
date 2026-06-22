@@ -2671,8 +2671,12 @@ class AutonomousCourseVerifier:
                     sig_u = " ".join([w for w in check_u.lower().split() if w not in ignore_w])
                     sig_l = " ".join([w for w in line_clean.split() if w not in ignore_w])
                     if sig_u and sig_l and fuzz.token_sort_ratio(sig_u, sig_l) > 80:
-                        self._qs_fast_cache[uni] = "Ranked"
-                        return "Ranked"
+                        # Prevent false positive between College and University sharing the same generic name (e.g. Durham College vs Durham University)
+                        if ('college' in check_u.lower() and 'university' in line_clean) or ('university' in check_u.lower() and 'college' in line_clean):
+                            pass
+                        else:
+                            self._qs_fast_cache[uni] = "Ranked"
+                            return "Ranked"
                     
                 if fuzz.token_set_ratio(check_u.lower(), line_clean) > 95 and len(line_clean) > 10:
                     # Prevent matching if the line is just a generic name
@@ -2747,8 +2751,11 @@ class AutonomousCourseVerifier:
                     sig_u = " ".join([w for w in check_u.lower().split() if w not in ignore_w])
                     sig_l = " ".join([w for w in line_clean.split() if w not in ignore_w])
                     if sig_u and sig_l and fuzz.token_sort_ratio(sig_u, sig_l) > 80:
-                        self._nirf_fast_cache[uni] = "Ranked"
-                        return "Ranked"
+                        if ('college' in check_u.lower() and 'university' in line_clean) or ('university' in check_u.lower() and 'college' in line_clean):
+                            pass
+                        else:
+                            self._nirf_fast_cache[uni] = "Ranked"
+                            return "Ranked"
                     
                 if fuzz.token_set_ratio(check_u.lower(), line_clean) > 95 and len(line_clean) > 10:
                     words = line_clean.split()
@@ -3585,10 +3592,9 @@ class AutonomousCourseVerifier:
         uni_name_lower = str(course.get('uni', '')).lower()
         fee_url_lower = str(course.get('fee_url', '')).lower()
         
-        # Only strictly use this baseline for Anna University and only if specific Google Drive TN fee link is present
+        # Use broad baseline for Anna University to permit 50k or 55k per year calculation
         if 'anna' in uni_name_lower:
-            if '1vog0rwxyzf2sf33kpukxoesepa2hb8wr' in fee_url_lower or '1vog0rWXRzF2SF33kPUkXoESePa2Hb8wr'.lower() in fee_url_lower:
-                anna_univ_rule = '- ANNA UNIVERSITY/TN RULE: B.E./B.Tech fees: Rs. 55,000/yr. Multiply by duration in years (e.g., 55,000 * 4 = 2,20,000).'
+            anna_univ_rule = '- ANNA UNIVERSITY EXCEPTION: B.E./B.Tech fees for Anna University affiliated colleges are typically Rs. 50,000 or Rs. 55,000 per year. For a 4-year duration, the total is either Rs. 2,00,000 or Rs. 2,20,000. If the Original Cost is either 200000, 220000 (or formatted) and the website provides ANY fee table or PDF that supports this 50k/55k calculation, you MUST explicitly output a MATCH and calculate it in the description.'
         
         prompt = f"""
 Strictly verify the course details against the webpage text. Output ONLY valid JSON.
@@ -3609,6 +3615,7 @@ Rules:
 1. COST:
    - Compare Original Cost against both Total fees and Tuition fees from the text. Give a MATCH if the numbers match or are semantically equivalent (e.g., "Rs. 8,000" matches "8000/-", or "$8,900" matches "$8,900*").
     - CRITICAL CURRENCY RULE: You MUST strictly verify that the currency symbols/types match. If the Original Cost is in US Dollars ($) but the website states Euros (€ or "EUR"), Pounds (£), or Hong Kong Dollars (HK$), you MUST mark cost_match as FALSE. A number match alone is NEVER enough if the currency is different!
+    - INDIAN CURRENCY PRIORITY: If the university is located in India, you MUST prioritize and match the Indian Rupees (Rs/INR) fee if multiple currencies are shown. If the Original Cost is in Rs but you only see USD ($), or vice versa, you MUST mark cost_match as FALSE.
     - The fee is often mentioned right at the top of the page. You MUST carefully scan the beginning of the text for ANY mention of costs or fees, paying close attention to foreign currencies (e.g., HKD, USD, CAD).
    - CRITICAL CALCULATION: If the total fee is ALREADY explicitly stated in the text (e.g., "Total Fee: 4,91,800"), DO NOT attempt to re-calculate it from sub-components—just match it! ONLY calculate the total if the fee is ONLY given per semester/year (e.g., "Rs. 2,02,500 per semester" and duration is 4 years -> "2,02,500 * 8 = 16,20,000"). If this calculated total matches or is very close to the Original Cost, mark it as a MATCH. You MUST output this calculation in the cost_description.
    - For all universities NOT located in India, you MUST ONLY consider International/Overseas costs IF multiple fee tiers (e.g. domestic vs international) are explicitly listed. If only a single standard fee is listed without distinction (such as in online bootcamps), use that standard fee. Explicitly state the fee type in the description.
@@ -5916,6 +5923,9 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             with browser_init_lock:
                 try:
                     driver = uc.Chrome(options=options, user_data_dir=fresh_profile, version_main=148)
+                    try:
+                        driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {"latitude": 28.6139, "longitude": 77.2090, "accuracy": 100})
+                    except: pass
                 except Exception as e:
                     print(f"    -> Warning: Parallel profile creation failed ({e}). Retrying with fresh options...")
                     options2 = uc.ChromeOptions()
@@ -5931,7 +5941,9 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         except Exception: pass
                     os.makedirs(fresh_profile2, exist_ok=True)
                     driver = uc.Chrome(options=options2, user_data_dir=fresh_profile2, version_main=148)
-                    
+                    try:
+                        driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {"latitude": 28.6139, "longitude": 77.2090, "accuracy": 100})
+                    except: pass                    
             driver.set_page_load_timeout(60)
             driver.set_script_timeout(30)
             
@@ -6880,11 +6892,15 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     if (!href.startsWith('http')) continue;
                                     let href_lower = href.toLowerCase();
                                     
-                                    // Allow external direct PDFs, but restrict HTML crawling to same origin
+                                    // Allow external direct PDFs, but restrict HTML crawling to same origin or subdomains
                                     if (href_lower.endsWith('.pdf') || href_lower.includes('drive.google.com/file/d/')) {{
-                                        pdf_targets.push(href);
+                                        if (keywords.some(k => txt.includes(k) || href_lower.includes(k))) {{
+                                            pdf_targets.unshift(href);
+                                        }} else {{
+                                            pdf_targets.push(href);
+                                        }}
                                     }}
-                                    else if (href.startsWith(origin)) {{
+                                    else if (href.includes(window.location.hostname.replace('www.', '')) || href.startsWith(origin)) {{
                                         let url_no_hash = href.split('#')[0];
                                         let current_no_hash = window.location.href.split('#')[0];
                                         if (url_no_hash !== current_no_hash) {{
@@ -6907,7 +6923,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                         }} catch(e) {{}}
                                     }}
                                 }}
-                                return {{ html: Array.from(new Set(targets)).slice(0, 3), pdf: Array.from(new Set(pdf_targets)).slice(0, 2) }};
+                                return {{ html: Array.from(new Set(targets)).slice(0, 3), pdf: Array.from(new Set(pdf_targets)).slice(0, 4) }};
                             """
                             deep_data = driver.execute_script(js_find_links)
                             deep_links = deep_data.get('html', [])

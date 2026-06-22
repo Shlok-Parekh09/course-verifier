@@ -20,13 +20,15 @@ class LLMManager:
         # Cloud/remote Ollama - must be explicitly set via env vars
         self.cloud_ollama_url = os.environ.get("OLLAMA_API_URL")
         self.cloud_ollama_model = os.environ.get("OLLAMA_MODEL")
+        self.ollama_api_key = os.environ.get("OLLAMA_API_KEY")
 
-        # Hardcoded local Ollama emergency fallback
-        raw_ollama_url = os.environ.get("OLLAMA_API_URL", "http://localhost:11434")
+        # Default to ollama.com if API key is present, else local
+        default_url = "https://ollama.com" if self.ollama_api_key else "http://localhost:11434"
+        raw_ollama_url = os.environ.get("OLLAMA_API_URL", default_url)
         if raw_ollama_url.endswith("/api/generate"):
             raw_ollama_url = raw_ollama_url[:-13]
         self.ollama_api_url = raw_ollama_url
-        self.ollama_model   = os.environ.get("OLLAMA_MODEL", "llama3")
+        self.ollama_model   = os.environ.get("OLLAMA_MODEL", "llama3.3")
         self.ollama_vision_model = os.environ.get("OLLAMA_VISION_MODEL", "gemma4:31b-cloud")
 
         # Track last call time per provider to enforce rate limits
@@ -52,7 +54,7 @@ class LLMManager:
         if num_keys == 0: return []
         return [worker_id % num_keys]
 
-    def generate(self, prompt: str, system: Optional[str] = None, format: str = "text", temperature: float = 0.0, provider: str = "auto", worker_id: int = None) -> Optional[str]:
+    def generate(self, prompt: str, system: Optional[str] = None, format: str = "text", temperature: float = 0.0, provider: str = "auto", worker_id: int = None, model_name: str = None) -> Optional[str]:
         # Text Generation: Cloud Ollama -> Gemini -> OpenRouter -> NVIDIA -> Local Ollama
 
         # --- Tier 1: Configured (cloud/remote) Ollama ---
@@ -75,7 +77,7 @@ class LLMManager:
                     key_id = f"gemini_{idx}"
                     print(f"      -> [LLM Manager] Worker {worker_id+1} trying Gemini Key {idx+1}...")
                     self._rate_limit(key_id)
-                    res = self._call_gemini(g_key, prompt, system, format, 0.0)
+                    res = self._call_gemini(g_key, prompt, system, format, 0.0, model_name=model_name)
                     if res: return res
                 print(f"      -> [LLM Manager] Worker {worker_id+1}'s Gemini keys failed. Failing over to OpenRouter...")
 
@@ -99,52 +101,39 @@ class LLMManager:
                     if res: return res
                 print(f"      -> [LLM Manager] Worker {worker_id+1}'s NVIDIA keys failed.")
 
-            # Tier 3: Local Ollama emergency fallback
-            if provider in ["auto", "ollama"]:
-                try:
-                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying local Ollama ({self.local_ollama_url} | {self.local_ollama_model})...")
-                    res = self._call_ollama(prompt, system, format, 0.0, url=self.local_ollama_url, model=self.local_ollama_model)
-                    if res: return res
-                    print(f"      -> [LLM Manager] Worker {worker_id+1} local Ollama failed.")
-                except Exception as e:
-                    print(f"      -> [LLM Manager] Worker {worker_id+1} local Ollama crashed ({e}).")
+
 
             return None
 
         # FALLBACK SEQUENTIAL LOGIC (If worker_id is not provided)
         # Provider 1: GEMINI
-        for idx, key in enumerate(self.gemini_keys):
-            print(f"      -> [LLM Manager] Trying Gemini Key {idx+1}/{len(self.gemini_keys)}...")
-            self._rate_limit(f"gemini_{idx}")
-            result = self._call_gemini(key, prompt, system, format, 0.0)
-            if result: return result
-            print(f"      -> [LLM Manager] Gemini Key {idx+1} failed. Failing over...")
+        if provider in ["auto", "gemini"]:
+            for idx, key in enumerate(self.gemini_keys):
+                print(f"      -> [LLM Manager] Trying Gemini Key {idx+1}/{len(self.gemini_keys)}...")
+                self._rate_limit(f"gemini_{idx}")
+                result = self._call_gemini(key, prompt, system, format, 0.0, model_name=model_name)
+                if result: return result
+                print(f"      -> [LLM Manager] Gemini Key {idx+1} failed. Failing over...")
 
         # Provider 2: OPENROUTER
-        for idx, key in enumerate(self.openrouter_keys):
-            print(f"      -> [LLM Manager] Trying OpenRouter Key {idx+1}/{len(self.openrouter_keys)}...")
-            self._rate_limit(f"openrouter_{idx}", min_interval=1.0)
-            result = self._call_openrouter(key, prompt, system, format, 0.0)
-            if result: return result
-            print(f"      -> [LLM Manager] OpenRouter Key {idx+1} failed. Failing over...")
+        if provider in ["auto", "openrouter"]:
+            for idx, key in enumerate(self.openrouter_keys):
+                print(f"      -> [LLM Manager] Trying OpenRouter Key {idx+1}/{len(self.openrouter_keys)}...")
+                self._rate_limit(f"openrouter_{idx}", min_interval=1.0)
+                result = self._call_openrouter(key, prompt, system, format, 0.0)
+                if result: return result
+                print(f"      -> [LLM Manager] OpenRouter Key {idx+1} failed. Failing over...")
 
         # Provider 3: NVIDIA
-        for idx, key in enumerate(self.nvidia_keys):
-            print(f"      -> [LLM Manager] Trying NVIDIA Key {idx+1}/{len(self.nvidia_keys)}...")
-            self._rate_limit(f"nvidia_{idx}", min_interval=1.0)
-            result = self._call_nvidia(key, prompt, system, format, 0.0)
-            if result: return result
-            print(f"      -> [LLM Manager] NVIDIA Key {idx+1} failed. Failing over...")
-
-        # --- Tier 3: Hardcoded local Ollama emergency fallback ---
-        if provider in ["auto", "ollama"]:
-            try:
-                print(f"      -> [LLM Manager] Trying local Ollama ({self.local_ollama_url} | {self.local_ollama_model})...")
-                result = self._call_ollama(prompt, system, format, 0.0, url=self.local_ollama_url, model=self.local_ollama_model)
+        if provider in ["auto", "nvidia"]:
+            for idx, key in enumerate(self.nvidia_keys):
+                print(f"      -> [LLM Manager] Trying NVIDIA Key {idx+1}/{len(self.nvidia_keys)}...")
+                self._rate_limit(f"nvidia_{idx}", min_interval=1.0)
+                result = self._call_nvidia(key, prompt, system, format, 0.0)
                 if result: return result
-                print("      -> [LLM Manager] Local Ollama failed or unavailable.")
-            except Exception as e:
-                print(f"      -> [LLM Manager] Local Ollama crashed ({e}).")
+                print(f"      -> [LLM Manager] NVIDIA Key {idx+1} failed. Failing over...")
+
+
 
         print("      -> [LLM Manager] CRITICAL ERROR: All API keys for Gemini, OpenRouter, NVIDIA, and Ollama failed!")
         return None
@@ -247,7 +236,10 @@ class LLMManager:
             payload["format"] = "json"
             
         try:
-            resp = requests.post(url, json=payload, timeout=60)
+            headers = {"Content-Type": "application/json"}
+            if self.ollama_api_key:
+                headers["Authorization"] = f"Bearer {self.ollama_api_key}"
+            resp = requests.post(url, json=payload, headers=headers, timeout=60)
             if resp.status_code == 200:
                 return resp.json().get("response")
             return None
@@ -261,7 +253,7 @@ class LLMManager:
         if system: messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
         
-        payload = {"model": "nvidia/nemotron-3-ultra-550b-a55b:free", "messages": messages, "temperature": temperature}
+        payload = {"model": "meta-llama/llama-3.3-70b-instruct:free", "messages": messages, "temperature": temperature}
         if format == "json": payload["response_format"] = {"type": "json_object"}
             
         try:
@@ -293,9 +285,11 @@ class LLMManager:
             print(f"      -> [LLM Manager] NVIDIA API Exception: {e}")
             return None
 
-    def _call_gemini(self, api_key: str, prompt: str, system: Optional[str], format: str, temperature: float) -> Optional[str]:
+    def _call_gemini(self, api_key: str, prompt: str, system: Optional[str], format: str, temperature: float, model_name: str = None) -> Optional[str]:
         # Gemma 4 31B for text verification (user requested exact string)
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemma-4-31b-it:generateContent?key={api_key}"
+        if not model_name:
+            model_name = "gemma-4-31b-it"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
         headers = {"Content-Type": "application/json"}
         
         parts = []
@@ -498,7 +492,10 @@ class LLMManager:
             payload["system"] = system
             
         try:
-            resp = requests.post(url, json=payload, timeout=60)
+            headers = {"Content-Type": "application/json"}
+            if self.ollama_api_key:
+                headers["Authorization"] = f"Bearer {self.ollama_api_key}"
+            resp = requests.post(url, json=payload, headers=headers, timeout=60)
             if resp.status_code == 200:
                 return resp.json().get("response")
             else:
