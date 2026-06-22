@@ -7918,7 +7918,10 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     # SYNCHRONOUS kill - old browser MUST be fully dead before new one starts.
                     # Cross-platform: taskkill on Windows, SIGKILL on Linux (CI). The old Windows-only
                     # taskkill no-op'd on Linux and leaked Chrome/chromedriver processes -> OOM on long runs.
-                    import subprocess, os, signal
+                    # NOTE: do NOT include `os` in this local import — it would make `os` a function-local
+                    # of process_course and break earlier `os` references (e.g. os.path.join in the
+                    # recovery loop above) with UnboundLocalError. `os` is already imported at module top.
+                    import subprocess, signal
                     try:
                         pid = getattr(driver, 'browser_pid', None)
                         if pid:
