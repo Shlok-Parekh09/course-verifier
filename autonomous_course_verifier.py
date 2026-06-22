@@ -2838,6 +2838,10 @@ class AutonomousCourseVerifier:
 
     def extract_visuals_for_range(self, start_idx=0, end_idx=None):
         print(f"\n[*] Step 1.5/4: Extracting visual badges (OCR) for selected courses ({start_idx+1} to {end_idx if end_idx else len(self.courses)})...")
+        # The launcher's --fresh path rmtree()s verification_screenshots after __init__
+        # created self.screenshots_dir, so recreate it defensively before saving PNGs.
+        os.makedirs(self.screenshots_dir, exist_ok=True)
+        os.makedirs(self.error_screenshots_dir, exist_ok=True)
         doc = fitz.open(self.input_pdf)
         end_limit = end_idx if end_idx is not None else len(self.courses)
         for c in self.courses[start_idx:end_limit]:
