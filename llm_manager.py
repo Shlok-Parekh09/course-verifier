@@ -270,14 +270,20 @@ class LLMManager:
         # blip) hit the generic except and returned None immediately, killing the
         # whole verification for that course. Connection errors are now retried
         # too, since they are overwhelmingly transient.
-        max_attempts = 5
+        #
+        # Tuned for SPEED: a 90s timeout x 5 attempts used to burn up to 7.5 min
+        # on a single slow/overloaded model call before returning None. The model
+        # normally replies in <20s; if it hasn't in 30s it is overloaded and
+        # retrying 4 more times just wastes wall-clock. 2 attempts x 30s caps the
+        # worst case at ~62s per course.
+        max_attempts = 2
         for attempt in range(max_attempts):
             try:
-                resp = requests.post(url, headers=headers, json=payload, timeout=90)
+                resp = requests.post(url, headers=headers, json=payload, timeout=30)
                 if resp.status_code == 200:
                     return resp.json().get("response")
                 if resp.status_code in (429, 500, 502, 503, 504):
-                    wait = min(2 ** attempt, 15)
+                    wait = min(2 ** attempt, 4)
                     print(f"      -> [LLM Manager] Ollama HTTP {resp.status_code}; retrying in {wait}s (attempt {attempt+1}/{max_attempts})...")
                     time.sleep(wait)
                     continue
@@ -286,7 +292,7 @@ class LLMManager:
                 return None
             except (requests.exceptions.Timeout,
                     requests.exceptions.ConnectionError) as e:
-                wait = min(2 ** attempt, 15)
+                wait = min(2 ** attempt, 4)
                 last_err = str(e).split('\n')[0][:120]
                 print(f"      -> [LLM Manager] Ollama transient error ({last_err}); retrying in {wait}s (attempt {attempt+1}/{max_attempts})...")
                 time.sleep(wait)
@@ -547,16 +553,16 @@ class LLMManager:
             headers["Authorization"] = f"Bearer {ollama_key}"
 
         # Vision calls are heavier (image payload) and prone to timeouts/rate
-        # limits; use a longer timeout and retry transient failures (including
-        # connection errors) with backoff.
-        max_attempts = 5
+        # limits; retry transient failures (including connection errors) with
+        # backoff. Tuned for speed: 45s x 2 attempts caps worst case at ~90s.
+        max_attempts = 2
         for attempt in range(max_attempts):
             try:
-                resp = requests.post(url, headers=headers, json=payload, timeout=120)
+                resp = requests.post(url, headers=headers, json=payload, timeout=45)
                 if resp.status_code == 200:
                     return resp.json().get("response")
                 if resp.status_code in (429, 500, 502, 503, 504):
-                    wait = min(2 ** attempt, 15)
+                    wait = min(2 ** attempt, 4)
                     print(f"      -> [LLM Manager] Ollama Vision HTTP {resp.status_code}; retrying in {wait}s (attempt {attempt+1}/{max_attempts})...")
                     time.sleep(wait)
                     continue
@@ -564,7 +570,7 @@ class LLMManager:
                 return None
             except (requests.exceptions.Timeout,
                     requests.exceptions.ConnectionError) as e:
-                wait = min(2 ** attempt, 15)
+                wait = min(2 ** attempt, 4)
                 last_err = str(e).split('\n')[0][:120]
                 print(f"      -> [LLM Manager] Ollama Vision transient error ({last_err}); retrying in {wait}s (attempt {attempt+1}/{max_attempts})...")
                 time.sleep(wait)

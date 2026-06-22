@@ -4731,11 +4731,14 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
         try:
             last_height = driver.execute_script("return document.body.scrollHeight")
             current_scroll = 0
-            while current_scroll < last_height and current_scroll < 20000:
-                current_scroll += 1000
+            # Cap the scroll sweep so a tall page can't burn ~7s (20000px / 1000px
+            # x 0.35s) per course. 8000px in 1600px steps is enough to lazy-load
+            # most above-the-fold-2 content and keeps the per-course budget tight.
+            while current_scroll < last_height and current_scroll < 8000:
+                current_scroll += 1600
                 driver.execute_script(f"window.scrollTo(0, {current_scroll})")
                 import time
-                time.sleep(0.35)
+                time.sleep(0.2)
                 new_height = driver.execute_script("return document.body.scrollHeight")
                 last_height = new_height
                 
@@ -6051,10 +6054,13 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         sys.stdout = tl_stdout
 
         class EarlyExit(Exception): pass
-        # Max re-queues after a browser/driver crash (so 5 total attempts).
-        # Anti-bot/WAF sites crash headless Chrome on load ~60-70% of the time;
-        # 5 attempts drives the all-fail probability down to ~10% per hostile site.
-        MAX_BROWSER_RETRIES = 4
+        # Max re-queues after a browser/driver crash (so 2 total attempts).
+        # Anti-bot/WAF sites crash headless Chrome on load a majority of the time;
+        # more than 1 retry mostly burns wall-clock on courses that will crash
+        # again anyway, and creates extra executor rounds that blow the time
+        # budget. 2 attempts keeps one fresh-browser retry for transient crashes
+        # without dragging the run out.
+        MAX_BROWSER_RETRIES = 1
         class BrowserCrashRetryException(Exception): pass
 
 
