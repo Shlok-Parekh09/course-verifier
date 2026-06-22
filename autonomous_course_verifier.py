@@ -7254,10 +7254,11 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 except Exception as e:
                     err_str = str(e)
                     clean_err = err_str.split('Stacktrace:')[0].strip()
-                    
+                    _browser_died = False
+
                     if 'invalid session id' in err_str.lower() or 'disconnected:' in err_str.lower() or 'target closed' in err_str.lower() or 'session deleted' in err_str.lower():
                         raise BrowserCrashRetryException(clean_err)
-                    
+
                     if 'page_text' in locals() and len(page_text) > 500:
                         print(f"    -> [!] Warning: Script crashed ({clean_err[:50]}), but {len(page_text)} chars of text were saved! Falling back to LLM...")
                         c_m, s_m, l_skd, d_m, l_durd, m_m, l_modd, l_m, l_land, l_costd, co_m, l_countryd, u_m, l_unid = self._verify_details_with_llm(course, page_text, worker_id=worker_id)
@@ -7284,30 +7285,54 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         course['is_hard_error'] = False
                         
                     else:
-                        # No text extracted at all, but we MUST NOT output "N/A". 
-                        # We use the autonomous local generator based on course title.
-                        course['web_cost'] = "Tuition fees are updated annually and subject to standard university policies."
-                        course['web_uni'] = course.get('uni', 'The respective university')
-                        course['skills_verified'] = f"The curriculum provides comprehensive training in {course.get('name', 'this specialized field')}."
-                        course['web_duration'] = "The course duration aligns with standard academic program lengths."
-                        course['web_mode'] = "The program is conducted in a traditional offline on-campus environment."
-                        course['web_language'] = "The medium of instruction is English."
-                        course['is_hard_error'] = True
-                        
-                        if 'timeout' in err_str.lower() or 'net::' in err_str.lower() or 'ERR_' in err_str:
-                            course['web_status'] = "FALSE"
-                            course['reason'] = f"Website unreachable: {err_str[:100]}"
+                        # No text extracted at all.
+                        # Detect browser/driver death (driver connection lost mid-load).
+                        # These mean the Chrome/chromedriver process died, NOT a real
+                        # "course doesn't match" verdict -> re-queue for retry with a fresh
+                        # browser instead of finalizing a bogus FALSE.
+                        _err_low = err_str.lower()
+                        _browser_died = (
+                            'connection refused' in _err_low or
+                            'connection aborted' in _err_low or
+                            'remotedisconnected' in _err_low or
+                            'max retries exceeded' in _err_low or
+                            'failed to establish a connection' in _err_low or
+                            'newconnectionerror' in _err_low or
+                            'target closed' in _err_low or
+                            'invalid session id' in _err_low or
+                            'disconnected:' in _err_low or
+                            'session deleted' in _err_low
+                        )
+                        if _browser_died:
+                            # Leave course in its unverified state (web_status FALSE, reason "")
+                            # so the retry actually re-processes it. Don't cache a bogus FALSE.
+                            print(f"    -> [!] Browser/driver died during load (no text extracted). Will retry with a fresh browser.")
                         else:
-                            course['web_status'] = "FALSE"
-                            course['reason'] = f"Browser verification failed before course evidence could be confirmed."
-                            
-                    self._classify_and_set_issue(course)
-                    url_cache[cache_key] = {
-                        "web_status": course.get('web_status', 'FALSE'), "reason": course.get('reason', ''),
-                        "is_hard_error": course.get('is_hard_error', True),
-                        "issue_category": course.get('issue_category', ''), "issue_sub_type": course.get('issue_sub_type', ''),
-                        "error_screenshot_path": course.get('error_screenshot_path', ''), "retry_count": course.get('retry_count', 0)
-                    }
+                            # No text extracted at all, but we MUST NOT output "N/A".
+                            # We use the autonomous local generator based on course title.
+                            course['web_cost'] = "Tuition fees are updated annually and subject to standard university policies."
+                            course['web_uni'] = course.get('uni', 'The respective university')
+                            course['skills_verified'] = f"The curriculum provides comprehensive training in {course.get('name', 'this specialized field')}."
+                            course['web_duration'] = "The course duration aligns with standard academic program lengths."
+                            course['web_mode'] = "The program is conducted in a traditional offline on-campus environment."
+                            course['web_language'] = "The medium of instruction is English."
+                            course['is_hard_error'] = True
+
+                            if 'timeout' in _err_low or 'net::' in _err_low or 'ERR_' in err_str:
+                                course['web_status'] = "FALSE"
+                                course['reason'] = f"Website unreachable: {err_str[:100]}"
+                            else:
+                                course['web_status'] = "FALSE"
+                                course['reason'] = f"Browser verification failed before course evidence could be confirmed."
+
+                    if not _browser_died:
+                        self._classify_and_set_issue(course)
+                        url_cache[cache_key] = {
+                            "web_status": course.get('web_status', 'FALSE'), "reason": course.get('reason', ''),
+                            "is_hard_error": course.get('is_hard_error', True),
+                            "issue_category": course.get('issue_category', ''), "issue_sub_type": course.get('issue_sub_type', ''),
+                            "error_screenshot_path": course.get('error_screenshot_path', ''), "retry_count": course.get('retry_count', 0)
+                        }
                     # Recovery: Check if driver is responsive
                     is_alive = False
                     try:
@@ -7361,6 +7386,11 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         
                         if not success:
                             print("    -> CRITICAL: Failed to recover browser instance!")
+
+                    # If the browser died with no extracted text, re-queue this course for
+                    # a fresh attempt (with the just-recreated driver) instead of a bogus FALSE.
+                    if _browser_died:
+                        raise BrowserCrashRetryException(f"Browser died during load: {clean_err[:80]}")
 
             except EarlyExit:
                 # Ensure classification is set for courses that exited early (e.g. no URL, hard errors)
@@ -7463,6 +7493,13 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             else:
                                 original_stdout.write(f"    -> [!] Course '{course_name}' crashed 3 times. Skipping.\n")
                                 original_stdout.flush()
+                                try:
+                                    cobj = item[1] if isinstance(item, tuple) else {}
+                                    cobj['web_status'] = "FALSE"
+                                    cobj['reason'] = "Browser crashed repeatedly; verification could not be completed."
+                                    cobj['is_hard_error'] = True
+                                except Exception:
+                                    pass
                         except Exception as e:
                             err_msg = str(e).lower()
                             course_obj = item[1] if isinstance(item, tuple) else {}
