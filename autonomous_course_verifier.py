@@ -782,10 +782,6 @@ def verify_cost_in_text(target_cost_tuple, text, target_cost_str="", uni_name=""
                 
                 if any(sym in context for sym in target_symbols):
                     return True
-                    
-                # Secondary check: if we see "fee", "tuition", "cost", "price" nearby, assume it's correct
-                if any(w in context for w in ["fee", "tuition", "cost", "price", "amount", "course"]):
-                    return True
         except ValueError:
             pass
             
@@ -2540,6 +2536,8 @@ class AutonomousCourseVerifier:
         if raw_n1 and raw_n2:
             if raw_n1 in generate_acronyms(raw_n2) or raw_n2 in generate_acronyms(raw_n1):
                 return True
+            if 'buffalo' in raw_n1 and 'buffalo' in raw_n2:
+                return True
 
         n1 = standardize_uni_name(name1)
         n2 = standardize_uni_name(name2)
@@ -2557,6 +2555,13 @@ class AutonomousCourseVerifier:
                 # Require exact significant word match. No extra words allowed.
                 len_diff = abs(len(w1_sig) - len(w2_sig))
                 if len_diff == 0:
+                    # CRITICAL FIX: Prevent College vs University generic matches (e.g. Durham College != Durham University)
+                    types = {'university', 'college', 'institute', 'school', 'polytechnic', 'academy'}
+                    t1 = w1 & types
+                    t2 = w2 & types
+                    # Ensure that if types are present, they must be the same to match
+                    if (t1 and t2 and t1 != t2):
+                        return False
                     return True
                 
         # High threshold fuzzy fallback for typos using built-in difflib
@@ -2599,22 +2604,20 @@ class AutonomousCourseVerifier:
         except Exception:
             pass
         
+        name = name.replace("Bu?alo", "Buffalo").replace("bu?alo", "buffalo")
+        name_lower = name.lower()
+
         for abbr, full_name in global_abbrevs.items():
-            if re.search(r'\b' + re.escape(abbr) + r'\b', name_lower):
+            # Only append if it's an exact match of the abbreviation, not just a substring word
+            if name_lower == abbr.lower() or name_lower == f"{abbr.lower()} university" or name_lower == f"university of {abbr.lower()}":
                 if full_name not in name_lower:
                     name = name + " " + full_name
-                    
-        if "gitam" in name_lower:
-            name = name + " university gandhi institute of technology and management"
-        if "graphic era" in name_lower:
-            name = name + " deemed to be university dehradun"
+
         if name_lower == "iisc" or "iisc bangalore" in name_lower:
             name = "indian institute of science"
-        if "mnit" in name_lower or "malaviya national institute of technology" in name_lower:
-            name = name + " malaviya national institute of technology mnit jaipur"
-        if "bu?alo" in name_lower or "buffalo" in name_lower:
-            name = name.replace("Bu?alo", "Buffalo").replace("bu?alo", "buffalo") + " university at buffalo suny"
-            
+        name = __import__('re').sub(r'\bmnit\b', 'Malaviya National Institute of Technology', name, flags=__import__('re').IGNORECASE)
+        if 'malaviya' in name.lower(): name = 'Malaviya National Institute of Technology'
+        name = __import__('re').sub(r'\bucl\b', 'University College London', name, flags=__import__('re').IGNORECASE)
         # Also clean up common commas and extra spaces
         return re.sub(' +', ' ', name).strip()
 
@@ -3615,9 +3618,8 @@ Rules:
 1. COST:
    - Compare Original Cost against both Total fees and Tuition fees from the text. Give a MATCH if the numbers match or are semantically equivalent (e.g., "Rs. 8,000" matches "8000/-", or "$8,900" matches "$8,900*").
     - CRITICAL CURRENCY RULE: You MUST strictly verify that the currency symbols/types match. If the Original Cost is in US Dollars ($) but the website states Euros (€ or "EUR"), Pounds (£), or Hong Kong Dollars (HK$), you MUST mark cost_match as FALSE. A number match alone is NEVER enough if the currency is different!
-    - INDIAN CURRENCY PRIORITY: If the university is located in India, you MUST prioritize and match the Indian Rupees (Rs/INR) fee if multiple currencies are shown. If the Original Cost is in Rs but you only see USD ($), or vice versa, you MUST mark cost_match as FALSE.
     - The fee is often mentioned right at the top of the page. You MUST carefully scan the beginning of the text for ANY mention of costs or fees, paying close attention to foreign currencies (e.g., HKD, USD, CAD).
-   - CRITICAL CALCULATION: If the total fee is ALREADY explicitly stated in the text (e.g., "Total Fee: 4,91,800"), DO NOT attempt to re-calculate it from sub-components—just match it! ONLY calculate the total if the fee is ONLY given per semester/year (e.g., "Rs. 2,02,500 per semester" and duration is 4 years -> "2,02,500 * 8 = 16,20,000"). If this calculated total matches or is very close to the Original Cost, mark it as a MATCH. You MUST output this calculation in the cost_description.
+   - CRITICAL CALCULATION: If the total fee is ALREADY explicitly stated in the text (e.g., "Total Fee: 4,91,800"), DO NOT attempt to re-calculate it from sub-components—just match it! ONLY calculate the total if the fee is ONLY given per semester/year (e.g., "Rs. 2,02,500 per semester" and duration is 4 years -> "2,02,500 * 8 = 16,20,000") OR if given as "Cost Per Credit" multiplied by "Total Credits" (e.g., "$750 per credit" and "12 credits" -> "750 * 12 = 9000"). If you see "Cost Per Credit" and "Total Credits" anywhere on the page, you MUST ASSUME they apply to the course and perform the calculation! If this calculated total EXACTLY MATCHES the Original Cost (allowing only for minor point decimal round-off errors), mark it as a MATCH. If there is a larger discrepancy, you MUST mark it as FALSE. You MUST output this calculation in the cost_description
    - For all universities NOT located in India, you MUST ONLY consider International/Overseas costs IF multiple fee tiers (e.g. domestic vs international) are explicitly listed. If only a single standard fee is listed without distinction (such as in online bootcamps), use that standard fee. Explicitly state the fee type in the description.
    - "Free" Exception: If Original Cost is "Free", do NOT match generic terms (e.g., "toll free", "free box"). Must mean "Free Course Tuition". If a Paid Certificate track exists, cost_match = FALSE.
    - COURSERA EXCEPTION: Coursera courses are NEVER free or free to audit. If the website is Coursera, ignore any 'Enroll for Free' text and ONLY extract the specific one-time course purchase fee from the pricing modal details. Do NOT extract or use any "Subscription" fees or "Coursera Plus" fees. If Original Cost is "Free", you MUST ALWAYS mark cost_match as FALSE.
@@ -3635,8 +3637,9 @@ Rules:
    - Convert Semesters to Years (2 Sem = 1 Year).
    - CRITICAL ROUNDING RULE: NEVER use decimal or point values when calculating or comparing duration! You MUST ALWAYS round to the nearest whole number (e.g., 215 minutes is 3.58 hours -> round to 4 hours). If the rounded value matches the original duration, it is a MATCH.
 3. MODE:
-   - CRITICAL: Read the page text carefully to detect the actual delivery mode. Look for keywords like 'online', 'offline', 'blended', 'hybrid', 'distance', 'on-campus', 'in-person', 'virtual', 'e-learning'. DO NOT default to 'Offline' unless there is absolutely zero indication of mode. If the page says 'online' anywhere in a course context, mark mode as 'Online'.
-   - 'Blended' and 'Hybrid' are DIFFERENT from 'Online'. Only mark mode_match=TRUE for Online if the website explicitly says 'online' (not just 'blended' or 'hybrid').
+   - CRITICAL: Search the text for explicit "Format:", "Delivery Mode:", or "Mode:" sections first. If the specific course format says 'Hybrid', 'Blended', 'On-Campus', or 'In-Person', you MUST extract that EXACT mode.
+   - Do NOT get confused by generic university headers like "Online Programs" or "University Online" if the specific course format says something else (like Hybrid).
+   - 'Blended' and 'Hybrid' are DIFFERENT from 'Online'. Only mark mode_match=TRUE for Online if the actual course delivery mode is exclusively online (not 'blended' or 'hybrid').
 4. LANGUAGE:
    - Read the page text carefully to detect the language of instruction. Look for explicit statements like 'taught in German', 'language of instruction: French', 'course content in English'. If the page is in German and says nothing about English instruction, mark language as German.
    - If not explicitly stated and page is clearly in English, default to 'English'.
@@ -3664,8 +3667,11 @@ Rules:
 
 {"(NOTE: Skills have already been pre-verified as a MATCH via ML check. Just provide a brief summary of the skills found or inferred.)" if pre_match_skills else ""}
 
-Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
+CRITICAL: You MUST return ONLY a single valid JSON object starting with {{ and ending with }}. DO NOT output markdown backticks. You MUST show your reasoning inside the "reasoning" JSON field so you can think step-by-step.
+CRITICAL CALCULATION: If the fee is given per credit or per semester, you MUST explicitly extract this per-unit fee and attempt to calculate the total. If you cannot find the total required units, DO NOT SAY 'Not Found' - instead, output the per-credit or per-semester fee in found_cost (e.g., '$1890 per credit'). Write your calculation in cost_description.
+Output JSON format:
 {{
+    "reasoning": "Show your step-by-step thinking here before answering, especially for math...",
     "found_cost": "...",
     "cost_description": "...",
     "cost_match": true/false,
@@ -3838,7 +3844,7 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
                             
                             # Strategy 1: Exact match in LLM's text (LLM found the number but still said False)
                             if pdf_amount in desc_amounts:
-                                positive_keywords = ['matches', 'equal', 'aligns', 'exactly the same', 'identical', '=', 'equals', 'is stated', 'is listed', 'total fee is']
+                                positive_keywords = ['matches', 'equal', 'aligns', 'exactly the same', 'identical', '=', 'equals']
                                 negative_keywords = ['does not match', 'different', 'differs', 'close to', 'not exactly', 'discrepancy', 'mismatch', 'however', 'not equal', 'not found', '!=']
                                 desc_lower = cost_detail.lower()
                                 
@@ -3850,16 +3856,7 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
                                     print(f"    -> [Sanity] cost_match corrected to TRUE (Description implies positive match for {pdf_amount}).")
                                     cost_match = True
                                     
-                            # Strategy 2: LLM failed math calculation (e.g. found per-semester fee, but failed to multiply)
-                            if not cost_match:
-                                for a in desc_amounts:
-                                    for m in [2, 3, 4, 6, 8, 12]:
-                                        if abs(a * m - pdf_amount) < 1:
-                                            print(f"    -> [Sanity] cost_match corrected to TRUE (LLM description compound: {a} * {m} = {pdf_amount}).")
-                                            cost_match = True
-                                            break
-                                    if cost_match: break
-                                    
+
                             # Strategy 3: LLM completely missed it, but the exact number is physically adjacent to a currency/fee word in the raw HTML text
                             if not cost_match:
                                 num_pattern = f"{pdf_amount:,.0f}" if pdf_amount.is_integer() else f"{pdf_amount:,}"
@@ -7374,7 +7371,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     # Simple heuristic rule for Match
                     is_match = False
                     page_identified = (name_score >= 0.80 or title_score >= 0.80 or url_score >= 0.80 or (uni_match and sk_match))
-                    if page_identified:
+                    if page_identified and cost_match:
                         is_match = True
                     
                     if is_match:

@@ -27,6 +27,8 @@ class LLMManager:
         raw_ollama_url = os.environ.get("OLLAMA_API_URL", default_url)
         if raw_ollama_url.endswith("/api/generate"):
             raw_ollama_url = raw_ollama_url[:-13]
+        elif raw_ollama_url.endswith("/api"):
+            raw_ollama_url = raw_ollama_url[:-4]
         self.ollama_api_url = raw_ollama_url
         self.ollama_model   = os.environ.get("OLLAMA_MODEL", "llama3.3")
         self.ollama_vision_model = os.environ.get("OLLAMA_VISION_MODEL", "gemma4:31b-cloud")
@@ -55,21 +57,21 @@ class LLMManager:
         return [worker_id % num_keys]
 
     def generate(self, prompt: str, system: Optional[str] = None, format: str = "text", temperature: float = 0.0, provider: str = "auto", worker_id: int = None, model_name: str = None) -> Optional[str]:
-        # Text Generation: Cloud Ollama -> Gemini -> OpenRouter -> NVIDIA -> Local Ollama
-
-        # --- Tier 1: Configured (cloud/remote) Ollama ---
-        if provider in ["auto", "ollama"]:
-            try:
-                print(f"      -> [LLM Manager] Trying Ollama ({self.ollama_api_url} | {self.ollama_model})...")
-                res = self._call_ollama(prompt, system, format, 0.0, url=self.ollama_api_url + "/api/generate", model=self.ollama_model)
-                if res: return res
-                print("      -> [LLM Manager] Ollama failed or unavailable. Failing over to other APIs...")
-            except Exception as e:
-                print(f"      -> [LLM Manager] Ollama crashed ({e}). Failing over...")
+        # Text Generation: Mistral -> Gemini -> OpenRouter -> NVIDIA
 
         if worker_id is not None:
             # DEDICATED KEY LOGIC for Multithreading
-            # Chain: Gemini → OpenRouter → NVIDIA (with 2 keys per provider)
+            # Chain: Mistral -> Gemini -> OpenRouter -> NVIDIA (with keys per provider)
+
+            if self.mistral_keys and provider in ["auto", "mistral"]:
+                for idx in self._get_key_sequence(worker_id, len(self.mistral_keys)):
+                    m_key = self.mistral_keys[idx]
+                    key_id = f"mistral_text_{idx}"
+                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying Mistral Key {idx+1}...")
+                    self._rate_limit(key_id, min_interval=1.0)
+                    res = self._call_mistral(m_key, prompt, system, format, 0.0)
+                    if res: return res
+                print(f"      -> [LLM Manager] Worker {worker_id+1}'s Mistral keys failed. Failing over to Gemini...")
 
             if self.gemini_keys and provider in ["auto", "gemini"]:
                 for idx in self._get_key_sequence(worker_id, len(self.gemini_keys)):
@@ -106,6 +108,15 @@ class LLMManager:
             return None
 
         # FALLBACK SEQUENTIAL LOGIC (If worker_id is not provided)
+        # Provider 0: MISTRAL
+        if provider in ["auto", "mistral"]:
+            for idx, key in enumerate(self.mistral_keys):
+                print(f"      -> [LLM Manager] Trying Mistral Key {idx+1}/{len(self.mistral_keys)}...")
+                self._rate_limit(f"mistral_text_{idx}", min_interval=1.0)
+                result = self._call_mistral(key, prompt, system, format, 0.0)
+                if result: return result
+                print(f"      -> [LLM Manager] Mistral Key {idx+1} failed. Failing over...")
+
         # Provider 1: GEMINI
         if provider in ["auto", "gemini"]:
             for idx, key in enumerate(self.gemini_keys):
@@ -139,17 +150,8 @@ class LLMManager:
         return None
 
     def generate_with_image(self, prompt: str, base64_image: str, system: Optional[str] = None, worker_id: int = None) -> Optional[str]:
-        """Method for Vision extraction using Ollama, Groq, Mistral, and SambaNova"""
+        """Method for Vision extraction using Groq, Mistral, and SambaNova"""
         
-        # 0. OLLAMA VISION PRIMARY
-        try:
-            print(f"      -> [LLM Manager] Trying Ollama Vision ({self.ollama_api_url} | {self.ollama_vision_model})...")
-            res = self._call_ollama_vision(prompt, base64_image, system)
-            if res: return res
-            print("      -> [LLM Manager] Ollama Vision failed or unavailable. Failing over...")
-        except Exception as e:
-            print(f"      -> [LLM Manager] Ollama Vision error: {e}. Failing over...")
-
         if worker_id is not None:
             # DEDICATED KEY LOGIC for Multithreading Vision
             # Chain: Groq → Mistral → SambaNova (with 2 keys per provider)
@@ -364,7 +366,7 @@ class LLMManager:
         messages.append({"role": "user", "content": prompt})
         
         payload = {
-            "model": "mistral-large-latest",
+            "model": "mistral-large-2512",
             "messages": messages,
             "temperature": temperature
         }
