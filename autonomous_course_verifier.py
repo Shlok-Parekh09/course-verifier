@@ -3853,25 +3853,34 @@ Output JSON format (RETURN ONLY RAW JSON, NO MARKDOWN, NO ```json):
                 res = None
             
             if res is None or not isinstance(res, dict):
-                print("      -> [!] Falling back to RegEx text extraction...")
+                # If the LLM returned nothing at all (None / empty), there is no
+                # text to mine with RegEx — skip the scan and fall through to the
+                # empty-dict handling below. Previously this ran re.search on
+                # res_str=None and crashed with "expected string or bytes-like
+                # object, got 'NoneType'", surfacing as an [LLM Error] and
+                # dropping the course.
                 res = {}
-                keys_pattern = r"(?:cost|duration|mode|language|country|university|skills)_(?:description|match)"
-                import re
-                for field in ['cost', 'duration', 'mode', 'language', 'country', 'university', 'skills']:
-                    # Use a non-greedy match that stops at the next likely key or the end of the text
-                    desc_match = re.search(rf"\"?`?{field}_description`?\"?\s*(?::|=>?|\-)\s*\"?(.*?)\"?(?=\s*\*?\s*\"?`?{keys_pattern}`?\"?\s*(?::|=>?|\-)|$)", res_str, flags=re.IGNORECASE | re.DOTALL)
-                    bool_match = re.search(rf"\"?`?{field}_match`?\"?\s*(?::|=>?|\-)\s*\"?(true|false)\"?", res_str, flags=re.IGNORECASE)
-                    
-                    if desc_match:
-                        cleaned = desc_match.group(1).strip()
-                        # Clean up trailing json syntax if present
-                        if cleaned.endswith(","): cleaned = cleaned[:-1]
-                        if cleaned.endswith("\""): cleaned = cleaned[:-1]
-                        # Clean up any stray bullet points at the end of the sentence
-                        cleaned = cleaned.rstrip('*').strip()
-                        res[f'{field}_description'] = cleaned
-                    if bool_match:
-                        res[f'{field}_match'] = (bool_match.group(1).lower() == 'true')
+                if not res_str or not str(res_str).strip():
+                    print("      -> [!] LLM returned no content; skipping RegEx fallback.")
+                else:
+                    print("      -> [!] Falling back to RegEx text extraction...")
+                    keys_pattern = r"(?:cost|duration|mode|language|country|university|skills)_(?:description|match)"
+                    import re
+                    for field in ['cost', 'duration', 'mode', 'language', 'country', 'university', 'skills']:
+                        # Use a non-greedy match that stops at the next likely key or the end of the text
+                        desc_match = re.search(rf"\"?`?{field}_description`?\"?\s*(?::|=>?|\-)\s*\"?(.*?)\"?(?=\s*\*?\s*\"?`?{keys_pattern}`?\"?\s*(?::|=>?|\-)|$)", res_str, flags=re.IGNORECASE | re.DOTALL)
+                        bool_match = re.search(rf"\"?`?{field}_match`?\"?\s*(?::|=>?|\-)\s*\"?(true|false)\"?", res_str, flags=re.IGNORECASE)
+
+                        if desc_match:
+                            cleaned = desc_match.group(1).strip()
+                            # Clean up trailing json syntax if present
+                            if cleaned.endswith(","): cleaned = cleaned[:-1]
+                            if cleaned.endswith("\""): cleaned = cleaned[:-1]
+                            # Clean up any stray bullet points at the end of the sentence
+                            cleaned = cleaned.rstrip('*').strip()
+                            res[f'{field}_description'] = cleaned
+                        if bool_match:
+                            res[f'{field}_match'] = (bool_match.group(1).lower() == 'true')
             
             if isinstance(res, list) and len(res) > 0:
                 res = res[0]

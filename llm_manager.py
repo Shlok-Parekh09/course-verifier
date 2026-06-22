@@ -26,22 +26,27 @@ class LLMManager:
         _oc_model = os.environ.get("OLLAMA_MODEL")
         self.cloud_ollama_model = _oc_model.strip() if _oc_model else None
 
-        # Hardcoded local Ollama emergency fallback
-        raw_ollama_url = os.environ.get("OLLAMA_API_URL", "http://localhost:11434").strip()
+        # Cloud Ollama (ollama.com) is the ONLY LLM backend used. There is no
+        # local Ollama fallback: in environments without one (Colab/CI/laptops
+        # without a local server) it just produced "Connection refused" noise
+        # and wasted a retry round before returning None. The cloud endpoint is
+        # required to be set via OLLAMA_API_URL.
+        #
+        # Normalize the base URL so the call endpoint is always "<base>/api/generate",
+        # no matter which form the env var takes:
+        #   https://ollama.com              -> https://ollama.com/api/generate
+        #   https://ollama.com/api          -> https://ollama.com/api/generate
+        #   https://ollama.com/api/generate -> https://ollama.com/api/generate
+        # Without this, an env value of "https://ollama.com/api" produced the
+        # doubled path "https://ollama.com/api/api/generate", which 404s.
+        raw_ollama_url = os.environ.get("OLLAMA_API_URL", "").strip().rstrip("/")
         if raw_ollama_url.endswith("/api/generate"):
             raw_ollama_url = raw_ollama_url[: -len("/api/generate")]
+        elif raw_ollama_url.endswith("/api"):
+            raw_ollama_url = raw_ollama_url[: -len("/api")]
         self.ollama_api_url = raw_ollama_url
         self.ollama_model   = os.environ.get("OLLAMA_MODEL", "llama3").strip()
         self.ollama_vision_model = os.environ.get("OLLAMA_VISION_MODEL", "gemma4:31b-cloud").strip()
-
-        # Local (localhost) Ollama emergency fallback. Distinct from the cloud
-        # Ollama above: this always targets localhost:11434 so that if a local
-        # Ollama server is running (e.g. on a beefy laptop/VM), it is used as the
-        # last resort. In environments with no local Ollama (Colab/CI), the call
-        # simply fails and is caught gracefully instead of raising
-        # AttributeError because the attributes were never defined.
-        self.local_ollama_url = os.environ.get("OLLAMA_LOCAL_URL", "http://localhost:11434/api/generate")
-        self.local_ollama_model = os.environ.get("OLLAMA_LOCAL_MODEL", self.ollama_model)
 
         # Track last call time per provider to enforce rate limits
         # Track last call time per key to enforce rate limits individually
@@ -113,16 +118,6 @@ class LLMManager:
                     if res: return res
                 print(f"      -> [LLM Manager] Worker {worker_id+1}'s NVIDIA keys failed.")
 
-            # Tier 3: Local Ollama emergency fallback
-            if provider in ["auto", "ollama"]:
-                try:
-                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying local Ollama ({self.local_ollama_url} | {self.local_ollama_model})...")
-                    res = self._call_ollama(prompt, system, format, 0.0, url=self.local_ollama_url, model=self.local_ollama_model)
-                    if res: return res
-                    print(f"      -> [LLM Manager] Worker {worker_id+1} local Ollama failed.")
-                except Exception as e:
-                    print(f"      -> [LLM Manager] Worker {worker_id+1} local Ollama crashed ({e}).")
-
             return None
 
         # FALLBACK SEQUENTIAL LOGIC (If worker_id is not provided)
@@ -150,17 +145,7 @@ class LLMManager:
             if result: return result
             print(f"      -> [LLM Manager] NVIDIA Key {idx+1} failed. Failing over...")
 
-        # --- Tier 3: Hardcoded local Ollama emergency fallback ---
-        if provider in ["auto", "ollama"]:
-            try:
-                print(f"      -> [LLM Manager] Trying local Ollama ({self.local_ollama_url} | {self.local_ollama_model})...")
-                result = self._call_ollama(prompt, system, format, 0.0, url=self.local_ollama_url, model=self.local_ollama_model)
-                if result: return result
-                print("      -> [LLM Manager] Local Ollama failed or unavailable.")
-            except Exception as e:
-                print(f"      -> [LLM Manager] Local Ollama crashed ({e}).")
-
-        print("      -> [LLM Manager] CRITICAL ERROR: All API keys for Gemini, OpenRouter, NVIDIA, and Ollama failed!")
+        print("      -> [LLM Manager] CRITICAL ERROR: All configured LLM providers failed!")
         return None
 
     def generate_with_image(self, prompt: str, base64_image: str, system: Optional[str] = None, worker_id: int = None) -> Optional[str]:
@@ -247,6 +232,9 @@ class LLMManager:
     def _call_ollama(self, prompt: str, system: Optional[str], format: str, temperature: float, *, url: str = None, model: str = None) -> Optional[str]:
         if not url: url = f"{self.ollama_api_url}/api/generate"
         if not model: model = self.ollama_model
+        if not self.ollama_api_url:
+            print("      -> [LLM Manager] OLLAMA_API_URL is not set. Cannot call cloud Ollama.")
+            return None
         payload = {
             "model": model,
             "prompt": prompt,
@@ -266,29 +254,36 @@ class LLMManager:
         if ollama_key:
             headers["Authorization"] = f"Bearer {ollama_key}"
 
-        # Retry transient failures (rate limit 429, 5xx, timeouts) with backoff so
-        # rapid successive calls don't silently fail and drop verification quality.
-        max_attempts = 3
+        # Retry transient failures (rate limit 429, 5xx, timeouts, AND connection
+        # errors) with exponential backoff. Previously a transient ConnectionError
+        # (e.g. "Max retries exceeded" / "Connection refused" during a network
+        # blip) hit the generic except and returned None immediately, killing the
+        # whole verification for that course. Connection errors are now retried
+        # too, since they are overwhelmingly transient.
+        max_attempts = 5
         for attempt in range(max_attempts):
             try:
                 resp = requests.post(url, headers=headers, json=payload, timeout=90)
                 if resp.status_code == 200:
                     return resp.json().get("response")
                 if resp.status_code in (429, 500, 502, 503, 504):
-                    wait = min(2 ** attempt, 10)
+                    wait = min(2 ** attempt, 15)
                     print(f"      -> [LLM Manager] Ollama HTTP {resp.status_code}; retrying in {wait}s (attempt {attempt+1}/{max_attempts})...")
                     time.sleep(wait)
                     continue
                 # Non-retryable (e.g. 401 bad key, 404 bad model). Surface the real error.
                 print(f"      -> [LLM Manager] Ollama HTTP {resp.status_code}: {resp.text[:200]}")
                 return None
-            except requests.exceptions.Timeout:
-                wait = min(2 ** attempt, 10)
-                print(f"      -> [LLM Manager] Ollama timed out; retrying in {wait}s (attempt {attempt+1}/{max_attempts})...")
+            except (requests.exceptions.Timeout,
+                    requests.exceptions.ConnectionError) as e:
+                wait = min(2 ** attempt, 15)
+                last_err = str(e).split('\n')[0][:120]
+                print(f"      -> [LLM Manager] Ollama transient error ({last_err}); retrying in {wait}s (attempt {attempt+1}/{max_attempts})...")
                 time.sleep(wait)
             except Exception as e:
                 print(f"      -> [LLM Manager] Ollama request error: {e}")
                 return None
+        print(f"      -> [LLM Manager] Ollama exhausted {max_attempts} attempts. Giving up.")
         return None
 
     def _call_openrouter(self, api_key: str, prompt: str, system: Optional[str], format: str, temperature: float) -> Optional[str]:
@@ -541,28 +536,32 @@ class LLMManager:
         if ollama_key:
             headers["Authorization"] = f"Bearer {ollama_key}"
 
-        # Vision calls are heavier (image payload) and prone to timeouts/rate limits;
-        # use a longer timeout and retry transient failures with backoff.
-        max_attempts = 3
+        # Vision calls are heavier (image payload) and prone to timeouts/rate
+        # limits; use a longer timeout and retry transient failures (including
+        # connection errors) with backoff.
+        max_attempts = 5
         for attempt in range(max_attempts):
             try:
                 resp = requests.post(url, headers=headers, json=payload, timeout=120)
                 if resp.status_code == 200:
                     return resp.json().get("response")
                 if resp.status_code in (429, 500, 502, 503, 504):
-                    wait = min(2 ** attempt, 10)
+                    wait = min(2 ** attempt, 15)
                     print(f"      -> [LLM Manager] Ollama Vision HTTP {resp.status_code}; retrying in {wait}s (attempt {attempt+1}/{max_attempts})...")
                     time.sleep(wait)
                     continue
                 print(f"      -> [LLM Manager] Ollama Vision Error {resp.status_code}: {resp.text[:200]}")
                 return None
-            except requests.exceptions.Timeout:
-                wait = min(2 ** attempt, 10)
-                print(f"      -> [LLM Manager] Ollama Vision timed out; retrying in {wait}s (attempt {attempt+1}/{max_attempts})...")
+            except (requests.exceptions.Timeout,
+                    requests.exceptions.ConnectionError) as e:
+                wait = min(2 ** attempt, 15)
+                last_err = str(e).split('\n')[0][:120]
+                print(f"      -> [LLM Manager] Ollama Vision transient error ({last_err}); retrying in {wait}s (attempt {attempt+1}/{max_attempts})...")
                 time.sleep(wait)
             except Exception as e:
                 print(f"      -> [LLM Manager] Ollama Vision Exception: {e}")
                 return None
+        print(f"      -> [LLM Manager] Ollama Vision exhausted {max_attempts} attempts. Giving up.")
         return None
 
 # Global Singleton for easy import
