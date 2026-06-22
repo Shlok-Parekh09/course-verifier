@@ -8118,10 +8118,14 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         # Disabled per user request (and it also caused False propagation bugs)
         pass
 
-    def generate_pdf_report(self, start_idx=0, end_idx=None, pdf_name=None):
+    def generate_pdf_report(self, start_idx=0, end_idx=None, pdf_name=None, start_number=None):
         if pdf_name:
             self.output_pdf = f"{pdf_name}.pdf"
-        print(f"\n[*] Step 4/4: Generating PDF report: {self.output_pdf} (Courses {start_idx+1} to {end_idx if end_idx else len(self.courses)})")
+        # start_number: when set (e.g. 602), the printed course numbering starts there
+        # instead of the 1-based position within this slice. Used so a rerun from page 172
+        # can number courses by their original compilation index.
+        display_start = start_number if start_number else start_idx + 1
+        print(f"\n[*] Step 4/4: Generating PDF report: {self.output_pdf} (Courses numbered from {display_start})")
 
         pdf = FPDF()
         pdf.set_auto_page_break(auto=False)
@@ -8339,7 +8343,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             pdf.multi_cell(0, 5, desc, border='LRB')
 
         # Render sequentially
-        counter = start_idx + 1
+        counter = start_number if start_number else start_idx + 1
         end_val = end_idx if end_idx is not None else len(self.courses)
         rendered_count = 0
         for c in self.courses[start_idx:end_val]:
