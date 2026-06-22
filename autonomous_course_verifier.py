@@ -1818,16 +1818,17 @@ class AutonomousCourseVerifier:
             print(f"[!] Could not open PDF to validate page numbers: {e}")
             return True
 
-        max_page = max((c.get('page_num', 0) or 0) for c in self.courses)
+        max_page = max((c.get('pdf_page_index', c.get('page_num', 0) - 1) or 0) for c in self.courses) + 1
         out_of_range = [c for c in self.courses
-                        if (c.get('page_num', 0) or 0) > page_count]
+                        if (c.get('pdf_page_index', c.get('page_num', 0) - 1) or 0) >= page_count]
         if out_of_range:
             print(f"[!] WARNING: {len(out_of_range)} course(s) in the checkpoint reference pages "
                   f"beyond the PDF ({max_page} > {page_count} pages).")
             print(f"[!] The PDF at {self.input_pdf} is shorter than the checkpoint expects — "
-                  f"likely a trimmed/cropped PDF or a stale checkpoint from a different PDF version.")
+                  f"likely a stale checkpoint from a different PDF version (a trimmed/cropped PDF "
+                  f"is fine as long as pdf_page_index stays within its page count).")
             print(f"[!] Out-of-range courses will be skipped during visual extraction and may "
-                  f"produce incomplete reports. Re-run with --fresh against the full PDF, or "
+                  f"produce incomplete reports. Re-run with --fresh against the matching PDF, or "
                   f"delete the checkpoint to re-parse.")
             return False
         return True
@@ -2263,6 +2264,12 @@ class AutonomousCourseVerifier:
                     "duration": "Unknown", "skills": "N/A in PDF", "mode": "Online",
                     "country": "Unknown", "url": "Unknown", "domain": domain,
                     "page_num": page_num + 1,
+                    # 0-based index into the source PDF as opened by this
+                    # verifier (i.e. the cropped/trimmed PDF). page_num above
+                    # may be offset-adjusted to original page numbering by the
+                    # launcher for range filtering + report display, so it
+                    # cannot be used to index the PDF. Use this instead.
+                    "pdf_page_index": page_num,
                     "box_position": q["label"],
                     "box_index": qi + 1,
                     # Visual badges from PDF (enhanced with text)
@@ -2894,23 +2901,27 @@ class AutonomousCourseVerifier:
         end_limit = end_idx if end_idx is not None else len(self.courses)
         skipped_out_of_range = 0
         for c in self.courses[start_idx:end_limit]:
-            page_num = c['page_num'] - 1
+            # Use the 0-based cropped-PDF index, NOT page_num (which may be
+            # offset-adjusted to original page numbering and thus point past
+            # the end of the cropped PDF). Fall back to page_num-1 only for old
+            # checkpoints that predate the pdf_page_index field.
+            page_num = c.get('pdf_page_index', c['page_num'] - 1)
             box_idx = c['box_index'] - 1
             box_position = c['box_position']
 
-            # Defensive guard: a course's page_num can exceed the PDF's actual
-            # page count (e.g. a trimmed/cropped PDF, a stale checkpoint from a
-            # different PDF version, or a page-offset mismatch). Skip those
-            # courses instead of letting doc[page_num] raise IndexError and kill
-            # the entire run. Initialize badge fields to safe defaults so
-            # downstream ranking/report steps still see the expected keys.
+            # Defensive guard: a course's PDF page index can exceed the PDF's
+            # actual page count (e.g. a stale checkpoint from a different PDF
+            # version). Skip those courses instead of letting doc[page_num]
+            # raise IndexError and kill the entire run. Initialize badge fields
+            # to safe defaults so downstream ranking/report steps still see
+            # the expected keys.
             if page_num < 0 or page_num >= doc_page_count:
                 c["has_qs_badge"] = False
                 c["has_nirf_badge"] = False
                 c["has_free_box"] = False
                 c["has_scholarship_box"] = False
                 skipped_out_of_range += 1
-                print(f"    -> Skipping Course {self.courses.index(c)+1}: page_num {c['page_num']} is out of range (PDF has {doc_page_count} pages).")
+                print(f"    -> Skipping Course {self.courses.index(c)+1}: pdf_page_index {page_num} (page_num {c['page_num']}) is out of range (PDF has {doc_page_count} pages).")
                 continue
 
             page = doc[page_num]
