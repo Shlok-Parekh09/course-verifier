@@ -5973,6 +5973,10 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         sys.stdout = tl_stdout
 
         class EarlyExit(Exception): pass
+        # Max re-queues after a browser/driver crash (so 5 total attempts).
+        # Anti-bot/WAF sites crash headless Chrome on load ~60-70% of the time;
+        # 5 attempts drives the all-fail probability down to ~10% per hostile site.
+        MAX_BROWSER_RETRIES = 4
         class BrowserCrashRetryException(Exception): pass
 
 
@@ -7515,13 +7519,13 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             original_stdout.flush()
                             future.cancel()
                         except BrowserCrashRetryException as e:
-                            if retry_counts[course_idx] < 2:
+                            if retry_counts[course_idx] < MAX_BROWSER_RETRIES:
                                 retry_counts[course_idx] += 1
-                                original_stdout.write(f"    -> [!] Course '{course_name}' crashed (browser died). Queuing for retry {retry_counts[course_idx]}/2...\n")
+                                original_stdout.write(f"    -> [!] Course '{course_name}' crashed (browser died). Queuing for retry {retry_counts[course_idx]}/{MAX_BROWSER_RETRIES}...\n")
                                 original_stdout.flush()
                                 next_items_to_process.append(item)
                             else:
-                                original_stdout.write(f"    -> [!] Course '{course_name}' crashed 3 times. Skipping.\n")
+                                original_stdout.write(f"    -> [!] Course '{course_name}' crashed {MAX_BROWSER_RETRIES + 1} times. Skipping.\n")
                                 original_stdout.flush()
                                 try:
                                     cobj = item[1] if isinstance(item, tuple) else {}
@@ -7535,9 +7539,9 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             course_obj = item[1] if isinstance(item, tuple) else {}
                             has_result = course_obj.get('web_status') not in [None, '']
                             # If the course was killed mid-processing (no result yet), retry it
-                            if not has_result and retry_counts.get(course_idx, 0) < 2:
+                            if not has_result and retry_counts.get(course_idx, 0) < MAX_BROWSER_RETRIES:
                                 retry_counts[course_idx] = retry_counts.get(course_idx, 0) + 1
-                                original_stdout.write(f"    -> [!] Course '{course_name}' lost (browser killed/crashed: {str(e)[:80]}). Re-queuing for retry {retry_counts[course_idx]}/2...\n")
+                                original_stdout.write(f"    -> [!] Course '{course_name}' lost (browser killed/crashed: {str(e)[:80]}). Re-queuing for retry {retry_counts[course_idx]}/{MAX_BROWSER_RETRIES}...\n")
                                 original_stdout.flush()
                                 next_items_to_process.append(item)
                             else:
