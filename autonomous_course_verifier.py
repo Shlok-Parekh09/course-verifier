@@ -7482,12 +7482,34 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
 
                     if not is_alive:
                         print("    -> Driver appears dead. Recreating browser instance...")
-                        try: 
+                        try:
                             import threading
                             def kill_drv(drv):
-                                import subprocess
+                                # Cross-platform hard-kill of the orphaned Chrome + chromedriver
+                                # processes. The old code only ran `taskkill` (Windows-only), so on
+                                # the Linux CI runner it silently no-op'd and crashed Chrome/chrome-
+                                # driver processes accumulated across a long run -> OOM -> exit 143.
+                                import subprocess, os, signal
+                                pid = getattr(drv, 'browser_pid', None)
                                 try:
-                                    if hasattr(drv, 'browser_pid'): subprocess.run(f"taskkill /F /PID {drv.browser_pid} /T", shell=True, capture_output=True)
+                                    if pid:
+                                        if os.name == 'nt':
+                                            subprocess.run(f"taskkill /F /PID {pid} /T", shell=True, capture_output=True)
+                                        else:
+                                            try: os.kill(pid, signal.SIGKILL)
+                                            except ProcessLookupError: pass
+                                except: pass
+                                # Also kill the chromedriver service process if still alive.
+                                try:
+                                    svc = getattr(drv, 'service', None)
+                                    if svc and getattr(svc, 'process', None) and svc.process.poll() is None:
+                                        try:
+                                            if os.name == 'nt':
+                                                subprocess.run(f"taskkill /F /PID {svc.process.pid} /T", shell=True, capture_output=True)
+                                            else:
+                                                try: os.kill(svc.process.pid, signal.SIGKILL)
+                                                except ProcessLookupError: pass
+                                        except: pass
                                 except: pass
                                 try: drv.quit()
                                 except: pass
@@ -7509,7 +7531,14 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 for _harg in headless_args():
                                     new_options.add_argument(_harg)
                                 ud_dir = os.path.join(tempfile.gettempdir(), f"uc_profile_rec_{random.randint(1000, 9999)}")
-                                driver = uc.Chrome(options=new_options, user_data_dir=ud_dir, version_main=detect_chrome_version_main())
+                                # Hold the creation lock: undetected_chromedriver patches the shared
+                                # chromedriver binary on first launch, and concurrent uc.Chrome() calls
+                                # (several threads recovering at once) race the patcher -> "Text file
+                                # busy" / "No such file or directory .../chromedriver-linux64/chromedriver"
+                                # -> binary corrupted for ALL threads -> cascading failure. The startup
+                                # init already locks; the recovery path must too.
+                                with browser_init_lock:
+                                    driver = uc.Chrome(options=new_options, user_data_dir=ud_dir, version_main=detect_chrome_version_main())
                                 driver.set_page_load_timeout(60)
                                 driver.set_script_timeout(30)
                                 try:
@@ -7569,12 +7598,27 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 if not driver_is_alive or usage_count >= 8:
                     reason = "Memory leak prevention (recycling after 8 courses)" if driver_is_alive else "Browser died/killed"
                     print(f"    -> Proactively restarting browser {worker_id}: {reason}.")
-                    # SYNCHRONOUS kill - old browser MUST be fully dead before new one starts
-                    import subprocess
+                    # SYNCHRONOUS kill - old browser MUST be fully dead before new one starts.
+                    # Cross-platform: taskkill on Windows, SIGKILL on Linux (CI). The old Windows-only
+                    # taskkill no-op'd on Linux and leaked Chrome/chromedriver processes -> OOM on long runs.
+                    import subprocess, os, signal
                     try:
                         pid = getattr(driver, 'browser_pid', None)
                         if pid:
-                            subprocess.run(f"taskkill /F /PID {pid} /T", shell=True, capture_output=True, timeout=5)
+                            if os.name == 'nt':
+                                subprocess.run(f"taskkill /F /PID {pid} /T", shell=True, capture_output=True, timeout=5)
+                            else:
+                                try: os.kill(pid, signal.SIGKILL)
+                                except ProcessLookupError: pass
+                    except: pass
+                    try:
+                        svc = getattr(driver, 'service', None)
+                        if svc and getattr(svc, 'process', None) and svc.process.poll() is None:
+                            if os.name == 'nt':
+                                subprocess.run(f"taskkill /F /PID {svc.process.pid} /T", shell=True, capture_output=True, timeout=5)
+                            else:
+                                try: os.kill(svc.process.pid, signal.SIGKILL)
+                                except ProcessLookupError: pass
                     except: pass
                     try: driver.quit()
                     except: pass
