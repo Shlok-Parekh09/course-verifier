@@ -3,6 +3,10 @@ name: Course Verify
 on:
   workflow_dispatch:
     inputs:
+      pdf:
+        description: 'PDF filename in repo to verify (basename only, e.g. link_compile_trimmed.pdf or 421-499.pdf)'
+        required: true
+        default: 'link_compile_trimmed.pdf'
       start_page:
         description: 'Start PDF page (original page numbering)'
         required: true
@@ -92,7 +96,7 @@ jobs:
           if [ -n "${{ inputs.start_idx }}" ]; then
             START_IDX_FLAG="--start-idx ${{ inputs.start_idx }}"
           fi
-          python run_verifier_pages.py link_compile_trimmed.pdf --pages ${{ inputs.start_page }} ${{ inputs.end_page }} --fresh --page-offset ${{ inputs.page_offset }} $START_IDX_FLAG --no-email
+          python run_verifier_pages.py ${{ inputs.pdf }} --pages ${{ inputs.start_page }} ${{ inputs.end_page }} --fresh --page-offset ${{ inputs.page_offset }} $START_IDX_FLAG --no-email
 
       - name: Upload PDF report
         if: always()
@@ -108,7 +112,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: verifier-checkpoint
-          path: autonomous_verified_link_compile_trimmed.pdf.json
+          path: autonomous_verified_${{ inputs.pdf }}.json
           retention-days: 30
           if-no-files-found: warn
 
