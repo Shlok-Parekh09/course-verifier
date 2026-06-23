@@ -8109,7 +8109,12 @@ if __name__ == "__main__":
         pdf_path = sys.argv[1].strip()
     else:
         if os.environ.get('CI') == 'true':
-            pdf_path = "1.pdf"
+            import glob
+            files = glob.glob("autonomous_verified_*.json")
+            if files:
+                pdf_path = files[0].replace("autonomous_verified_", "").replace(".json", "")
+            else:
+                pdf_path = "link_compile.pdf"
         else:
             pdf_path = input("Enter the PDF filename: ").strip()
 
