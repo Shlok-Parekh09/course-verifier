@@ -389,13 +389,14 @@ def load_courses():
             issue_sub = d.get('issue_sub_type', '')
             
             # --- DYNAMIC WEBSITE ISSUE HEURISTIC ---
-            desc_text = str(d.get('cost_description', '')) + " " + str(d.get('duration_description', '')) + " " + str(d.get('cost_verified', '')) + " " + str(d.get('duration_verified', ''))
+            desc_text = str(d.get('cost_description', '')) + " " + str(d.get('duration_description', '')) + " " + str(d.get('cost_verified', '')) + " " + str(d.get('duration_verified', '')) + " " + str(d.get('reason', ''))
             all_false = not any([
                 d.get('cost_match'), d.get('duration_match'), d.get('mode_match'),
                 d.get('lang_match'), d.get('country_match'), d.get('uni_match'),
                 d.get('sk_match')
             ])
-            if all_false and 'page load error' in desc_text.lower():
+            is_web_error = 'page load error' in desc_text.lower() or 'website unreachable' in desc_text.lower() or 'llm fallback' in desc_text.lower() or d.get('web_status') == 'FALSE' or str(d.get('web_status', '')).upper() == 'FALSE'
+            if all_false and is_web_error:
                 issue_cat = ISSUE_CATEGORY_WEBSITE
             
             # Derive status from issue_category if present, else fall back to old logic
