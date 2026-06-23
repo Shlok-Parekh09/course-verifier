@@ -5881,6 +5881,15 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             subprocess.run('wmic process where "name=\'chrome.exe\' and commandline like \'%chrome_profile%\'" call terminate', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except: pass
         
+        print(f"    -> Synchronously updating ChromeDriver to prevent thread collisions...")
+        try:
+            _t_opts = uc.ChromeOptions()
+            _t_opts.add_argument('--headless')
+            _t_drv = uc.Chrome(options=_t_opts, version_main=149 if os.environ.get('CI') == 'true' else None)
+            _t_drv.quit()
+        except Exception as e:
+            print(f"    -> Warning during pre-initialization: {e}")
+            
         print(f"    -> Initializing {NUM_BROWSERS} parallel Chrome browsers simultaneously...")
         browser_pool = queue.Queue()
         import threading
