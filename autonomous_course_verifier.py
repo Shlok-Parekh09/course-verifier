@@ -1,4 +1,18 @@
 import sys
+import os, subprocess, re
+
+def get_chrome_main_version():
+    try:
+        if sys.platform.startswith('win'):
+            out = subprocess.check_output(r'reg query "HKEY_CURRENT_USER\Software\Google\Chrome\BLBeacon" /v version', shell=True).decode()
+            match = re.search(r'version\s+REG_SZ\s+(\d+)\.', out)
+            if match: return int(match.group(1))
+        else:
+            out = subprocess.check_output(['google-chrome', '--version']).decode()
+            match = re.search(r'Chrome (\d+)\.', out)
+            if match: return int(match.group(1))
+    except: pass
+    return 149  # Fallback to 149 to avoid undetected_chromedriver v150 bug
 import json
 import time
 import os
@@ -5885,7 +5899,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         try:
             _t_opts = uc.ChromeOptions()
             _t_opts.add_argument('--headless')
-            _t_drv = uc.Chrome(options=_t_opts, version_main=149 if os.environ.get('CI') == 'true' else None)
+            _t_drv = uc.Chrome(options=_t_opts, version_main=get_chrome_main_version())
             _t_drv.quit()
         except Exception as e:
             print(f"    -> Warning during pre-initialization: {e}")
@@ -5926,7 +5940,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             
             with browser_init_lock:
                 try:
-                    driver = uc.Chrome(options=options, user_data_dir=fresh_profile, version_main=149 if os.environ.get('CI') == 'true' else None)
+                    driver = uc.Chrome(options=options, user_data_dir=fresh_profile, version_main=get_chrome_main_version())
                     try:
                         driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {"latitude": 28.6139, "longitude": 77.2090, "accuracy": 100})
                     except: pass
@@ -5944,7 +5958,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         try: shutil.rmtree(fresh_profile2)
                         except Exception: pass
                     os.makedirs(fresh_profile2, exist_ok=True)
-                    driver = uc.Chrome(options=options2, user_data_dir=fresh_profile2, version_main=149 if os.environ.get('CI') == 'true' else None)
+                    driver = uc.Chrome(options=options2, user_data_dir=fresh_profile2, version_main=get_chrome_main_version())
                     try:
                         driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {"latitude": 28.6139, "longitude": 77.2090, "accuracy": 100})
                     except: pass                    
@@ -7589,7 +7603,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 new_options.add_argument('--disable-blink-features=AutomationControlled')
                                 new_options.add_argument(f'--window-size=1280,800')
                                 ud_dir = os.path.join(tempfile.gettempdir(), f"uc_profile_rec_{random.randint(1000, 9999)}")
-                                driver = uc.Chrome(options=new_options, user_data_dir=ud_dir, version_main=149 if os.environ.get('CI') == 'true' else None)
+                                driver = uc.Chrome(options=new_options, user_data_dir=ud_dir, version_main=get_chrome_main_version())
                                 driver.set_page_load_timeout(60)
                                 driver.set_script_timeout(30)
                                 try:
