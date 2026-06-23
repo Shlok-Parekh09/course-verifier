@@ -7540,11 +7540,27 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     err_str = str(e)
                     clean_err = err_str.split('Stacktrace:')[0].strip()
                     
-                    if 'invalid session id' in err_str.lower() or 'disconnected:' in err_str.lower() or 'target closed' in err_str.lower() or 'session deleted' in err_str.lower():
-                        raise BrowserCrashRetryException(clean_err)
+                    if 'invalid session id' in err_str.lower() or 'disconnected:' in err_str.lower() or 'target closed' in err_str.lower() or 'session deleted' in err_str.lower() or 'connection refused' in err_str.lower() or 'max retries exceeded' in err_str.lower():
+                        # Before giving up on a crashed browser, try fetching raw HTML via cloudscraper as a last resort
+                        if 'page_text' not in locals() or len(page_text) < 500:
+                            try:
+                                import cloudscraper
+                                from bs4 import BeautifulSoup
+                                print(f"    -> [!] Browser connection died. Attempting raw HTML fallback via cloudscraper...")
+                                scraper = cloudscraper.create_scraper()
+                                resp = scraper.get(course.get('url'), timeout=15)
+                                if resp.status_code == 200:
+                                    soup = BeautifulSoup(resp.text, 'html.parser')
+                                    page_text = soup.get_text(separator=' ', strip=True)
+                                    print(f"    -> [!] Cloudscraper successfully extracted {len(page_text)} chars of text!")
+                            except Exception as fallback_e:
+                                print(f"    -> [!] Cloudscraper fallback also failed: {fallback_e}")
+                        
+                        if 'page_text' not in locals() or len(page_text) < 500:
+                            raise BrowserCrashRetryException(clean_err)
                     
                     if 'page_text' in locals() and len(page_text) > 500:
-                        print(f"    -> [!] Warning: Script crashed ({clean_err[:50]}), but {len(page_text)} chars of text were saved! Falling back to LLM...")
+                        print(f"    -> [!] Warning: Script crashed or was blocked, but {len(page_text)} chars of text were recovered! Falling back to LLM...")
                         c_m, s_m, l_skd, d_m, l_durd, m_m, l_modd, l_m, l_land, l_costd, co_m, l_countryd, u_m, l_unid = self._verify_details_with_llm(course, page_text, worker_id=worker_id)
                         
                         course['web_cost'] = l_costd if l_costd and l_costd != "Not Found" else "Tuition fees are subject to standard university policies."
