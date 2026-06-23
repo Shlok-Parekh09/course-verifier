@@ -16,4 +16,6 @@ Flask
 Werkzeug
 firebase-admin
 gunicorn
+pandas
+
 
