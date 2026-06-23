@@ -467,7 +467,8 @@ def load_courses():
 
     # APPLY HEURISTIC TO ALL LOADED COURSES (From Mongo or Local)
     for c in global_courses:
-        desc_text = str(c.get('cost_description', '')) + " " + str(c.get('duration_description', '')) + " " + str(c.get('cost_verified', '')) + " " + str(c.get('duration_verified', '')) + " " + str(c.get('reason', ''))
+        # Check both disc_reason and reason since they might be labeled differently depending on the source
+        desc_text = str(c.get('cost_description', '')) + " " + str(c.get('duration_description', '')) + " " + str(c.get('cost_verified', '')) + " " + str(c.get('duration_verified', '')) + " " + str(c.get('disc_reason', '')) + " " + str(c.get('reason', ''))
         
         has_page_error = 'page load error' in desc_text.lower() or 'website unreachable' in desc_text.lower() or 'llm fallback' in desc_text.lower()
         has_uni_match = c.get('uni_match') is not False
@@ -478,7 +479,14 @@ def load_courses():
             
         web_status = str(c.get('web_status', '')).upper()
         
-        if not has_uni_match or not has_name_match or has_page_error or (web_status == 'FALSE' and has_page_error):
+        # If it was natively flagged as Unverified in older runs, and has an error message, it's a website issue
+        is_unverified = c.get('status') == 'Unverified'
+        
+        if not has_uni_match or not has_name_match or has_page_error or (web_status == 'FALSE' and has_page_error) or (is_unverified and has_page_error):
+            c['issue_category'] = ISSUE_CATEGORY_WEBSITE
+            c['status'] = 'Error'
+        elif is_unverified and not c.get('issue_category'):
+            # Any remaining unverified that didn't explicitly match a page error but failed to load
             c['issue_category'] = ISSUE_CATEGORY_WEBSITE
             c['status'] = 'Error'
         else:
