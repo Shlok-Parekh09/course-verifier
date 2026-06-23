@@ -7729,16 +7729,12 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         course_idx = item[0]
                         course_name = item[1].get('name', '?') if isinstance(item, tuple) else '?'
                         try:
-                            idx, logs = future.result(timeout=480)  # 8-minute max per course
+                            idx, logs = future.result()  # Wait indefinitely to ensure accurate verification
                             try:
                                 original_stdout.write(logs)
                             except UnicodeEncodeError:
                                 original_stdout.write(logs.encode('ascii', 'replace').decode('ascii'))
                             original_stdout.flush()
-                        except TimeoutError:
-                            original_stdout.write(f"    -> [!] Course '{course_name}' timed out after 8 minutes. Skipping.\n")
-                            original_stdout.flush()
-                            future.cancel()
                         except BrowserCrashRetryException as e:
                             if retry_counts[course_idx] < 2:
                                 retry_counts[course_idx] += 1
