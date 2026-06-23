@@ -59,25 +59,13 @@ jobs:
         run: |
           xvfb-run --auto-servernum python autonomous_course_verifier.py
 
-      - name: Commit and Push Results (Checkpoint Failsafe)
-        if: always() # CRITICAL: This ensures your checkpoint saves even if the 6-hour limit is reached!
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add autonomous_verified_*.json || true
-          git add master_dashboard_results.json || true
-          git add CombinedWork.xlsx || true
-          git add fees.xlsx || true
-          git add rankings.db || true
-          git commit -m "chore: save cloud verification progress" || echo "No changes to commit"
-          git push
-
       - name: Upload Results as Zip
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: verification-results
           path: |
+            *.pdf
             autonomous_verified_*.json
             master_dashboard_results.json
             CombinedWork.xlsx
