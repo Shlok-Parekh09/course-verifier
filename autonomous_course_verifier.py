@@ -13,6 +13,24 @@ def get_chrome_main_version():
             if match: return int(match.group(1))
     except: pass
     return 149  # Fallback to 149 to avoid undetected_chromedriver v150 bug
+
+def kill_process_tree(pid):
+    try:
+        import psutil
+        try:
+            parent = psutil.Process(pid)
+            for child in parent.children(recursive=True):
+                child.kill()
+            parent.kill()
+        except: pass
+    except:
+        import sys, subprocess
+        try:
+            if sys.platform.startswith('win'):
+                subprocess.run(f"taskkill /F /PID {pid} /T", shell=True, capture_output=True)
+            else:
+                subprocess.run(f"kill -9 {pid}", shell=True, capture_output=True)
+        except: pass
 import json
 import time
 import os
@@ -5889,10 +5907,12 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         import subprocess
         print(f"    -> Cleaning up any orphaned browser processes from previous runs...")
         try:
-            # Kill any background chromedriver.exe instances
-            subprocess.run('taskkill /F /IM chromedriver.exe /T', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            # Kill ONLY chrome.exe instances that were started by our script (matching our profile directory)
-            subprocess.run('wmic process where "name=\'chrome.exe\' and commandline like \'%chrome_profile%\'" call terminate', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if sys.platform.startswith('win'):
+                subprocess.run('taskkill /F /IM chromedriver.exe /T', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run('wmic process where "name=\'chrome.exe\' and commandline like \'%chrome_profile%\'" call terminate', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                subprocess.run('pkill -9 -f "chromedriver"', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run('pkill -9 -f "chrome"', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except: pass
         
         print(f"    -> Synchronously updating ChromeDriver to prevent thread collisions...")
@@ -7590,7 +7610,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             def kill_drv(drv):
                                 import subprocess
                                 try:
-                                    if hasattr(drv, 'browser_pid'): subprocess.run(f"taskkill /F /PID {drv.browser_pid} /T", shell=True, capture_output=True)
+                                    if hasattr(drv, 'browser_pid'): kill_process_tree(drv.browser_pid)
                                 except: pass
                                 try: drv.quit()
                                 except: pass
@@ -7670,7 +7690,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     try:
                         pid = getattr(driver, 'browser_pid', None)
                         if pid:
-                            subprocess.run(f"taskkill /F /PID {pid} /T", shell=True, capture_output=True, timeout=5)
+                            kill_process_tree(pid)
                     except: pass
                     try: driver.quit()
                     except: pass
@@ -7769,7 +7789,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 def kill_drv(drv):
                     import subprocess
                     try:
-                        if hasattr(drv, 'browser_pid'): subprocess.run(f"taskkill /F /PID {drv.browser_pid} /T", shell=True, capture_output=True)
+                        if hasattr(drv, 'browser_pid'): kill_process_tree(drv.browser_pid)
                     except: pass
                     try: drv.quit()
                     except: pass
