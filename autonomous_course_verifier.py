@@ -5917,7 +5917,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             
             with browser_init_lock:
                 try:
-                    driver = uc.Chrome(options=options, user_data_dir=fresh_profile, version_main=148)
+                    driver = uc.Chrome(options=options, user_data_dir=fresh_profile, version_main=149 if os.environ.get('CI') == 'true' else None)
                     try:
                         driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {"latitude": 28.6139, "longitude": 77.2090, "accuracy": 100})
                     except: pass
@@ -5935,7 +5935,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         try: shutil.rmtree(fresh_profile2)
                         except Exception: pass
                     os.makedirs(fresh_profile2, exist_ok=True)
-                    driver = uc.Chrome(options=options2, user_data_dir=fresh_profile2, version_main=148)
+                    driver = uc.Chrome(options=options2, user_data_dir=fresh_profile2, version_main=149 if os.environ.get('CI') == 'true' else None)
                     try:
                         driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {"latitude": 28.6139, "longitude": 77.2090, "accuracy": 100})
                     except: pass                    
@@ -7580,7 +7580,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 new_options.add_argument('--disable-blink-features=AutomationControlled')
                                 new_options.add_argument(f'--window-size=1280,800')
                                 ud_dir = os.path.join(tempfile.gettempdir(), f"uc_profile_rec_{random.randint(1000, 9999)}")
-                                driver = uc.Chrome(options=new_options, user_data_dir=ud_dir)
+                                driver = uc.Chrome(options=new_options, user_data_dir=ud_dir, version_main=149 if os.environ.get('CI') == 'true' else None)
                                 driver.set_page_load_timeout(60)
                                 driver.set_script_timeout(30)
                                 try:

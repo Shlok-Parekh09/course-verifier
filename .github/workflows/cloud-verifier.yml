@@ -37,6 +37,8 @@ jobs:
 
       - name: Run Verification (Virtual Display)
         # Using xvfb-run to simulate a real monitor for undetected_chromedriver
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           xvfb-run --auto-servernum python autonomous_course_verifier.py
 
