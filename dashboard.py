@@ -73,6 +73,90 @@ def clean_country(country):
     country = country.replace('Country:', '').replace('(Online)', '').strip()
     return country if country else 'Unknown'
 
+# ── Per-attribute issue model (mirrors the modal table in app.js) ──────────────
+# An "issue" is any attribute row whose verified value does NOT match the PDF.
+# Users can tick individual attributes as Solved, or solve every open issue in a
+# course at once. A course with zero open issues becomes Verified.
+ATTRIBUTE_ROWS = [
+    ('Cost',        'cost_match'),
+    ('Duration',    'duration_match'),
+    ('Mode',        'mode_match'),
+    ('Language',    'lang_match'),
+    ('Country',     'country_match'),
+    ('University',  'uni_match'),
+    ('Skills',      'sk_match'),
+    ('QS Ranked',   'qs_match_expr'),
+    ('NIRF Ranked', 'nirf_match_expr'),
+    ('Free Box',    'free_match_expr'),
+]
+
+def _attr_is_match(c, key):
+    """Resolve a modal-table MATCH/FALSE flag for a course dict."""
+    if key == 'qs_match_expr':
+        return bool(c.get('qs_ranked', False)) or (not c.get('has_qs_badge', False))
+    if key == 'nirf_match_expr':
+        return bool(c.get('nirf_ranked', False)) or (not c.get('has_nirf_badge', False))
+    if key == 'free_match_expr':
+        has_free = bool(c.get('has_free_box', False))
+        web_cost = str(c.get('web_cost', '') or '').lower()
+        web_free = 'free' in web_cost
+        return has_free == web_free
+    return bool(c.get(key, False))
+
+def course_false_attrs(c):
+    """List of attribute names currently FALSE (i.e. open) for a course."""
+    return [name for name, key in ATTRIBUTE_ROWS if not _attr_is_match(c, key)]
+
+def course_open_issues(c):
+    """Number of unsolved issue-units a course contributes to the Open Issues KPI."""
+    cat = c.get('issue_category', '')
+    if c.get('status') == 'Verified' or cat == ISSUE_CATEGORY_VERIFIED:
+        return 0
+    if cat == ISSUE_CATEGORY_WEBSITE:
+        # A broken/inaccessible site is one unit, solved via the single Solved button.
+        return 1
+    if cat == ISSUE_CATEGORY_COURSE:
+        solved = set(c.get('solved_attrs', []) or [])
+        return sum(1 for a in course_false_attrs(c) if a not in solved)
+    return 0
+
+def recompute_course_status(c):
+    """Re-derive status/issue_category from solved_attrs after a per-attr change.
+    website_issue courses are left untouched here (handled by the _website action)."""
+    if c.get('issue_category') == ISSUE_CATEGORY_WEBSITE:
+        return
+    solved = set(c.get('solved_attrs', []) or [])
+    unsolved = [a for a in course_false_attrs(c) if a not in solved]
+    if not unsolved:
+        c['issue_category'] = ISSUE_CATEGORY_VERIFIED
+        c['issue_sub_type'] = ''
+        c['status'] = 'Verified'
+        c['disc_reason'] = ''
+    else:
+        c['issue_category'] = ISSUE_CATEGORY_COURSE
+        c['status'] = 'Discrepancy'
+
+def compute_stats():
+    """Shared stats block used by /api/data, save_courses data.json, and /solve."""
+    total = len(global_courses)
+    verified = sum(1 for c in global_courses if c.get('status') == 'Verified')
+    discrepancies = sum(1 for c in global_courses if c.get('status') == 'Discrepancy')
+    errors = sum(1 for c in global_courses if c.get('status') == 'Error')
+    unverified = sum(1 for c in global_courses if c.get('status') == 'Unverified')
+    website_issues = sum(1 for c in global_courses if c.get('issue_category') == ISSUE_CATEGORY_WEBSITE)
+    course_issues = sum(1 for c in global_courses if c.get('issue_category') == ISSUE_CATEGORY_COURSE)
+    open_issues = sum(course_open_issues(c) for c in global_courses)
+    return {
+        "total": total,
+        "verified": verified,
+        "discrepancies": discrepancies,
+        "errors": errors,
+        "unverified": unverified,
+        "website_issues": website_issues,
+        "course_issues": course_issues,
+        "open_issues": open_issues,
+    }
+
 def save_courses(updated_courses=None):
     """
     Save courses to all persistence layers
@@ -203,7 +287,8 @@ def save_courses(updated_courses=None):
                     "errors": errors,
                     "unverified": unverified,
                     "website_issues": website_issues,
-                    "course_issues": course_issues
+                    "course_issues": course_issues,
+                    "open_issues": sum(course_open_issues(c) for c in global_courses)
                 },
                 "website_sub_counts": website_sub_counts,
                 "course_sub_counts": course_sub_counts,
@@ -339,6 +424,7 @@ def load_courses():
                 "status": status,
                 "issue_category": issue_cat,
                 "issue_sub_type": issue_sub,
+                "solved_attrs": d.get('solved_attrs', []) or [],
                 "retry_count": d.get('retry_count', 0),
                 "error_screenshot_path": d.get('error_screenshot_path', ''),
                 "cost_match": d.get('cost_match', False),
@@ -449,7 +535,8 @@ def api_data():
             "errors": errors,
             "unverified": unverified,
             "website_issues": website_issues,
-            "course_issues": course_issues
+            "course_issues": course_issues,
+            "open_issues": sum(course_open_issues(c) for c in global_courses)
         },
         "website_sub_counts": website_sub_counts,
         "course_sub_counts": course_sub_counts,
@@ -492,6 +579,75 @@ def api_delete_course(course_id):
         return jsonify({"status": "success", "message": "Course deleted and IDs updated"})
     else:
         return jsonify({"status": "error", "message": "Course not found"}), 404
+
+@app.route("/api/course/<int:course_id>/solve", methods=["POST"])
+def api_solve_course(course_id):
+    """Mark one issue (or all issues) in a course as Solved.
+    Body: {"attr": "Cost" | "_all" | "_website", "unsolve": false}
+      - "Cost"/"Duration"/...  -> toggle that single attribute
+      - "_all"                  -> solve (or un-solve) every open FALSE attribute
+      - "_website"              -> solve (or un-solve) a broken-site (website_issue) course
+
+    Persists to Firestore + 1.json + public/api/data.json so every dashboard
+    client (multiple users) sees the change on its next 5s poll.
+    """
+    data = request.get_json(silent=True) or {}
+    attr = str(data.get('attr') or '').strip()
+    unsolve = bool(data.get('unsolve', False))
+
+    course = next((c for c in global_courses if c.get('id') == course_id), None)
+    if not course:
+        return jsonify({"status": "error", "message": "Course not found"}), 404
+
+    cat = course.get('issue_category', '')
+
+    # Broken-site courses are a single unit; no per-attribute rows exist.
+    if attr == '_website' or cat == ISSUE_CATEGORY_WEBSITE:
+        if unsolve:
+            course['issue_category'] = ISSUE_CATEGORY_WEBSITE
+            course['status'] = 'Error'
+        else:
+            course['issue_category'] = ISSUE_CATEGORY_VERIFIED
+            course['issue_sub_type'] = ''
+            course['status'] = 'Verified'
+            course['disc_reason'] = ''
+    elif attr == '_all':
+        false_attrs = course_false_attrs(course)
+        solved = set(course.get('solved_attrs', []) or [])
+        if unsolve:
+            solved -= set(false_attrs)
+        else:
+            solved |= set(false_attrs)
+        course['solved_attrs'] = sorted(solved)
+        recompute_course_status(course)
+    elif attr:
+        solved = set(course.get('solved_attrs', []) or [])
+        if unsolve:
+            solved.discard(attr)
+        else:
+            solved.add(attr)
+        course['solved_attrs'] = sorted(solved)
+        recompute_course_status(course)
+    else:
+        return jsonify({"status": "error", "message": "Missing 'attr'"}), 400
+
+    try:
+        save_courses([course])
+    except Exception as e:
+        print("[SOLVE] save error:", e)
+
+    return jsonify({
+        "status": "success",
+        "course": {
+            "id": course.get('id'),
+            "issue_category": course.get('issue_category', ''),
+            "issue_sub_type": course.get('issue_sub_type', ''),
+            "status": course.get('status', ''),
+            "disc_reason": course.get('disc_reason', ''),
+            "solved_attrs": course.get('solved_attrs', []),
+        },
+        "stats": compute_stats()
+    })
 
 import pandas as pd
 import os
