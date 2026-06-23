@@ -464,6 +464,21 @@ def index():
 def api_courses():
     return jsonify({"status": "success", "courses": global_courses})
 
+@app.route("/api/debug")
+def api_debug():
+    uri = os.environ.get('MONGO_URI')
+    masked_uri = "NOT_SET"
+    if uri:
+        masked_uri = uri[:15] + "..." + uri[-15:]
+    
+    return jsonify({
+        "has_mongo_uri": bool(uri),
+        "masked_uri": masked_uri,
+        "is_db_connected": db is not None,
+        "global_courses_length": len(global_courses),
+        "dnspython_installed": True
+    })
+
 @app.route("/api/data")
 @app.route("/api/data.json")
 def api_data():
