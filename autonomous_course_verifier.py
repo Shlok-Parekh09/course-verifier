@@ -8295,7 +8295,7 @@ if __name__ == "__main__":
         else:
             print(f"[*] Manually setting end index to {end_idx} (up to Page {end_page})")
 
-    if not resume and start_idx < len(agent.courses):
+    if start_idx < len(agent.courses):
         agent.extract_visuals_for_range(start_idx=start_idx, end_idx=end_idx)
 
     # Save to Excel before web verification just in case it crashes
@@ -8313,10 +8313,8 @@ if __name__ == "__main__":
     else:
         print("\n[*] All courses are already verified in the checkpoint.")
         
-    # For reporting and ranking after a resume, we should include the full scope of the resumed batch
-    # instead of just the tiny slice of what was left over (which might be 0 if completely finished).
-    report_start_idx = 0 if resume else start_idx
-    report_end_idx = len(agent.courses) if resume else end_idx
+    report_start_idx = start_idx
+    report_end_idx = end_idx
         
     print("\n[*] Verifying QS/NIRF rankings based on updated web extraction data...")
     agent.verify_rankings(start_idx=start_idx, end_idx=end_idx)
