@@ -20,6 +20,7 @@ let allCoursesData = [];
 let recentData = [];
 let currentPage = 1;
 let currentRecentPage = 1;
+let currentRecentFilter = null;
 const PAGE_SIZE = 100;
 const RECENT_PAGE_SIZE = 30;
 let lastDataHash = '';
@@ -65,6 +66,26 @@ function initTheme() {
             if (label) label.textContent = isLight ? 'Light' : 'Dark';
         });
     }
+
+    const btnDisc = document.getElementById('kpi-card-discrepancies');
+    if (btnDisc) {
+        btnDisc.addEventListener('click', () => {
+            currentRecentFilter = 'Discrepancy';
+            currentRecentPage = 1;
+            switchTab('tab-verification');
+            renderRecentPage();
+        });
+    }
+
+    const btnWeb = document.getElementById('kpi-card-website-issues');
+    if (btnWeb) {
+        btnWeb.addEventListener('click', () => {
+            currentRecentFilter = 'Error';
+            currentRecentPage = 1;
+            switchTab('tab-verification');
+            renderRecentPage();
+        });
+    }
 }
 
 // ================================================================
@@ -87,6 +108,11 @@ function initTabs() {
     document.querySelectorAll('#nav-tabs a').forEach(a => {
         a.addEventListener('click', e => {
             e.preventDefault();
+            if (a.getAttribute('data-target') === 'tab-verification') {
+                currentRecentFilter = null;
+                currentRecentPage = 1;
+                renderRecentPage();
+            }
             switchTab(a.getAttribute('data-target'));
         });
     });
@@ -351,22 +377,19 @@ function updateCards(stats) {
     document.getElementById('total-count').textContent = stats.total || 0;
     document.getElementById('verified-count').textContent = stats.verified || 0;
     document.getElementById('discrepancy-count').textContent = stats.discrepancies || 0;
-    document.getElementById('error-count').textContent = (stats.errors || 0) + (stats.unverified || 0);
-    document.getElementById('website-issue-count').textContent = stats.website_issues || 0;
-    document.getElementById('course-issue-count').textContent = stats.course_issues || 0;
-    const oic = document.getElementById('open-issue-count');
-    if (oic) oic.textContent = (stats.open_issues != null ? stats.open_issues : 0);
+    
+    const wCount = document.getElementById('website-issue-count');
+    if (wCount) wCount.textContent = stats.website_issues || 0;
 
     // Dynamic trend % labels
     const t = stats.total || 1;
     document.getElementById('kpi-verified-trend').textContent = `↑ ${Math.round((stats.verified || 0) / t * 100)}% match rate`;
     document.getElementById('kpi-disc-trend').textContent = `⚠ ${Math.round((stats.discrepancies || 0) / t * 100)}% flagged`;
-    document.getElementById('kpi-err-trend').textContent = `✕ ${Math.round(((stats.errors || 0) + (stats.unverified || 0)) / t * 100)}% failed`;
-    document.getElementById('kpi-webissue-trend').textContent = `🔗 ${Math.round((stats.website_issues || 0) / t * 100)}% site broken`;
-    document.getElementById('kpi-courseissue-trend').textContent = `📋 ${Math.round((stats.course_issues || 0) / t * 100)}% data mismatch`;
+    
+    const kpiWebTrend = document.getElementById('kpi-webissue-trend');
+    if (kpiWebTrend) kpiWebTrend.textContent = `🔗 ${Math.round((stats.website_issues || 0) / t * 100)}% site broken`;
+    
     document.getElementById('kpi-total-trend').textContent = `— ${t} records`;
-    const koi = document.getElementById('kpi-openissue-trend');
-    if (koi) koi.textContent = stats.open_issues ? `✓ ${stats.open_issues} open` : '✓ All clear';
 }
 
 function updatePieChart(stats) {
@@ -533,13 +556,19 @@ function updateRecentVerifications(recent) {
     renderRecentPage();
 }
 
+function getFilteredRecentData() {
+    if (!currentRecentFilter) return recentData;
+    return recentData.filter(c => c.status === currentRecentFilter);
+}
+
 function renderRecentPage() {
     const tbody = document.getElementById('recent-verifications-body');
     const info = document.getElementById('recent-page-info');
     if (!tbody) return;
-    const total = Math.ceil(recentData.length / RECENT_PAGE_SIZE) || 1;
+    const filteredData = getFilteredRecentData();
+    const total = Math.ceil(filteredData.length / RECENT_PAGE_SIZE) || 1;
     const start = (currentRecentPage - 1) * RECENT_PAGE_SIZE;
-    const slice = recentData.slice(start, start + RECENT_PAGE_SIZE);
+    const slice = filteredData.slice(start, start + RECENT_PAGE_SIZE);
     tbody.innerHTML = slice.length === 0
         ? '<tr><td colspan="5" style="text-align:center;">No verifications yet.</td></tr>'
         : slice.map(c => {
@@ -556,14 +585,19 @@ function renderRecentPage() {
                 <td>${c.pdf_page || '—'}</td>
             </tr>`;
         }).join('');
-    if (info) info.textContent = `Page ${currentRecentPage} of ${total} (${recentData.length})`;
+    if (info) {
+        let filterTxt = currentRecentFilter === 'Discrepancy' ? '(Discrepancies Only) ' : 
+                        currentRecentFilter === 'Error' ? '(Website Issues Only) ' : '';
+        info.textContent = `${filterTxt}Page ${currentRecentPage} of ${total} (${filteredData.length})`;
+    }
 }
 
 document.getElementById('recent-prev-page')?.addEventListener('click', () => {
     if (currentRecentPage > 1) { currentRecentPage--; renderRecentPage(); }
 });
 document.getElementById('recent-next-page')?.addEventListener('click', () => {
-    if (currentRecentPage < Math.ceil(recentData.length / RECENT_PAGE_SIZE)) { currentRecentPage++; renderRecentPage(); }
+    const filteredData = getFilteredRecentData();
+    if (currentRecentPage < Math.ceil(filteredData.length / RECENT_PAGE_SIZE)) { currentRecentPage++; renderRecentPage(); }
 });
 
 // ================================================================
@@ -582,9 +616,16 @@ async function loadAllCourses() {
         // --- DYNAMIC WEBSITE ISSUE HEURISTIC ---
         const applyHeuristic = (c) => {
             if (c.issue_category === 'verified') return;
-            const desc = (String(c.cost_description || '') + " " + String(c.duration_description || '') + " " + String(c.cost_verified || '') + " " + String(c.duration_verified || '')).toLowerCase();
-            const allFalse = !c.cost_match && !c.duration_match && !c.mode_match && !c.lang_match && !c.country_match && !c.uni_match && !c.sk_match;
-            if (allFalse && desc.includes('page load error')) {
+            const desc = (String(c.cost_description || '') + " " + String(c.duration_description || '') + " " + String(c.cost_verified || '') + " " + String(c.duration_verified || '') + " " + String(c.reason || '')).toLowerCase();
+            const isWebError = desc.includes('page load error') || desc.includes('website unreachable') || desc.includes('llm fallback') || String(c.web_status || '').toUpperCase() === 'FALSE';
+            
+            const hasUniMatch = c.uni_match !== false; // If undefined, assume true
+            let hasNameMatch = true;
+            if (c.matched_fields && !String(c.matched_fields).includes('Name')) {
+                hasNameMatch = false;
+            }
+
+            if (!hasUniMatch || !hasNameMatch || isWebError) {
                 c.issue_category = 'website_issue';
                 c.status = 'Error';
             }
@@ -644,9 +685,16 @@ async function showCourseModal(courseId, fallbackName, fallbackUni) {
             // --- DYNAMIC WEBSITE ISSUE HEURISTIC ---
             const applyHeuristic = (c) => {
                 if (c.issue_category === 'verified') return;
-                const desc = (String(c.cost_description || '') + " " + String(c.duration_description || '') + " " + String(c.cost_verified || '') + " " + String(c.duration_verified || '')).toLowerCase();
-                const allFalse = !c.cost_match && !c.duration_match && !c.mode_match && !c.lang_match && !c.country_match && !c.uni_match && !c.sk_match;
-                if (allFalse && desc.includes('page load error')) {
+                const desc = (String(c.cost_description || '') + " " + String(c.duration_description || '') + " " + String(c.cost_verified || '') + " " + String(c.duration_verified || '') + " " + String(c.reason || '')).toLowerCase();
+                const isWebError = desc.includes('page load error') || desc.includes('website unreachable') || desc.includes('llm fallback') || String(c.web_status || '').toUpperCase() === 'FALSE';
+                
+                const hasUniMatch = c.uni_match !== false;
+                let hasNameMatch = true;
+                if (c.matched_fields && !String(c.matched_fields).includes('Name')) {
+                    hasNameMatch = false;
+                }
+
+                if (!hasUniMatch || !hasNameMatch || isWebError) {
                     c.issue_category = 'website_issue';
                     c.status = 'Error';
                 }

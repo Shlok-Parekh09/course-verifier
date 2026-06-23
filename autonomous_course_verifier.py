@@ -7180,7 +7180,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             uni_match = uni_match or llm_uni_match
                         
                     # Final platform specific hardcodes
-                    if any(platform in str(driver.current_url).lower() or platform in url.lower() for platform in ['nptel', 'swayam', 'coursera', 'edx']):
+                    if any(platform in str(driver.current_url).lower() or platform in url.lower() for platform in ['nptel', 'swayam', 'coursera']):
                         mode_match = True
                         web_mode = "Online"
                         
@@ -8239,7 +8239,7 @@ if __name__ == "__main__":
 
     # Ask the user for an optional manual start page
     if os.environ.get('CI') == 'true':
-        manual_start = ""
+        manual_start = os.environ.get('START_PAGE', "")
     else:
         manual_start = input(f"\n[?] From which page number ({min_page}-{max_page}) do you want to start web verification? (Press Enter to use default/checkpoint): ").strip()
     if manual_start.isdigit():
@@ -8250,10 +8250,10 @@ if __name__ == "__main__":
                 manual_idx = i
                 break
         
-        # If resuming, we want the MAXIMUM of the checkpoint start and the manual start
-        if resume:
-            start_idx = max(start_idx, manual_idx)
-        else:
+        # If a manual start was provided, ALWAYS honor it (even if resuming from a checkpoint)
+        if manual_idx != len(agent.courses):
+            if resume and start_idx != manual_idx:
+                print(f"[*] Overriding checkpoint start ({start_idx}) with manual start index ({manual_idx})")
             start_idx = manual_idx
         print(f"[*] Set start index to {start_idx} (from Page {start_page} / checkpoint)")
 
@@ -8261,7 +8261,7 @@ if __name__ == "__main__":
     min_page = min((c.get('page_num', 1) for c in agent.courses), default=1)
     max_page = max((c.get('page_num', 1) for c in agent.courses), default=1)
     if os.environ.get('CI') == 'true':
-        manual_end = ""
+        manual_end = os.environ.get('END_PAGE', "")
     else:
         manual_end = input(f"\n[?] Up to which page number ({min_page}-{max_page}) do you want to run web verification? (Press Enter for all remaining): ").strip()
     if manual_end.isdigit():
@@ -8304,7 +8304,7 @@ if __name__ == "__main__":
     agent.verify_rankings(start_idx=start_idx, end_idx=end_idx)
 
     if os.environ.get('CI') == 'true':
-        pdf_name = "Autonomous_Course_Verification_Report"
+        pdf_name = os.environ.get('PDF_NAME', "Autonomous_Course_Verification_Report")
     else:
         pdf_name = input("\n[?] Enter the name for the final PDF report (without .pdf, press Enter for default): ").strip()
     if not pdf_name:

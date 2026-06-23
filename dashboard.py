@@ -333,6 +333,7 @@ def load_courses():
     global global_courses
     global_courses.clear()
     
+    loaded_from_mongo = False
     if db is not None:
         try:
             print("Loading courses from MongoDB...")
@@ -341,13 +342,13 @@ def load_courses():
                 global_courses.extend(docs)
                 global_courses.sort(key=lambda x: int(x.get('id', 0)))
                 print(f"Loaded {len(global_courses)} courses from MongoDB.")
-                return
+                loaded_from_mongo = True
         except Exception as e:
             print(f"Error loading from MongoDB, falling back to local files: {e}")
     
     loaded_raw = False
     
-    if os.path.exists(PERSISTENT_FILE):
+    if not loaded_from_mongo and os.path.exists(PERSISTENT_FILE):
         try:
             with open(PERSISTENT_FILE, "r", encoding="utf-8") as f:
                 raw_data = json.load(f)
@@ -356,7 +357,7 @@ def load_courses():
         except Exception as e:
             print("Error loading 1.json, falling back to base JSON:", e)
             
-    if not loaded_raw:
+    if not loaded_from_mongo and not loaded_raw:
         # Fallback to original JSON files if 1.json doesn't exist
         for jf in JSON_FILES:
             if os.path.exists(jf):
@@ -390,14 +391,25 @@ def load_courses():
             
             # --- DYNAMIC WEBSITE ISSUE HEURISTIC ---
             desc_text = str(d.get('cost_description', '')) + " " + str(d.get('duration_description', '')) + " " + str(d.get('cost_verified', '')) + " " + str(d.get('duration_verified', '')) + " " + str(d.get('reason', ''))
-            all_false = not any([
-                d.get('cost_match'), d.get('duration_match'), d.get('mode_match'),
-                d.get('lang_match'), d.get('country_match'), d.get('uni_match'),
-                d.get('sk_match')
-            ])
-            is_web_error = 'page load error' in desc_text.lower() or 'website unreachable' in desc_text.lower() or 'llm fallback' in desc_text.lower() or d.get('web_status') == 'FALSE' or str(d.get('web_status', '')).upper() == 'FALSE'
-            if all_false and is_web_error:
+            
+            # Explicit network/page load errors
+            has_page_error = 'page load error' in desc_text.lower() or 'website unreachable' in desc_text.lower() or 'llm fallback' in desc_text.lower()
+            
+            # If the course lacks a university match or a name match, it is immediately a website issue.
+            has_uni_match = d.get('uni_match', False)
+            
+            # Some old records might not have 'name_match', so we check 'matched_fields' if available
+            matched_fields_str = str(d.get('matched_fields', '[]'))
+            has_name_match = True
+            if 'matched_fields' in d and 'Name' not in matched_fields_str:
+                has_name_match = False
+                
+            web_status = str(d.get('web_status', '')).upper()
+            
+            if not has_uni_match or not has_name_match or has_page_error or (web_status == 'FALSE' and has_page_error):
                 issue_cat = ISSUE_CATEGORY_WEBSITE
+                # Make sure the status is mapped to Error
+                status = 'Error'
             
             # Derive status from issue_category if present, else fall back to old logic
             if issue_cat == ISSUE_CATEGORY_VERIFIED:
@@ -452,6 +464,32 @@ def load_courses():
             global_courses.append(course)
             
         print(f"Loaded {len(global_courses)} courses locally.")
+
+    # APPLY HEURISTIC TO ALL LOADED COURSES (From Mongo or Local)
+    for c in global_courses:
+        desc_text = str(c.get('cost_description', '')) + " " + str(c.get('duration_description', '')) + " " + str(c.get('cost_verified', '')) + " " + str(c.get('duration_verified', '')) + " " + str(c.get('reason', ''))
+        
+        has_page_error = 'page load error' in desc_text.lower() or 'website unreachable' in desc_text.lower() or 'llm fallback' in desc_text.lower()
+        has_uni_match = c.get('uni_match') is not False
+        matched_fields_str = str(c.get('matched_fields', '[]'))
+        has_name_match = True
+        if 'matched_fields' in c and 'Name' not in matched_fields_str:
+            has_name_match = False
+            
+        web_status = str(c.get('web_status', '')).upper()
+        
+        if not has_uni_match or not has_name_match or has_page_error or (web_status == 'FALSE' and has_page_error):
+            c['issue_category'] = ISSUE_CATEGORY_WEBSITE
+            c['status'] = 'Error'
+        else:
+            # Sync status with issue_category for existing records
+            issue_cat = c.get('issue_category', '')
+            if issue_cat == ISSUE_CATEGORY_VERIFIED:
+                c['status'] = 'Verified'
+            elif issue_cat == ISSUE_CATEGORY_WEBSITE:
+                c['status'] = 'Error'
+            elif issue_cat == ISSUE_CATEGORY_COURSE:
+                c['status'] = 'Discrepancy'
 
 # Load immediately
 load_courses()
