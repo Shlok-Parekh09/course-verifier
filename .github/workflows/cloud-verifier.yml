@@ -2,6 +2,15 @@ name: Cloud Course Verifier
 
 on:
   workflow_dispatch: # Allows manual trigger from GitHub UI
+    inputs:
+      start_page:
+        description: 'Start Page Number (Leave blank to resume from checkpoint)'
+        required: false
+        default: ''
+      end_page:
+        description: 'End Page Number (Leave blank for all remaining)'
+        required: false
+        default: ''
 
 jobs:
   verify:
@@ -14,6 +23,12 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
+
+      - name: Load All API Keys
+        env:
+          ENV_FILE: ${{ secrets.ENV_FILE }}
+        run: |
+          echo "$ENV_FILE" > .env
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -39,6 +54,8 @@ jobs:
         # Using xvfb-run to simulate a real monitor for undetected_chromedriver
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          START_PAGE: ${{ github.event.inputs.start_page }}
+          END_PAGE: ${{ github.event.inputs.end_page }}
         run: |
           xvfb-run --auto-servernum python autonomous_course_verifier.py
 
@@ -51,5 +68,18 @@ jobs:
           git add master_dashboard_results.json || true
           git add CombinedWork.xlsx || true
           git add fees.xlsx || true
+          git add rankings.db || true
           git commit -m "chore: save cloud verification progress" || echo "No changes to commit"
           git push
+
+      - name: Upload Results as Zip
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-results
+          path: |
+            autonomous_verified_*.json
+            master_dashboard_results.json
+            CombinedWork.xlsx
+            fees.xlsx
+            rankings.db
