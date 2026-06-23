@@ -36,3 +36,6 @@ skills-lock.json
 # ── Misc ──────────────────────────────────────────────────────────────────────
 .gcloudignore
 
+
+# MongoDB Connection
+mongo_uri.txt

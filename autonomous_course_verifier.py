@@ -7292,6 +7292,12 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         mode_match = mode_equiv if mode_equiv is not None else False
                         print(f"    -> [Heuristic] Platform '{clean_url.split('/')[0]}' automatically confirmed as Online Mode. Match is now {mode_match}")
                         
+                    if 'edx.org' in clean_url and 'audit course' in page_text.lower():
+                        web_cost = "Free to Audit"
+                        cost_match = 'free' in str(course.get('cost', '')).lower() or course.get('has_free_box', False)
+                        l_costd = web_cost
+                        print(f"    -> [Heuristic] edX course with 'Audit Course' detected on page. Forcing cost to Free to Audit.")
+                        
                     if course_uni_check:
                         words = [w for w in re.split(r'\W+', course_uni_check.lower()) if len(w) > 4 and w not in ['university', 'institute', 'technology', 'science', 'national', 'state', 'college', 'open']]
                         acronym = "".join([w[0] for w in course_uni_check.lower().split() if w.isalpha()])
@@ -7976,6 +7982,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             
             is_coursera = 'coursera.org' in str(course.get('url', '')).lower() or 'coursera.org' in str(course.get('web_url', '')).lower()
             is_swayam_nptel = 'swayam' in str(course.get('url', '')).lower() or 'nptel' in str(course.get('url', '')).lower()
+            is_edx = 'edx.org' in str(course.get('url', '')).lower() or 'edx.org' in str(course.get('web_url', '')).lower()
             
             if is_coursera:
                 web_is_free = False
@@ -7983,6 +7990,9 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             elif is_swayam_nptel:
                 web_is_free = True
                 free_web_val = "Free to Audit (Certificate Rs. 1000)"
+            elif is_edx and 'audit' in web_cost_lower:
+                web_is_free = True
+                free_web_val = "Free to Audit"
             elif web_is_free:
                 free_web_val = "Free"
             else:
@@ -7995,7 +8005,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             draw_row('Free Box', free_pdf_val, safe_val(free_web_val), free_status if not is_hard_error else 'FALSE')
             
             has_scholarship = course.get('has_scholarship_box', False)
-            is_edx = 'edx.org' in str(course.get('url', '')).lower()
+            has_scholarship = course.get('has_scholarship_box', False)
             is_nptel = 'nptel.ac.in' in str(course.get('url', '')).lower() or 'onlinecourses.nptel.ac.in' in str(course.get('url', '')).lower()
             is_swayam = 'swayam2.ac.in' in str(course.get('url', '')).lower() or 'onlinecourses.swayam2.ac.in' in str(course.get('url', '')).lower()
             is_india = str(course.get('country', '')).lower() in ['india', 'in', 'ind', 'bharat']

@@ -4,8 +4,8 @@ import re
 import fitz
 import pdfplumber
 import tempfile
-import firebase_admin
-from firebase_admin import credentials, firestore
+import pymongo
+from pymongo import MongoClient, UpdateOne
 from flask import Flask, render_template, jsonify, request
 from werkzeug.utils import secure_filename
 
@@ -30,29 +30,25 @@ ISSUE_CATEGORY_VERIFIED = "verified"
 
 # Initialize Firebase
 import os
+
+db_client = None
 db = None
 try:
-    if os.path.exists('serviceAccountKey.json'):
-        cred = credentials.Certificate('serviceAccountKey.json')
-        if not firebase_admin._apps:
-            firebase_admin.initialize_app(cred)
-        db = firestore.client()
-        print("Connected to Firestore (Local)")
-    elif os.environ.get('FIREBASE_SERVICE_ACCOUNT_KEY'):
-        import json
-        key_dict = json.loads(os.environ.get('FIREBASE_SERVICE_ACCOUNT_KEY'))
-        cred = credentials.Certificate(key_dict)
-        if not firebase_admin._apps:
-            firebase_admin.initialize_app(cred)
-        db = firestore.client()
-        print("Connected to Firestore (Render/Env Var)")
+    mongo_uri = os.environ.get('MONGO_URI')
+    if not mongo_uri and os.path.exists('mongo_uri.txt'):
+        with open('mongo_uri.txt', 'r') as f:
+            mongo_uri = f.read().strip()
+            
+    if mongo_uri:
+        db_client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
+        db_client.admin.command('ping')
+        db = db_client['course_verifier']
+        print("Connected to MongoDB Atlas")
     else:
-        if not firebase_admin._apps:
-            firebase_admin.initialize_app()
-        db = firestore.client()
-        print("Connected to Firestore (Cloud Run / ADC)")
+        print("No MONGO_URI found. Create 'mongo_uri.txt' with your connection string.")
 except Exception as e:
-    print("Firestore initialization failed:", e)
+    print("MongoDB initialization failed:", e)
+    db = None
 JSON_FILES = ["autonomous_verified_link_compile.pdf.json", "autonomous_verified_link_compile.pdf..json"]
 PERSISTENT_FILE = "1.json"
 global_courses = []
@@ -194,37 +190,22 @@ def save_courses(updated_courses=None):
             print(f"[SAVE] ✗ Error saving to local file: {e}")
             # Do not raise in Cloud Run environment to avoid breaking the API response
             pass
-        # 2. Update Firestore - SAVE ALL COURSES, not just updated_courses
-        if db:
+        # 2. Update MongoDB - SAVE SPECIFIC COURSES
+        if db is not None:
             try:
-                # Determine which courses to save
-                courses_to_save = updated_courses if updated_courses else global_courses
-                
-                # Use batched writes for efficiency (max 500 per batch in Firestore)
-                batch = db.batch()
-                batch_count = 0
-                
-                for c in courses_to_save:
-                    doc_ref = db.collection('courses').document(str(c['id']))
-                    batch.set(doc_ref, c, merge=True)  # merge=True to update existing fields
-                    batch_count += 1
+                courses_to_save = updated_courses if updated_courses is not None else global_courses
+                if courses_to_save:
+                    operations = []
+                    for c in courses_to_save:
+                        operations.append(UpdateOne({'id': str(c.get('id'))}, {'$set': c}, upsert=True))
                     
-                    # Commit every 500 operations (Firestore limit)
-                    if batch_count >= 500:
-                        batch.commit()
-                        print(f"[SAVE] Committed batch of {batch_count} courses to Firestore")
-                        batch = db.batch()
-                        batch_count = 0
-                
-                # Commit remaining items
-                if batch_count > 0:
-                    batch.commit()
-                    print(f"[SAVE] ✓ Saved {len(courses_to_save)} courses to Firestore")
+                    if operations:
+                        db.courses.bulk_write(operations)
+                        print(f"[SAVE] ✓ Saved {len(operations)} courses to MongoDB")
             except Exception as e:
-                print(f"[SAVE] ✗ Error saving to Firestore: {e}")
-                # Don't raise - Firestore failure shouldn't block local saves
+                print(f"[SAVE] ✗ Error saving to MongoDB: {e}")
         else:
-            print("[SAVE] ⚠ Firestore not available, skipping cloud sync")
+            print("[SAVE] ⚠ MongoDB not available, skipping cloud sync")
             
         # 3. EXPORT STATIC JSON FOR PUBLIC HOSTING
         try:
@@ -352,19 +333,17 @@ def load_courses():
     global global_courses
     global_courses.clear()
     
-    if db:
+    if db is not None:
         try:
-            print("Loading courses from Firestore...")
-            docs = db.collection('courses').stream()
-            for doc in docs:
-                global_courses.append(doc.to_dict())
-            
-            # Sort by ID to ensure sequence is maintained
-            global_courses.sort(key=lambda x: int(x.get('id', 0)))
-            print(f"Loaded {len(global_courses)} courses from Firestore.")
-            return
+            print("Loading courses from MongoDB...")
+            docs = list(db.courses.find({}, {'_id': 0}))
+            if docs:
+                global_courses.extend(docs)
+                global_courses.sort(key=lambda x: int(x.get('id', 0)))
+                print(f"Loaded {len(global_courses)} courses from MongoDB.")
+                return
         except Exception as e:
-            print("Error loading from Firestore, falling back to local files:", e)
+            print(f"Error loading from MongoDB, falling back to local files: {e}")
     
     loaded_raw = False
     
@@ -471,7 +450,7 @@ def load_courses():
             }
             global_courses.append(course)
             
-        save_courses()
+        print(f"Loaded {len(global_courses)} courses locally.")
 
 # Load immediately
 load_courses()
@@ -600,11 +579,11 @@ def delete_course(course_id):
         save_courses(global_courses)
         
         # Delete the extra document at the end since size decreased by 1
-        if db:
+        if db is not None:
             try:
-                db.collection('courses').document(str(len(global_courses) + 1)).delete()
+                db.courses.delete_one({'id': str(len(global_courses) + 1)})
             except Exception as e:
-                print("Error deleting document from Firestore:", e)
+                print("Error deleting document from MongoDB:", e)
             
         return jsonify({"status": "success", "message": "Course deleted and IDs updated"})
     else:
@@ -626,7 +605,7 @@ def solve_course_issue(course_id):
     attr = str(data.get('attr') or '').strip()
     unsolve = bool(data.get('unsolve', False))
 
-    course = next((c for c in global_courses if c.get('id') == course_id), None)
+    course = next((c for c in global_courses if str(c.get('id')) == str(course_id)), None)
     if not course:
         return jsonify({"status": "error", "message": "Course not found"}), 404
 

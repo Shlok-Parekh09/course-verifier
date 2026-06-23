@@ -4,17 +4,25 @@
 
 'use strict';
 
+// IMPORTANT: Replace the URL below with your actual Render URL after deploying!
+// e.g., 'https://your-app-name.onrender.com'
+const isLocalEnv = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+let API_BASE_URL = isLocalEnv ? '' : 'https://course-verifier-api.onrender.com';
+if (API_BASE_URL.endsWith('/')) {
+    API_BASE_URL = API_BASE_URL.slice(0, -1);
+}
+
 // ── State ────────────────────────────────────────────────────────
-let globalData       = null;
-let currentFilter    = { type: null, value: null };
-let countryDataList  = [];
-let allCoursesData   = [];
-let recentData       = [];
-let currentPage      = 1;
+let globalData = null;
+let currentFilter = { type: null, value: null };
+let countryDataList = [];
+let allCoursesData = [];
+let recentData = [];
+let currentPage = 1;
 let currentRecentPage = 1;
-const PAGE_SIZE       = 100;
+const PAGE_SIZE = 100;
 const RECENT_PAGE_SIZE = 30;
-let lastDataHash     = '';
+let lastDataHash = '';
 
 let statusChart, barChart, mapChart, lineChart;
 let authorDomainChart, authorAccuracyChart;
@@ -43,8 +51,8 @@ function getFlag(name) {
 // ================================================================
 function initTheme() {
     const toggle = document.getElementById('theme-toggle');
-    const label  = document.getElementById('theme-label');
-    const saved  = localStorage.getItem('cvTheme') || 'dark';
+    const label = document.getElementById('theme-label');
+    const saved = localStorage.getItem('cvTheme') || 'dark';
     if (saved === 'light') {
         document.body.classList.add('light-mode');
         if (label) label.textContent = 'Light';
@@ -88,9 +96,9 @@ function initTabs() {
 //  CHARTS INIT
 // ================================================================
 function initCharts() {
-    Chart.defaults.color          = '#9499b0';
-    Chart.defaults.borderColor    = 'rgba(255,255,255,0.06)';
-    Chart.defaults.font.family    = "'Inter', sans-serif";
+    Chart.defaults.color = '#9499b0';
+    Chart.defaults.borderColor = 'rgba(255,255,255,0.06)';
+    Chart.defaults.font.family = "'Inter', sans-serif";
 
     // 1. Country Line Chart
     const lCtx = document.getElementById('countryLineChart')?.getContext('2d');
@@ -221,14 +229,17 @@ function initCharts() {
                     responsive: true, maintainAspectRatio: false,
                     showOutline: false, showGraticule: false,
                     layout: { padding: 0 },
-                    plugins: { legend: { display: false },
-                        tooltip: { callbacks: {
-                            label: ctx => {
-                                const name  = ctx.raw?.feature?.properties?.name || ctx.label || 'Unknown';
-                                const count = ctx.raw?.feature?._realCount ?? 0;
-                                return `${name}: ${Math.round(count)} courses`;
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => {
+                                    const name = ctx.raw?.feature?.properties?.name || ctx.label || 'Unknown';
+                                    const count = ctx.raw?.feature?._realCount ?? 0;
+                                    return `${name}: ${Math.round(count)} courses`;
+                                }
                             }
-                        }}
+                        }
                     },
                     scales: {
                         projection: { axis: 'x', projection: 'equirectangular' },
@@ -259,7 +270,7 @@ function initCharts() {
                 }
             });
             if (globalData) updateMapChart(globalData.country_counts);
-        }).catch(() => {});
+        }).catch(() => { });
     }
 
     // ── Bar pill toggle ──────────────────────────────────────────
@@ -281,7 +292,7 @@ function initAuthorCharts(domainData, stats) {
     const dCtx = document.getElementById('authorDomainChart')?.getContext('2d');
     if (dCtx) {
         if (authorDomainChart) authorDomainChart.destroy();
-        const entries = Object.entries(domainData).sort((a,b) => b[1]-a[1]).slice(0, 8);
+        const entries = Object.entries(domainData).sort((a, b) => b[1] - a[1]).slice(0, 8);
         authorDomainChart = new Chart(dCtx, {
             type: 'bar',
             data: {
@@ -290,8 +301,8 @@ function initAuthorCharts(domainData, stats) {
                     label: 'Courses',
                     data: entries.map(e => e[1]),
                     backgroundColor: [
-                        '#f46a22','#c084fc','#1dda9f','#6eb4ff',
-                        '#f5a623','#f16b6b','#60a5fa','#34d399'
+                        '#f46a22', '#c084fc', '#1dda9f', '#6eb4ff',
+                        '#f5a623', '#f16b6b', '#60a5fa', '#34d399'
                     ],
                     borderRadius: 6
                 }]
@@ -316,7 +327,7 @@ function initAuthorCharts(domainData, stats) {
             data: {
                 labels: ['Matched', 'Discrepancy', 'Error'],
                 datasets: [{
-                    data: [stats.verified || 0, stats.discrepancies || 0, (stats.errors||0)+(stats.unverified||0)],
+                    data: [stats.verified || 0, stats.discrepancies || 0, (stats.errors || 0) + (stats.unverified || 0)],
                     backgroundColor: ['#1dda9f', '#f5a623', '#f16b6b'],
                     borderWidth: 0,
                     hoverOffset: 6
@@ -337,23 +348,23 @@ function initAuthorCharts(domainData, stats) {
 //  DATA UPDATES
 // ================================================================
 function updateCards(stats) {
-    document.getElementById('total-count').textContent        = stats.total || 0;
-    document.getElementById('verified-count').textContent     = stats.verified || 0;
-    document.getElementById('discrepancy-count').textContent  = stats.discrepancies || 0;
-    document.getElementById('error-count').textContent        = (stats.errors || 0) + (stats.unverified || 0);
+    document.getElementById('total-count').textContent = stats.total || 0;
+    document.getElementById('verified-count').textContent = stats.verified || 0;
+    document.getElementById('discrepancy-count').textContent = stats.discrepancies || 0;
+    document.getElementById('error-count').textContent = (stats.errors || 0) + (stats.unverified || 0);
     document.getElementById('website-issue-count').textContent = stats.website_issues || 0;
-    document.getElementById('course-issue-count').textContent  = stats.course_issues || 0;
+    document.getElementById('course-issue-count').textContent = stats.course_issues || 0;
     const oic = document.getElementById('open-issue-count');
     if (oic) oic.textContent = (stats.open_issues != null ? stats.open_issues : 0);
 
     // Dynamic trend % labels
     const t = stats.total || 1;
-    document.getElementById('kpi-verified-trend').textContent  = `↑ ${Math.round((stats.verified||0)/t*100)}% match rate`;
-    document.getElementById('kpi-disc-trend').textContent      = `⚠ ${Math.round((stats.discrepancies||0)/t*100)}% flagged`;
-    document.getElementById('kpi-err-trend').textContent       = `✕ ${Math.round(((stats.errors||0)+(stats.unverified||0))/t*100)}% failed`;
-    document.getElementById('kpi-webissue-trend').textContent  = `🔗 ${Math.round((stats.website_issues||0)/t*100)}% site broken`;
-    document.getElementById('kpi-courseissue-trend').textContent = `📋 ${Math.round((stats.course_issues||0)/t*100)}% data mismatch`;
-    document.getElementById('kpi-total-trend').textContent     = `— ${t} records`;
+    document.getElementById('kpi-verified-trend').textContent = `↑ ${Math.round((stats.verified || 0) / t * 100)}% match rate`;
+    document.getElementById('kpi-disc-trend').textContent = `⚠ ${Math.round((stats.discrepancies || 0) / t * 100)}% flagged`;
+    document.getElementById('kpi-err-trend').textContent = `✕ ${Math.round(((stats.errors || 0) + (stats.unverified || 0)) / t * 100)}% failed`;
+    document.getElementById('kpi-webissue-trend').textContent = `🔗 ${Math.round((stats.website_issues || 0) / t * 100)}% site broken`;
+    document.getElementById('kpi-courseissue-trend').textContent = `📋 ${Math.round((stats.course_issues || 0) / t * 100)}% data mismatch`;
+    document.getElementById('kpi-total-trend').textContent = `— ${t} records`;
     const koi = document.getElementById('kpi-openissue-trend');
     if (koi) koi.textContent = stats.open_issues ? `✓ ${stats.open_issues} open` : '✓ All clear';
 }
@@ -377,10 +388,10 @@ function updateIssuePieChart(stats) {
 function updateBarChart() {
     if (!barChart || !globalData) return;
     const src = barMode === 'domain' ? globalData.domain_counts : globalData.country_counts;
-    let entries = Object.entries(src || {}).sort((a,b) => b[1]-a[1]);
+    let entries = Object.entries(src || {}).sort((a, b) => b[1] - a[1]);
     if (barMode === 'country') entries = entries.slice(0, 12);
-    barChart.data.labels                = entries.map(e => e[0]);
-    barChart.data.datasets[0].data      = entries.map(e => e[1]);
+    barChart.data.labels = entries.map(e => e[0]);
+    barChart.data.datasets[0].data = entries.map(e => e[1]);
     barChart.update();
 }
 
@@ -389,21 +400,21 @@ function isValidCountry(k) {
     if (!k) return false;
     const s = String(k).trim().toLowerCase();
     return s !== '' &&
-           s !== 'undefined' &&
-           s !== 'unknown' &&
-           s !== 'null' &&
-           !s.startsWith('not found');
+        s !== 'undefined' &&
+        s !== 'unknown' &&
+        s !== 'null' &&
+        !s.startsWith('not found');
 }
 
 function updateLineChart(countryCounts) {
     if (!lineChart) return;
     const sorted = Object.entries(countryCounts || {})
         .filter(([k]) => isValidCountry(k))
-        .sort((a,b) => b[1]-a[1])
+        .sort((a, b) => b[1] - a[1])
         .slice(0, 20);
     countryDataList = sorted;
-    lineChart.data.labels               = sorted.map(x => x[0]);
-    lineChart.data.datasets[0].data     = sorted.map(x => x[1]);
+    lineChart.data.labels = sorted.map(x => x[0]);
+    lineChart.data.datasets[0].data = sorted.map(x => x[1]);
     lineChart.update();
 }
 
@@ -442,14 +453,14 @@ function updateCountryLeaderboard(countryCounts, containerId = 'country-list') {
     if (!el) return;
     const entries = Object.entries(countryCounts || {})
         .filter(([k]) => isValidCountry(k))
-        .sort((a,b) => b[1]-a[1])
+        .sort((a, b) => b[1] - a[1])
         .slice(0, 15);
     const max = entries[0]?.[1] || 1;
     el.innerHTML = entries.map(([name, cnt]) => `
-        <div class="country-row" onclick="applyFilter('country','${name.replace(/'/g,"\\'")}')">
+        <div class="country-row" onclick="applyFilter('country','${name.replace(/'/g, "\\'")}')">
             <span class="c-flag">${getFlag(name)}</span>
             <span class="c-name">${name}</span>
-            <div class="c-bar-wrap"><div class="c-bar" style="width:${Math.round(cnt/max*100)}%"></div></div>
+            <div class="c-bar-wrap"><div class="c-bar" style="width:${Math.round(cnt / max * 100)}%"></div></div>
             <span class="c-count">${cnt}</span>
         </div>
     `).join('');
@@ -476,17 +487,17 @@ function renderFilteredTable(type, value) {
     const tbody = document.getElementById('course-details-body');
     if (!tbody || !globalData?.recent) return;
     const filtered = globalData.recent.filter(c =>
-        type === 'domain'  ? c.domain  === value :
-        type === 'country' ? c.country === value : true
+        type === 'domain' ? c.domain === value :
+            type === 'country' ? c.country === value : true
     );
     tbody.innerHTML = filtered.length === 0
         ? '<tr><td colspan="5" style="text-align:center;">No courses found</td></tr>'
         : filtered.map(c => `
-            <tr onclick="showCourseModal('${c.id || ''}', '${escHtml(c.name)}', '${escHtml(c.university || '')}')">
+            <tr onclick="showCourseModal('${c.id || ''}', '${escJs(c.name)}', '${escJs(c.university || '')}')">
                 <td><strong>${escHtml(c.name)}</strong></td>
                 <td>${escHtml(c.university || '—')}</td>
                 <td>${escHtml(c.country || '—')}</td>
-                <td>${c.has_qs_badge   ? '<span class="badge badge-verified">Yes</span>' : '<span class="badge badge-error">No</span>'}</td>
+                <td>${c.has_qs_badge ? '<span class="badge badge-verified">Yes</span>' : '<span class="badge badge-error">No</span>'}</td>
                 <td>${c.has_nirf_badge ? '<span class="badge badge-verified">Yes</span>' : '<span class="badge badge-error">No</span>'}</td>
             </tr>`).join('');
 }
@@ -500,9 +511,9 @@ function populateAuthorTab(data) {
         .filter(k => k && k !== 'Unknown').length;
 
     const el = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
-    el('a-total',     stats.total      || 0);
-    el('a-verified',  stats.verified   || 0);
-    el('a-disc',      stats.discrepancies || 0);
+    el('a-total', stats.total || 0);
+    el('a-verified', stats.verified || 0);
+    el('a-disc', stats.discrepancies || 0);
     el('a-countries', countries);
 
     updateCountryLeaderboard(data.country_counts, 'author-country-list');
@@ -517,32 +528,32 @@ function updateRecentVerifications(recent) {
     const hash = JSON.stringify(recent.length);
     if (hash === lastDataHash) return;
     lastDataHash = hash;
-    recentData = [...recent].sort((a,b) => parseInt(a.id||'9') - parseInt(b.id||'9'));
+    recentData = [...recent].sort((a, b) => parseInt(a.id || '9') - parseInt(b.id || '9'));
     currentRecentPage = 1;
     renderRecentPage();
 }
 
 function renderRecentPage() {
     const tbody = document.getElementById('recent-verifications-body');
-    const info  = document.getElementById('recent-page-info');
+    const info = document.getElementById('recent-page-info');
     if (!tbody) return;
-    const total  = Math.ceil(recentData.length / RECENT_PAGE_SIZE) || 1;
-    const start  = (currentRecentPage - 1) * RECENT_PAGE_SIZE;
-    const slice  = recentData.slice(start, start + RECENT_PAGE_SIZE);
+    const total = Math.ceil(recentData.length / RECENT_PAGE_SIZE) || 1;
+    const start = (currentRecentPage - 1) * RECENT_PAGE_SIZE;
+    const slice = recentData.slice(start, start + RECENT_PAGE_SIZE);
     tbody.innerHTML = slice.length === 0
         ? '<tr><td colspan="5" style="text-align:center;">No verifications yet.</td></tr>'
         : slice.map(c => {
             const issueLabel = c.issue_category ? (c.issue_sub_type || c.issue_category).replace(/_/g, ' ') : c.status;
             const badgeCls = c.issue_category === 'website_issue' ? 'badge-error' :
-                             c.issue_category === 'course_issue' ? 'badge-discrepancy' :
-                             getBadgeClass(c.status);
+                c.issue_category === 'course_issue' ? 'badge-discrepancy' :
+                    getBadgeClass(c.status);
             return `
-            <tr onclick="showCourseModal('${c.id||''}','${escHtml(c.name)}','${escHtml(c.university||'')}')">
+            <tr onclick="showCourseModal('${c.id || ''}','${escJs(c.name)}','${escJs(c.university || '')}')">
                 <td><strong>${escHtml(c.name)}</strong></td>
-                <td>${escHtml(c.university||'—')}</td>
+                <td>${escHtml(c.university || '—')}</td>
                 <td><span class="badge ${badgeCls}" title="${escHtml(c.issue_category || '')}">${issueLabel}</span></td>
-                <td style="max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(c.disc_reason||'—')}</td>
-                <td>${c.pdf_page||'—'}</td>
+                <td style="max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(c.disc_reason || '—')}</td>
+                <td>${c.pdf_page || '—'}</td>
             </tr>`;
         }).join('');
     if (info) info.textContent = `Page ${currentRecentPage} of ${total} (${recentData.length})`;
@@ -563,15 +574,15 @@ async function loadAllCourses() {
     const tbody = document.getElementById('all-courses-body');
     if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;">Loading…</td></tr>';
     try {
-        const res  = await fetch('/api/courses.json');
+        const res = await fetch(API_BASE_URL + '/api/courses.json');
         const data = await res.json();
-        allCoursesData = (data.courses || []).sort((a,b) => parseInt(a.id||'9') - parseInt(b.id||'9'));
-        recentData     = data.recent  || [];
-        
+        allCoursesData = (data.courses || []).sort((a, b) => parseInt(a.id || '9') - parseInt(b.id || '9'));
+        recentData = data.recent || [];
+
         // --- DYNAMIC WEBSITE ISSUE HEURISTIC ---
         const applyHeuristic = (c) => {
             if (c.issue_category === 'verified') return;
-            const desc = (String(c.cost_description||'') + " " + String(c.duration_description||'') + " " + String(c.cost_verified||'') + " " + String(c.duration_verified||'')).toLowerCase();
+            const desc = (String(c.cost_description || '') + " " + String(c.duration_description || '') + " " + String(c.cost_verified || '') + " " + String(c.duration_verified || '')).toLowerCase();
             const allFalse = !c.cost_match && !c.duration_match && !c.mode_match && !c.lang_match && !c.country_match && !c.uni_match && !c.sk_match;
             if (allFalse && desc.includes('page load error')) {
                 c.issue_category = 'website_issue';
@@ -581,16 +592,16 @@ async function loadAllCourses() {
         allCoursesData.forEach(applyHeuristic);
         recentData.forEach(applyHeuristic);
         // ---------------------------------------
-        
+
         renderCoursesPage();
-    } catch(e) {
+    } catch (e) {
         if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--red);">Error loading courses</td></tr>';
     }
 }
 
 function renderCoursesPage() {
     const tbody = document.getElementById('all-courses-body');
-    const info  = document.getElementById('page-info');
+    const info = document.getElementById('page-info');
     if (!tbody) return;
     const total = Math.ceil(allCoursesData.length / PAGE_SIZE);
     const start = (currentPage - 1) * PAGE_SIZE;
@@ -598,15 +609,15 @@ function renderCoursesPage() {
     tbody.innerHTML = slice.map(c => {
         const issueLabel = c.issue_category ? (c.issue_sub_type || c.issue_category).replace(/_/g, ' ') : c.status;
         const badgeCls = c.issue_category === 'website_issue' ? 'badge-error' :
-                         c.issue_category === 'course_issue' ? 'badge-discrepancy' :
-                         getBadgeClass(c.status);
+            c.issue_category === 'course_issue' ? 'badge-discrepancy' :
+                getBadgeClass(c.status);
         return `<tr onclick="showCourseModal('${c.id}')">
             <td>${c.id}</td>
             <td><strong>${escHtml(c.name)}</strong></td>
-            <td>${escHtml(c.university||'—')}</td>
-            <td>${escHtml(c.domain||'—')}</td>
-            <td>${escHtml(c.country||'—')}</td>
-            <td>${c.has_qs_badge   ? '<span class="badge badge-verified">Yes</span>' : '<span class="badge badge-error">No</span>'}</td>
+            <td>${escHtml(c.university || '—')}</td>
+            <td>${escHtml(c.domain || '—')}</td>
+            <td>${escHtml(c.country || '—')}</td>
+            <td>${c.has_qs_badge ? '<span class="badge badge-verified">Yes</span>' : '<span class="badge badge-error">No</span>'}</td>
             <td>${c.has_nirf_badge ? '<span class="badge badge-verified">Yes</span>' : '<span class="badge badge-error">No</span>'}</td>
             <td><span class="badge ${badgeCls}" title="${escHtml(c.issue_category || '')}">${issueLabel}</span></td>
         </tr>`;
@@ -627,13 +638,13 @@ document.getElementById('next-page')?.addEventListener('click', () => {
 async function showCourseModal(courseId, fallbackName, fallbackUni) {
     if (allCoursesData.length === 0) {
         try {
-            const res  = await fetch('/api/courses.json');
+            const res = await fetch(API_BASE_URL + '/api/courses.json');
             const data = await res.json();
-            
+
             // --- DYNAMIC WEBSITE ISSUE HEURISTIC ---
             const applyHeuristic = (c) => {
                 if (c.issue_category === 'verified') return;
-                const desc = (String(c.cost_description||'') + " " + String(c.duration_description||'') + " " + String(c.cost_verified||'') + " " + String(c.duration_verified||'')).toLowerCase();
+                const desc = (String(c.cost_description || '') + " " + String(c.duration_description || '') + " " + String(c.cost_verified || '') + " " + String(c.duration_verified || '')).toLowerCase();
                 const allFalse = !c.cost_match && !c.duration_match && !c.mode_match && !c.lang_match && !c.country_match && !c.uni_match && !c.sk_match;
                 if (allFalse && desc.includes('page load error')) {
                     c.issue_category = 'website_issue';
@@ -642,33 +653,33 @@ async function showCourseModal(courseId, fallbackName, fallbackUni) {
             };
             if (data.courses) data.courses.forEach(applyHeuristic);
             // ---------------------------------------
-            
+
             allCoursesData = data.courses || [];
-        } catch(e) { return; }
+        } catch (e) { return; }
     }
     let c = allCoursesData.find(x => String(x.id) === String(courseId));
-    if (!c && fallbackName) c = allCoursesData.find(x => x.name === fallbackName && (x.university||'') === (fallbackUni||''));
+    if (!c && fallbackName) c = allCoursesData.find(x => x.name === fallbackName && (x.university || '') === (fallbackUni || ''));
     if (!c) { alert('Course not found.'); return; }
 
     document.getElementById('modal-course-title').textContent = c.name;
 
     const safe = v => v ? String(v) : 'Not Provided';
-    const has_qs   = c.has_qs_badge;
+    const has_qs = c.has_qs_badge;
     const has_nirf = c.has_nirf_badge;
     const has_free = c.has_free_box;
     const web_free = c.web_cost && c.web_cost.toLowerCase().includes('free');
 
     const rows = c.pdf_table || [
-        { attribute:'Cost',       original: safe(c.cost),        verified: safe(c.web_cost),      status: c.cost_match     ? 'MATCH':'FALSE' },
-        { attribute:'Duration',   original: safe(c.duration),    verified: safe(c.web_duration),  status: c.duration_match ? 'MATCH':'FALSE' },
-        { attribute:'Mode',       original: safe(c.mode),        verified: safe(c.web_mode),      status: c.mode_match     ? 'MATCH':'FALSE' },
-        { attribute:'Language',   original: safe(c.language),    verified: safe(c.web_language),  status: c.lang_match     ? 'MATCH':'FALSE' },
-        { attribute:'Country',    original: safe(c.country),     verified: safe(c.country_verified||c.web_country||'Not Found'), status: c.country_match ? 'MATCH':'FALSE' },
-        { attribute:'University', original: safe(c.university||c.uni), verified: safe(c.web_uni), status: c.uni_match      ? 'MATCH':'FALSE' },
-        { attribute:'Skills',     original: safe(c.skills),      verified: safe(c.skills_verified), status: c.sk_match     ? 'MATCH':'FALSE' },
-        { attribute:'QS Ranked',  original: has_qs  ? 'True (Badge)':'False', verified: safe(c.qs_detail),   status: (c.qs_ranked  ||!has_qs)  ? 'MATCH':'FALSE' },
-        { attribute:'NIRF Ranked',original: has_nirf ? 'True (Badge)':'False', verified: safe(c.nirf_detail), status: (c.nirf_ranked||!has_nirf) ? 'MATCH':'FALSE' },
-        { attribute:'Free Box',   original: has_free ? 'True':'False', verified: web_free ? 'Free':'Paid', status: (has_free===web_free) ? 'MATCH':'FALSE' }
+        { attribute: 'Cost', original: safe(c.cost), verified: safe(c.web_cost), status: c.cost_match ? 'MATCH' : 'FALSE' },
+        { attribute: 'Duration', original: safe(c.duration), verified: safe(c.web_duration), status: c.duration_match ? 'MATCH' : 'FALSE' },
+        { attribute: 'Mode', original: safe(c.mode), verified: safe(c.web_mode), status: c.mode_match ? 'MATCH' : 'FALSE' },
+        { attribute: 'Language', original: safe(c.language), verified: safe(c.web_language), status: c.lang_match ? 'MATCH' : 'FALSE' },
+        { attribute: 'Country', original: safe(c.country), verified: safe(c.country_verified || c.web_country || 'Not Found'), status: c.country_match ? 'MATCH' : 'FALSE' },
+        { attribute: 'University', original: safe(c.university || c.uni), verified: safe(c.web_uni), status: c.uni_match ? 'MATCH' : 'FALSE' },
+        { attribute: 'Skills', original: safe(c.skills), verified: safe(c.skills_verified), status: c.sk_match ? 'MATCH' : 'FALSE' },
+        { attribute: 'QS Ranked', original: has_qs ? 'True (Badge)' : 'False', verified: safe(c.qs_detail), status: (c.qs_ranked || !has_qs) ? 'MATCH' : 'FALSE' },
+        { attribute: 'NIRF Ranked', original: has_nirf ? 'True (Badge)' : 'False', verified: safe(c.nirf_detail), status: (c.nirf_ranked || !has_nirf) ? 'MATCH' : 'FALSE' },
+        { attribute: 'Free Box', original: has_free ? 'True' : 'False', verified: web_free ? 'Free' : 'Paid', status: (has_free === web_free) ? 'MATCH' : 'FALSE' }
     ];
 
     const tbody = document.getElementById('modal-table-body');
@@ -678,12 +689,12 @@ async function showCourseModal(courseId, fallbackName, fallbackUni) {
     const falseRows = rows.filter(r => r.status === 'FALSE');
     const solvedCount = falseRows.filter(r => solvedAttrs.includes(r.attribute)).length;
     const isWebsiteIssue = c.issue_category === 'website_issue';
-    const isCourseIssue   = c.issue_category === 'course_issue';
-    const hasOpenAttrs    = falseRows.some(r => !solvedAttrs.includes(r.attribute));
+    const isCourseIssue = c.issue_category === 'course_issue';
+    const hasOpenAttrs = falseRows.some(r => !solvedAttrs.includes(r.attribute));
 
     tbody.innerHTML = rows.map(row => {
         const isFalse = row.status === 'FALSE';
-        const solved  = isFalse && solvedAttrs.includes(row.attribute);
+        const solved = isFalse && solvedAttrs.includes(row.attribute);
         const attrJs = JSON.stringify(row.attribute).replace(/"/g, '&quot;');
         let action = '<span style="color:var(--text-3);font-size:0.75rem;">—</span>';
         if (isFalse) {
@@ -692,9 +703,9 @@ async function showCourseModal(courseId, fallbackName, fallbackUni) {
                 : `<button class="solve-tick" title="Mark this issue solved" onclick="solveCourse(${c.id},${attrJs},false)">✓ Solve</button>`;
         }
         const statusTxt = solved ? 'SOLVED' : row.status;
-        const statusClr = (row.status==='MATCH' || solved) ? 'var(--green)' : 'var(--red)';
+        const statusClr = (row.status === 'MATCH' || solved) ? 'var(--green)' : 'var(--red)';
         return `
-        <tr style="border-bottom:1px solid var(--border);" class="${solved?'solved-row':''}">
+        <tr style="border-bottom:1px solid var(--border);" class="${solved ? 'solved-row' : ''}">
             <td style="padding:10px 12px;color:var(--text-1);font-weight:600;font-size:0.85rem;">${row.attribute}</td>
             <td style="padding:10px 12px;color:var(--text-2);font-size:0.85rem;">${escHtml(row.original)}</td>
             <td style="padding:10px 12px;color:var(--text-2);font-size:0.85rem;">${escHtml(row.verified)}</td>
@@ -706,7 +717,7 @@ async function showCourseModal(courseId, fallbackName, fallbackUni) {
     // Header solve controls
     const solveAllBtn = document.getElementById('solve-all-btn');
     const solveWebBtn = document.getElementById('solve-website-btn');
-    const progress   = document.getElementById('modal-solve-progress');
+    const progress = document.getElementById('modal-solve-progress');
     if (solveAllBtn) {
         solveAllBtn.style.display = (isCourseIssue && hasOpenAttrs) ? '' : 'none';
         solveAllBtn.textContent = `✓ Solve all (${falseRows.length - solvedCount} open)`;
@@ -739,47 +750,77 @@ let currentModalCourseId = null;
 
 async function solveCourse(courseId, attr, unsolve) {
     if (courseId == null) return;
-    try {
-        const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-        // IMPORTANT: Replace the URL below with your actual Render URL after deploying!
-        const baseUrl = isLocal ? '' : 'https://course-verifier-api.onrender.com';
+    
+    // 1. OPTIMISTIC UI UPDATE (Blazing Fast)
+    const c = allCoursesData.find(x => String(x.id) === String(courseId));
+    let originalDataStr = null;
+    if (c) {
+        originalDataStr = JSON.stringify(c); // Backup for rollback
+        c.solved_attrs = c.solved_attrs || [];
         
-        const res = await fetch(`${baseUrl}/api/course/${courseId}/solve`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({attr, unsolve: !!unsolve})
-        });
-        const data = await res.json();
-        if (data.status !== 'success') { alert(data.message || 'Solve failed'); return; }
-
-        // Merge returned course fields into cached data
-        const upd = data.course || {};
-        const mergeInto = list => {
-            const c = list.find(x => String(x.id) === String(courseId));
-            if (c) {
-                c.issue_category = upd.issue_category;
-                c.issue_sub_type = upd.issue_sub_type;
-                c.status = upd.status;
-                c.disc_reason = upd.disc_reason;
-                c.solved_attrs = upd.solved_attrs || [];
+        if (attr === '_website') {
+            c.issue_category = unsolve ? 'website_issue' : 'verified';
+            c.status = unsolve ? 'Error' : 'Verified';
+            c.disc_reason = '';
+        } else if (attr === '_all') {
+            const falseRows = (c.pdf_table || []).filter(r => r.status === 'FALSE').map(r => r.attribute);
+            if (unsolve) {
+                c.solved_attrs = c.solved_attrs.filter(a => !falseRows.includes(a));
+            } else {
+                for (const a of falseRows) if (!c.solved_attrs.includes(a)) c.solved_attrs.push(a);
             }
-        };
-        mergeInto(allCoursesData);
-        mergeInto(recentData);
+            c.issue_category = unsolve ? 'course_issue' : 'verified';
+            c.status = unsolve ? 'Discrepancy' : 'Verified';
+        } else {
+            if (unsolve) {
+                c.solved_attrs = c.solved_attrs.filter(a => a !== attr);
+            } else {
+                if (!c.solved_attrs.includes(attr)) c.solved_attrs.push(attr);
+            }
+            const falseRows = (c.pdf_table || []).filter(r => r.status === 'FALSE').map(r => r.attribute);
+            const unsolvedCount = falseRows.filter(a => !c.solved_attrs.includes(a)).length;
+            c.issue_category = unsolvedCount === 0 ? 'verified' : 'course_issue';
+            c.status = unsolvedCount === 0 ? 'Verified' : 'Discrepancy';
+        }
+        showCourseModal(courseId); // Instant UI refresh
+    }
 
-        // Live-update KPIs + issue donut from returned stats
+    // 2. BACKGROUND SYNC TO RENDER
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/course/${courseId}/solve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ attr, unsolve: !!unsolve })
+        });
+        
+        const data = await res.json();
+        if (data.status !== 'success') throw new Error(data.message || 'Solve failed');
+
+        // Refresh stats
+        const upd = data.course || {};
+        if (c) Object.assign(c, {
+            issue_category: upd.issue_category,
+            issue_sub_type: upd.issue_sub_type,
+            status: upd.status,
+            disc_reason: upd.disc_reason,
+            solved_attrs: upd.solved_attrs || []
+        });
+        const rc = recentData.find(x => String(x.id) === String(courseId));
+        if (rc) Object.assign(rc, { issue_category: upd.issue_category, status: upd.status });
+
         if (data.stats) {
             updateCards(data.stats);
             updateIssuePieChart(data.stats);
+            fetchData(); // Trigger full refresh
         }
-
-        // Re-render the open modal so ticks/progress reflect the new state,
-        // then refresh from the server so every other user (5s poll) converges.
-        showCourseModal(courseId);
-        if (data.stats) fetchData();
     } catch (e) {
         console.error('Solve error:', e);
-        alert('Solve request failed.');
+        // Rollback on failure
+        if (c && originalDataStr) {
+            Object.assign(c, JSON.parse(originalDataStr));
+            showCourseModal(courseId);
+        }
+        alert('Network request failed. Your Render API might be sleeping/offline. Please wait 45 seconds and try again!');
     }
 }
 
@@ -799,7 +840,7 @@ function initModal() {
 // ================================================================
 async function fetchData() {
     try {
-        const res  = await fetch('/api/data.json');
+        const res = await fetch(API_BASE_URL + '/api/data.json');
         const data = await res.json();
         if (data.status !== 'success') return;
 
@@ -813,8 +854,8 @@ async function fetchData() {
         updateCountryLeaderboard(data.country_counts, 'country-list');
 
         const recent = data.recent?.length ? data.recent
-            : (data.discrepancy_list || []).map((d,i) => ({
-                id: String(i+1), name: d.name, university: d.university,
+            : (data.discrepancy_list || []).map((d, i) => ({
+                id: String(i + 1), name: d.name, university: d.university,
                 status: 'Discrepancy', disc_reason: d.reason
             }));
         updateRecentVerifications(recent);
@@ -825,7 +866,7 @@ async function fetchData() {
         if (document.getElementById('tab-author')?.classList.contains('active')) {
             populateAuthorTab(data);
         }
-    } catch(e) {
+    } catch (e) {
         console.error('Data fetch error:', e);
     }
 }
@@ -835,14 +876,14 @@ async function fetchData() {
 //  Uses BOTH globalData (/api/data.json) AND analyticsData (/api/analytics.json)
 // ================================================================
 let anCredentialChart = null;
-let anPricingChart    = null;
-let anDomainChart     = null;
-let anStatusChart     = null;
-let analyticsData     = null;
-let geoTableData      = [];
+let anPricingChart = null;
+let anDomainChart = null;
+let anStatusChart = null;
+let analyticsData = null;
+let geoTableData = [];
 
-const PALETTE = ['#6366f1','#818cf8','#f43f5e','#1dda9f','#f59e0b','#06b6d4','#ec4899','#8b5cf6'];
-const STATUS_COLORS = { verified:'#1dda9f', discrepancy:'#f59e0b', error:'#f43f5e', unverified:'#6366f1' };
+const PALETTE = ['#6366f1', '#818cf8', '#f43f5e', '#1dda9f', '#f59e0b', '#06b6d4', '#ec4899', '#8b5cf6'];
+const STATUS_COLORS = { verified: '#1dda9f', discrepancy: '#f59e0b', error: '#f43f5e', unverified: '#6366f1' };
 
 // ── Sub-tab switching ────────────────────────────────────────────
 function initAnalyticsSubTabs() {
@@ -862,7 +903,7 @@ function initAnalyticsSubTabs() {
 // ── Drill-down helpers ───────────────────────────────────────────
 function closeDrilldown(id) {
     const el = document.getElementById(id);
-    if (el) { el.style.animation = 'slideDown 0.2s ease'; setTimeout(() => el.style.display='none', 180); }
+    if (el) { el.style.animation = 'slideDown 0.2s ease'; setTimeout(() => el.style.display = 'none', 180); }
 }
 
 function openDrilldown(panelId, titleId, tbodyId, title, rows) {
@@ -879,13 +920,13 @@ function openDrilldown(panelId, titleId, tbodyId, title, rows) {
 
 // ── Status badge helper ──────────────────────────────────────────
 function statusBadge(s) {
-    const cls = getBadgeClass(s||'');
-    return `<span class="badge ${cls}">${escHtml(s||'—')}</span>`;
+    const cls = getBadgeClass(s || '');
+    return `<span class="badge ${cls}">${escHtml(s || '—')}</span>`;
 }
 
 // ── KPI cards ────────────────────────────────────────────────────
 function populateAnalyticsKPIs(d, globalStats, ccOverride) {
-    const el = (id, v) => { const e = document.getElementById(id); if(e) e.textContent = v; };
+    const el = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
 
     // Authoritative total — always from dashboard stats
     const tot = globalStats?.total || 0;
@@ -894,32 +935,32 @@ function populateAnalyticsKPIs(d, globalStats, ccOverride) {
     const cc = ccOverride || globalData?.country_counts || {};
     const indiaCount = Object.entries(cc)
         .filter(([k]) => k.toLowerCase().includes('india'))
-        .reduce((s,[,v]) => s+(Number(v)||0), 0);
+        .reduce((s, [, v]) => s + (Number(v) || 0), 0);
     const intlCount = Math.max(0, tot - indiaCount);
 
     // Pricing
-    const pricingCat   = d.pricing_category || {};
-    const freeCount    = pricingCat['Free Courses'] || 0;
-    const pricingTotal = Object.values(pricingCat).reduce((s,v)=>s+(Number(v)||0),0);
+    const pricingCat = d.pricing_category || {};
+    const freeCount = pricingCat['Free Courses'] || 0;
+    const pricingTotal = Object.values(pricingCat).reduce((s, v) => s + (Number(v) || 0), 0);
 
     // Country count — from pivot if available, else from country_counts
-    const pivotKeys  = Object.keys(d.country_pivot||{}).filter(k => isValidCountry(k));
-    const countryCnt = pivotKeys.length || Object.keys(cc).filter(k=>isValidCountry(k)).length;
+    const pivotKeys = Object.keys(d.country_pivot || {}).filter(k => isValidCountry(k));
+    const countryCnt = pivotKeys.length || Object.keys(cc).filter(k => isValidCountry(k)).length;
 
     // Verification match rate
-    const vs        = globalStats || {};
-    const matchRate = vs.total ? ((vs.verified||0) / vs.total * 100).toFixed(1) : '—';
+    const vs = globalStats || {};
+    const matchRate = vs.total ? ((vs.verified || 0) / vs.total * 100).toFixed(1) : '—';
 
-    el('an-total',          tot);
-    el('an-indian',         indiaCount);
-    el('an-intl',           intlCount);
-    el('an-matchrate',      matchRate + (matchRate !== '—' ? '%' : ''));
-    el('an-variants-sub',   `${Object.values(d.variant_category||{}).reduce((s,v)=>s+(Number(v)||0),0)} delivery variants`);
-    el('an-indian-pct',     `${tot ? ((indiaCount/tot)*100).toFixed(1) : '—'}% of total catalog`);
-    el('an-countries-count',`${countryCnt} countries represented`);
-    el('an-verified-sub',   `${vs.verified||'—'} courses perfectly verified`);
-    el('an-free',           pricingTotal);
-    el('an-free-sub',       `${freeCount} fully free certifications`);
+    el('an-total', tot);
+    el('an-indian', indiaCount);
+    el('an-intl', intlCount);
+    el('an-matchrate', matchRate + (matchRate !== '—' ? '%' : ''));
+    el('an-variants-sub', `${Object.values(d.variant_category || {}).reduce((s, v) => s + (Number(v) || 0), 0)} delivery variants`);
+    el('an-indian-pct', `${tot ? ((indiaCount / tot) * 100).toFixed(1) : '—'}% of total catalog`);
+    el('an-countries-count', `${countryCnt} countries represented`);
+    el('an-verified-sub', `${vs.verified || '—'} courses perfectly verified`);
+    el('an-free', pricingTotal);
+    el('an-free-sub', `${freeCount} fully free certifications`);
 }
 
 
@@ -928,42 +969,42 @@ function populateInsightCards(d, globalData) {
     const container = document.getElementById('insight-cards-row');
     if (!container) return;
 
-    const recent      = globalData?.recent || [];
-    const stats       = globalData?.stats  || {};
-    const countryPivot = d.country_pivot   || {};
-    const domainPivot  = d.domain_pivot    || {};
+    const recent = globalData?.recent || [];
+    const stats = globalData?.stats || {};
+    const countryPivot = d.country_pivot || {};
+    const domainPivot = d.domain_pivot || {};
 
     // Compute insights
-    const tot     = stats.total    || 1;
-    const matchPct = ((stats.verified||0)/tot*100).toFixed(1);
-    const discPct  = ((stats.discrepancies||0)/tot*100).toFixed(1);
+    const tot = stats.total || 1;
+    const matchPct = ((stats.verified || 0) / tot * 100).toFixed(1);
+    const discPct = ((stats.discrepancies || 0) / tot * 100).toFixed(1);
 
-    const topCountry = Object.entries(countryPivot).filter(([k])=>isValidCountry(k))
-        .sort((a,b)=>b[1]-a[1])[0];
-    const topDomain  = Object.entries(domainPivot).filter(([k])=>k&&k!=='Total')
-        .sort((a,b)=>(b[1].Total||0)-(a[1].Total||0))[0];
+    const topCountry = Object.entries(countryPivot).filter(([k]) => isValidCountry(k))
+        .sort((a, b) => b[1] - a[1])[0];
+    const topDomain = Object.entries(domainPivot).filter(([k]) => k && k !== 'Total')
+        .sort((a, b) => (b[1].Total || 0) - (a[1].Total || 0))[0];
 
     // Most problematic country (from recent)
     const countryIssues = {};
     recent.forEach(r => {
-        if (isValidCountry(r.country) && (r.status||'').toLowerCase() !== 'verified') {
-            countryIssues[r.country] = (countryIssues[r.country]||0)+1;
+        if (isValidCountry(r.country) && (r.status || '').toLowerCase() !== 'verified') {
+            countryIssues[r.country] = (countryIssues[r.country] || 0) + 1;
         }
     });
-    const topIssueCountry = Object.entries(countryIssues).sort((a,b)=>b[1]-a[1])[0];
+    const topIssueCountry = Object.entries(countryIssues).sort((a, b) => b[1] - a[1])[0];
 
     // Top university
     const uniCounts = {};
-    recent.forEach(r => { if(r.university) uniCounts[r.university]=(uniCounts[r.university]||0)+1; });
-    const topUni = Object.entries(uniCounts).sort((a,b)=>b[1]-a[1])[0];
+    recent.forEach(r => { if (r.university) uniCounts[r.university] = (uniCounts[r.university] || 0) + 1; });
+    const topUni = Object.entries(uniCounts).sort((a, b) => b[1] - a[1])[0];
 
     const insights = [
-        { icon:'🏆', color:'var(--green)',  label:'Match Rate',      value:`${matchPct}%`, sub:'Courses perfectly verified' },
-        { icon:'⚠️', color:'var(--accent)', label:'Discrepancy Rate',value:`${discPct}%`,  sub:'Need manual review' },
-        { icon:'🌍', color:'var(--blue)',   label:'Top Country',     value: topCountry ? getFlag(topCountry[0])+' '+topCountry[0] : '—', sub: topCountry ? `${topCountry[1]} courses` : '' },
-        { icon:'🔬', color:'var(--purple)', label:'Top Domain',      value: topDomain?.[0] || '—',  sub: topDomain ? `${topDomain[1].Total||0} courses` : '' },
-        { icon:'🏛️', color:'var(--blue)',   label:'Top University',  value: topUni?.[0] || '—',     sub: topUni ? `${topUni[1]} courses` : '' },
-        { icon:'🚨', color:'var(--red)',    label:'Most Issues',     value: topIssueCountry ? getFlag(topIssueCountry[0])+' '+topIssueCountry[0] : 'None', sub: topIssueCountry ? `${topIssueCountry[1]} flagged` : 'All clean!' },
+        { icon: '🏆', color: 'var(--green)', label: 'Match Rate', value: `${matchPct}%`, sub: 'Courses perfectly verified' },
+        { icon: '⚠️', color: 'var(--accent)', label: 'Discrepancy Rate', value: `${discPct}%`, sub: 'Need manual review' },
+        { icon: '🌍', color: 'var(--blue)', label: 'Top Country', value: topCountry ? getFlag(topCountry[0]) + ' ' + topCountry[0] : '—', sub: topCountry ? `${topCountry[1]} courses` : '' },
+        { icon: '🔬', color: 'var(--purple)', label: 'Top Domain', value: topDomain?.[0] || '—', sub: topDomain ? `${topDomain[1].Total || 0} courses` : '' },
+        { icon: '🏛️', color: 'var(--blue)', label: 'Top University', value: topUni?.[0] || '—', sub: topUni ? `${topUni[1]} courses` : '' },
+        { icon: '🚨', color: 'var(--red)', label: 'Most Issues', value: topIssueCountry ? getFlag(topIssueCountry[0]) + ' ' + topIssueCountry[0] : 'None', sub: topIssueCountry ? `${topIssueCountry[1]} flagged` : 'All clean!' },
     ];
 
     container.innerHTML = insights.map(ins => `
@@ -1007,26 +1048,31 @@ function populateSplitVisual(indianPct) {
 function populateCredentialChart(courseCategory) {
     const ctx = document.getElementById('an-credential-chart');
     if (!ctx) return;
-    const entries = Object.entries(courseCategory||{}).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]);
+    const entries = Object.entries(courseCategory || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
     if (anCredentialChart) anCredentialChart.destroy();
     anCredentialChart = new Chart(ctx, {
-        type:'doughnut',
-        data:{ labels:entries.map(e=>e[0]),
-               datasets:[{ data:entries.map(e=>e[1]), backgroundColor:PALETTE, borderColor:'transparent', borderWidth:0, hoverOffset:10 }] },
-        options:{ responsive:true, maintainAspectRatio:false, cutout:'70%',
-                  plugins:{ legend:{display:false},
-                            tooltip:{callbacks:{label:c=>`${c.label}: ${c.raw} programs`}} },
-                  onClick:(e,els) => {
-                      if (!els.length) return;
-                      const label = entries[els[0].index][0];
-                      openAnalyticsDrilldownByCategory(label);
-                  }
+        type: 'doughnut',
+        data: {
+            labels: entries.map(e => e[0]),
+            datasets: [{ data: entries.map(e => e[1]), backgroundColor: PALETTE, borderColor: 'transparent', borderWidth: 0, hoverOffset: 10 }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false, cutout: '70%',
+            plugins: {
+                legend: { display: false },
+                tooltip: { callbacks: { label: c => `${c.label}: ${c.raw} programs` } }
+            },
+            onClick: (e, els) => {
+                if (!els.length) return;
+                const label = entries[els[0].index][0];
+                openAnalyticsDrilldownByCategory(label);
+            }
         }
     });
     const legend = document.getElementById('an-credential-legend');
-    if (legend) legend.innerHTML = entries.map(([label,val],i)=>`
-        <div class="an-legend-item" onclick="openAnalyticsDrilldownByCategory('${label.replace(/'/g,"\\'")}')">
-            <div class="an-legend-dot" style="background:${PALETTE[i%PALETTE.length]}"></div>
+    if (legend) legend.innerHTML = entries.map(([label, val], i) => `
+        <div class="an-legend-item" onclick="openAnalyticsDrilldownByCategory('${label.replace(/'/g, "\\'")}')">
+            <div class="an-legend-dot" style="background:${PALETTE[i % PALETTE.length]}"></div>
             <div>
                 <div class="an-legend-name">${escHtml(label)}</div>
                 <div class="an-legend-val">${val} Courses</div>
@@ -1038,20 +1084,27 @@ function populateCredentialChart(courseCategory) {
 function populatePricingChart(pricingCategory) {
     const ctx = document.getElementById('an-pricing-chart');
     if (!ctx) return;
-    const entries = Object.entries(pricingCategory||{}).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]);
+    const entries = Object.entries(pricingCategory || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
     if (anPricingChart) anPricingChart.destroy();
     anPricingChart = new Chart(ctx, {
-        type:'bar',
-        data:{ labels:entries.map(e=>e[0]),
-               datasets:[{ label:'Courses', data:entries.map(e=>e[1]),
-                   backgroundColor:'rgba(241,107,107,0.8)', hoverBackgroundColor:'#f16b6b',
-                   borderRadius:8, borderSkipped:false }] },
-        options:{ responsive:true, maintainAspectRatio:false,
-            plugins:{ legend:{display:false} },
-            scales:{ x:{grid:{display:false},ticks:{font:{size:12,weight:'600'},maxRotation:30}},
-                     y:{beginAtZero:true,grid:{color:'rgba(255,255,255,0.04)'},ticks:{precision:0}} },
-            animation:{duration:900,easing:'easeOutQuart'},
-            onClick:(e,els) => { if (els.length) alert(`${entries[els[0].index][0]}: ${entries[els[0].index][1]} courses`); }
+        type: 'bar',
+        data: {
+            labels: entries.map(e => e[0]),
+            datasets: [{
+                label: 'Courses', data: entries.map(e => e[1]),
+                backgroundColor: 'rgba(241,107,107,0.8)', hoverBackgroundColor: '#f16b6b',
+                borderRadius: 8, borderSkipped: false
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { display: false }, ticks: { font: { size: 12, weight: '600' }, maxRotation: 30 } },
+                y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { precision: 0 } }
+            },
+            animation: { duration: 900, easing: 'easeOutQuart' },
+            onClick: (e, els) => { if (els.length) alert(`${entries[els[0].index][0]}: ${entries[els[0].index][1]} courses`); }
         }
     });
 }
@@ -1060,43 +1113,43 @@ function populatePricingChart(pricingCategory) {
 function populateAnTopCountries(countryPivot) {
     const el = document.getElementById('an-top-countries');
     if (!el) return;
-    const entries = Object.entries(countryPivot||{}).filter(([k])=>isValidCountry(k))
-        .sort((a,b)=>b[1]-a[1]).slice(0,5);
-    const max = entries[0]?.[1]||1;
-    el.innerHTML = entries.map(([name,cnt],i)=>`
-        <div class="an-hub-row" onclick="geoRowDrilldown('${name.replace(/'/g,"\\'")}', ${cnt})" title="Click to see courses">
-            <div class="an-hub-rank">${i+1}</div>
+    const entries = Object.entries(countryPivot || {}).filter(([k]) => isValidCountry(k))
+        .sort((a, b) => b[1] - a[1]).slice(0, 5);
+    const max = entries[0]?.[1] || 1;
+    el.innerHTML = entries.map(([name, cnt], i) => `
+        <div class="an-hub-row" onclick="geoRowDrilldown('${name.replace(/'/g, "\\'")}', ${cnt})" title="Click to see courses">
+            <div class="an-hub-rank">${i + 1}</div>
             <div class="an-hub-name">${getFlag(name)} ${escHtml(name)}</div>
-            <div class="an-hub-bar-wrap"><div class="an-hub-bar" style="width:${Math.round(cnt/max*100)}%"></div></div>
+            <div class="an-hub-bar-wrap"><div class="an-hub-bar" style="width:${Math.round(cnt / max * 100)}%"></div></div>
             <div class="an-hub-count">${cnt}</div>
         </div>`).join('');
 }
 
 // ── Geography table ──────────────────────────────────────────────
-function renderGeoTable(search='') {
+function renderGeoTable(search = '') {
     const tbody = document.getElementById('an-country-tbody');
     if (!tbody) return;
     const recent = globalData?.recent || [];
-    const total  = geoTableData.reduce((s,[,v])=>s+v,0)||1;
-    const max    = geoTableData[0]?.[1]||1;
-    const rows   = search ? geoTableData.filter(([k])=>k.toLowerCase().includes(search)) : geoTableData;
+    const total = geoTableData.reduce((s, [, v]) => s + v, 0) || 1;
+    const max = geoTableData[0]?.[1] || 1;
+    const rows = search ? geoTableData.filter(([k]) => k.toLowerCase().includes(search)) : geoTableData;
 
-    tbody.innerHTML = rows.length===0
+    tbody.innerHTML = rows.length === 0
         ? `<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:24px;">No results</td></tr>`
-        : rows.map(([name,cnt],i) => {
+        : rows.map(([name, cnt], i) => {
             // Compute verified / issues from recent data
-            const matching = recent.filter(r => (r.country||'').toLowerCase().includes(name.toLowerCase())
-                                              || name.toLowerCase().includes((r.country||'').toLowerCase()));
-            const verified = matching.filter(r=>(r.status||'').toLowerCase()==='verified').length;
-            const issues   = matching.filter(r=>(r.status||'').toLowerCase()!=='verified' && r.status).length;
-            return `<tr class="clickable-row" onclick="geoRowDrilldown('${name.replace(/'/g,"\\'")}', ${cnt})" title="Click to see courses">
-                <td><span class="geo-rank">${(i+1).toString().padStart(2,'0')}</span></td>
+            const matching = recent.filter(r => (r.country || '').toLowerCase().includes(name.toLowerCase())
+                || name.toLowerCase().includes((r.country || '').toLowerCase()));
+            const verified = matching.filter(r => (r.status || '').toLowerCase() === 'verified').length;
+            const issues = matching.filter(r => (r.status || '').toLowerCase() !== 'verified' && r.status).length;
+            return `<tr class="clickable-row" onclick="geoRowDrilldown('${name.replace(/'/g, "\\'")}', ${cnt})" title="Click to see courses">
+                <td><span class="geo-rank">${(i + 1).toString().padStart(2, '0')}</span></td>
                 <td><span style="font-size:1.1rem;margin-right:8px;">${getFlag(name)}</span><strong>${escHtml(name)}</strong></td>
                 <td style="text-align:center;"><span class="geo-volume-badge">${cnt}</span></td>
-                <td style="text-align:center;"><span style="color:var(--green);font-weight:700;">${verified||'—'}</span></td>
-                <td style="text-align:center;"><span style="color:var(--accent);font-weight:700;">${issues||'—'}</span></td>
-                <td style="text-align:right;"><span class="geo-share">${((cnt/total)*100).toFixed(1)}%</span></td>
-                <td><div class="geo-prog-wrap"><div class="geo-prog-bar" style="width:${Math.round(cnt/max*100)}%"></div></div></td>
+                <td style="text-align:center;"><span style="color:var(--green);font-weight:700;">${verified || '—'}</span></td>
+                <td style="text-align:center;"><span style="color:var(--accent);font-weight:700;">${issues || '—'}</span></td>
+                <td style="text-align:right;"><span class="geo-share">${((cnt / total) * 100).toFixed(1)}%</span></td>
+                <td><div class="geo-prog-wrap"><div class="geo-prog-bar" style="width:${Math.round(cnt / max * 100)}%"></div></div></td>
             </tr>`;
         }).join('');
 }
@@ -1104,43 +1157,50 @@ function renderGeoTable(search='') {
 function geoRowDrilldown(countryName, cnt) {
     const recent = globalData?.recent || [];
     const matches = recent.filter(r =>
-        (r.country||'').toLowerCase().includes(countryName.toLowerCase()) ||
-        countryName.toLowerCase().includes((r.country||'').toLowerCase())
+        (r.country || '').toLowerCase().includes(countryName.toLowerCase()) ||
+        countryName.toLowerCase().includes((r.country || '').toLowerCase())
     );
-    const rows = matches.length ? matches.map((r,i) => `<tr>
-        <td style="color:var(--text-3);">${i+1}</td>
-        <td style="font-weight:600;">${escHtml(r.name||r.course_name||'—')}</td>
-        <td style="color:var(--text-2);">${escHtml(r.university||'—')}</td>
-        <td>${escHtml(r.domain||'—')}</td>
+    const rows = matches.length ? matches.map((r, i) => `<tr>
+        <td style="color:var(--text-3);">${i + 1}</td>
+        <td style="font-weight:600;">${escHtml(r.name || r.course_name || '—')}</td>
+        <td style="color:var(--text-2);">${escHtml(r.university || '—')}</td>
+        <td>${escHtml(r.domain || '—')}</td>
         <td>${statusBadge(r.status)}</td>
     </tr>`).join('')
-    : `<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:20px;">No course-level data yet — run verification first</td></tr>`;
+        : `<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:20px;">No course-level data yet — run verification first</td></tr>`;
 
-    openDrilldown('geo-drilldown','geo-drilldown-title','geo-drilldown-tbody',
+    openDrilldown('geo-drilldown', 'geo-drilldown-title', 'geo-drilldown-tbody',
         `${getFlag(countryName)} ${countryName} — ${cnt} Courses`, rows);
 }
 
 // ── Domain tab ───────────────────────────────────────────────────
 function populateDomainTab(domainPivot) {
-    const ctx     = document.getElementById('an-domain-chart');
-    const recent  = globalData?.recent || [];
-    const entries = Object.entries(domainPivot||{}).filter(([k])=>k&&k!=='Total')
-        .sort((a,b)=>(b[1].Total||0)-(a[1].Total||0));
+    const ctx = document.getElementById('an-domain-chart');
+    const recent = globalData?.recent || [];
+    const entries = Object.entries(domainPivot || {}).filter(([k]) => k && k !== 'Total')
+        .sort((a, b) => (b[1].Total || 0) - (a[1].Total || 0));
 
     if (ctx) {
         if (anDomainChart) anDomainChart.destroy();
         anDomainChart = new Chart(ctx, {
-            type:'bar',
-            data:{ labels:entries.map(([k])=>k),
-                   datasets:[{ label:'Total Courses', data:entries.map(([,v])=>v.Total||0),
-                       backgroundColor:'rgba(99,102,241,0.75)', hoverBackgroundColor:'#6366f1',
-                       borderRadius:8, borderSkipped:false }] },
-            options:{ responsive:true, maintainAspectRatio:false,
-                plugins:{ legend:{display:false} },
-                scales:{ x:{grid:{display:false},ticks:{font:{size:11,weight:'600'},maxRotation:30}},
-                         y:{beginAtZero:true,grid:{color:'rgba(255,255,255,0.04)'},ticks:{precision:0}} },
-                animation:{duration:900,easing:'easeOutQuart'},
-                onClick:(e,els) => {
+            type: 'bar',
+            data: {
+                labels: entries.map(([k]) => k),
+                datasets: [{
+                    label: 'Total Courses', data: entries.map(([, v]) => v.Total || 0),
+                    backgroundColor: 'rgba(99,102,241,0.75)', hoverBackgroundColor: '#6366f1',
+                    borderRadius: 8, borderSkipped: false
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { grid: { display: false }, ticks: { font: { size: 11, weight: '600' }, maxRotation: 30 } },
+                    y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { precision: 0 } }
+                },
+                animation: { duration: 900, easing: 'easeOutQuart' },
+                onClick: (e, els) => {
                     if (els.length) domainRowDrilldown(entries[els[0].index][0]);
                 }
             }
@@ -1148,22 +1208,22 @@ function populateDomainTab(domainPivot) {
     }
 
     const tbody = document.getElementById('an-domain-tbody');
-    if (tbody) tbody.innerHTML = entries.map(([name,v]) => {
-        const total=v.Total||0, indian=v.Indian||0, intl=v.International||0;
-        const ip = total ? Math.round(indian/total*100) : 50;
+    if (tbody) tbody.innerHTML = entries.map(([name, v]) => {
+        const total = v.Total || 0, indian = v.Indian || 0, intl = v.International || 0;
+        const ip = total ? Math.round(indian / total * 100) : 50;
         // Compute from recent
-        const domRecent  = recent.filter(r => (r.domain||'').toLowerCase().includes(name.toLowerCase()));
-        const domVerif   = domRecent.filter(r=>(r.status||'').toLowerCase()==='verified').length;
-        const domIssues  = domRecent.filter(r=>(r.status||'').toLowerCase()==='discrepancy').length;
-        return `<tr class="clickable-row" onclick="domainRowDrilldown('${name.replace(/'/g,"\\'")}')">
+        const domRecent = recent.filter(r => (r.domain || '').toLowerCase().includes(name.toLowerCase()));
+        const domVerif = domRecent.filter(r => (r.status || '').toLowerCase() === 'verified').length;
+        const domIssues = domRecent.filter(r => (r.status || '').toLowerCase() === 'discrepancy').length;
+        return `<tr class="clickable-row" onclick="domainRowDrilldown('${name.replace(/'/g, "\\'")}')">
             <td><div style="font-weight:800;color:var(--text-1);">${escHtml(name)}</div>
                 <div style="font-size:0.68rem;color:var(--text-3);text-transform:uppercase;letter-spacing:0.06em;margin-top:2px;">Click to explore</div></td>
             <td style="text-align:center;"><span class="dom-total">${total}</span></td>
             <td style="text-align:center;"><span class="dom-indian">${indian}</span></td>
             <td style="text-align:center;"><span class="dom-intl">${intl}</span></td>
-            <td style="text-align:center;"><span style="color:var(--green);font-weight:700;">${domVerif||'—'}</span></td>
-            <td style="text-align:center;"><span style="color:var(--accent);font-weight:700;">${domIssues||'—'}</span></td>
-            <td><div class="dom-mix-bar"><div class="dom-mix-in" style="flex:${ip}"></div><div class="dom-mix-out" style="flex:${100-ip}"></div></div></td>
+            <td style="text-align:center;"><span style="color:var(--green);font-weight:700;">${domVerif || '—'}</span></td>
+            <td style="text-align:center;"><span style="color:var(--accent);font-weight:700;">${domIssues || '—'}</span></td>
+            <td><div class="dom-mix-bar"><div class="dom-mix-in" style="flex:${ip}"></div><div class="dom-mix-out" style="flex:${100 - ip}"></div></div></td>
         </tr>`;
     }).join('');
 }
@@ -1171,18 +1231,18 @@ function populateDomainTab(domainPivot) {
 function domainRowDrilldown(domainName) {
     const recent = globalData?.recent || [];
     const matches = recent.filter(r =>
-        (r.domain||'').toLowerCase().includes(domainName.toLowerCase()));
-    const rows = matches.length ? matches.map((r,i) => `<tr>
-        <td style="color:var(--text-3);">${i+1}</td>
-        <td style="font-weight:600;">${escHtml(r.name||r.course_name||'—')}</td>
-        <td>${escHtml(r.university||'—')}</td>
-        <td>${escHtml(r.country||'—')}</td>
+        (r.domain || '').toLowerCase().includes(domainName.toLowerCase()));
+    const rows = matches.length ? matches.map((r, i) => `<tr>
+        <td style="color:var(--text-3);">${i + 1}</td>
+        <td style="font-weight:600;">${escHtml(r.name || r.course_name || '—')}</td>
+        <td>${escHtml(r.university || '—')}</td>
+        <td>${escHtml(r.country || '—')}</td>
         <td>${statusBadge(r.status)}</td>
-        <td style="color:var(--text-3);font-size:0.78rem;">${escHtml(r.disc_reason||r.reason||'—')}</td>
+        <td style="color:var(--text-3);font-size:0.78rem;">${escHtml(r.disc_reason || r.reason || '—')}</td>
     </tr>`).join('')
-    : `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:20px;">No course-level data yet — run verification first</td></tr>`;
+        : `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:20px;">No course-level data yet — run verification first</td></tr>`;
 
-    openDrilldown('dom-drilldown','dom-drilldown-title','dom-drilldown-tbody',
+    openDrilldown('dom-drilldown', 'dom-drilldown-title', 'dom-drilldown-tbody',
         `🔬 ${domainName} — Domain Deep-Dive`, rows);
 }
 
@@ -1190,8 +1250,8 @@ function domainRowDrilldown(domainName) {
 function openAnalyticsDrilldownByCategory(catLabel) {
     const recent = globalData?.recent || [];
     const matches = recent.filter(r =>
-        (r.category||r.level||r.type||'').toLowerCase().includes(catLabel.toLowerCase()) ||
-        catLabel.toLowerCase().includes((r.category||r.level||r.type||'').toLowerCase())
+        (r.category || r.level || r.type || '').toLowerCase().includes(catLabel.toLowerCase()) ||
+        catLabel.toLowerCase().includes((r.category || r.level || r.type || '').toLowerCase())
     );
     alert(`Category "${catLabel}": ${matches.length} courses in live data.\nFilter via the All Courses tab for full details.`);
 }
@@ -1201,21 +1261,21 @@ function populateVerificationTab(stats, recent) {
     // KPI row
     const kpiRow = document.getElementById('verif-kpi-row');
     if (kpiRow) {
-        const tot  = stats.total||1;
+        const tot = stats.total || 1;
         const verKpis = [
-            { label:'Verified',     val: stats.verified||0,      pct: (stats.verified||0)/tot, color:'var(--green)' },
-            { label:'Discrepancies',val: stats.discrepancies||0, pct: (stats.discrepancies||0)/tot, color:'var(--accent)' },
-            { label:'Errors',       val: stats.errors||0,        pct: (stats.errors||0)/tot, color:'var(--red)' },
-            { label:'Unverified',   val: stats.unverified||0,    pct: (stats.unverified||0)/tot, color:'var(--purple)' },
+            { label: 'Verified', val: stats.verified || 0, pct: (stats.verified || 0) / tot, color: 'var(--green)' },
+            { label: 'Discrepancies', val: stats.discrepancies || 0, pct: (stats.discrepancies || 0) / tot, color: 'var(--accent)' },
+            { label: 'Errors', val: stats.errors || 0, pct: (stats.errors || 0) / tot, color: 'var(--red)' },
+            { label: 'Unverified', val: stats.unverified || 0, pct: (stats.unverified || 0) / tot, color: 'var(--purple)' },
         ];
         kpiRow.innerHTML = verKpis.map(k => `
             <div class="verif-kpi-card" style="border-left:4px solid ${k.color};">
                 <div style="font-size:1.8rem;font-weight:900;color:${k.color};">${k.val}</div>
                 <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);">${k.label}</div>
                 <div style="margin-top:8px;height:4px;background:var(--bg-hover);border-radius:20px;overflow:hidden;">
-                    <div style="height:4px;width:${(k.pct*100).toFixed(1)}%;background:${k.color};border-radius:20px;"></div>
+                    <div style="height:4px;width:${(k.pct * 100).toFixed(1)}%;background:${k.color};border-radius:20px;"></div>
                 </div>
-                <div style="font-size:0.72rem;color:var(--text-2);margin-top:4px;">${(k.pct*100).toFixed(1)}% of total</div>
+                <div style="font-size:0.72rem;color:var(--text-2);margin-top:4px;">${(k.pct * 100).toFixed(1)}% of total</div>
             </div>`).join('');
     }
 
@@ -1224,13 +1284,19 @@ function populateVerificationTab(stats, recent) {
     if (ctx) {
         if (anStatusChart) anStatusChart.destroy();
         anStatusChart = new Chart(ctx, {
-            type:'doughnut',
-            data:{ labels:['Verified','Discrepancy','Error','Unverified'],
-                   datasets:[{ data:[stats.verified||0, stats.discrepancies||0, stats.errors||0, stats.unverified||0],
-                       backgroundColor:['#1dda9f','#f59e0b','#f43f5e','#6366f1'],
-                       borderColor:'transparent', borderWidth:0, hoverOffset:10 }] },
-            options:{ responsive:true, maintainAspectRatio:false, cutout:'68%',
-                      plugins:{ legend:{display:false}, tooltip:{callbacks:{label:c=>`${c.label}: ${c.raw}`}} } }
+            type: 'doughnut',
+            data: {
+                labels: ['Verified', 'Discrepancy', 'Error', 'Unverified'],
+                datasets: [{
+                    data: [stats.verified || 0, stats.discrepancies || 0, stats.errors || 0, stats.unverified || 0],
+                    backgroundColor: ['#1dda9f', '#f59e0b', '#f43f5e', '#6366f1'],
+                    borderColor: 'transparent', borderWidth: 0, hoverOffset: 10
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false, cutout: '68%',
+                plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.label}: ${c.raw}` } } }
+            }
         });
     }
 
@@ -1239,23 +1305,23 @@ function populateVerificationTab(stats, recent) {
     recent.forEach(r => {
         if (r.disc_reason || r.reason) {
             const key = (r.disc_reason || r.reason || '').trim();
-            if (key) reasons[key] = (reasons[key]||0)+1;
+            if (key) reasons[key] = (reasons[key] || 0) + 1;
         }
     });
-    const topReasons = Object.entries(reasons).sort((a,b)=>b[1]-a[1]).slice(0,8);
+    const topReasons = Object.entries(reasons).sort((a, b) => b[1] - a[1]).slice(0, 8);
     const discEl = document.getElementById('an-disc-reasons');
     if (discEl) {
-        discEl.innerHTML = topReasons.length ? topReasons.map(([reason,cnt]) => `
+        discEl.innerHTML = topReasons.length ? topReasons.map(([reason, cnt]) => `
             <div class="disc-reason-row">
                 <div class="disc-reason-text">${escHtml(reason)}</div>
                 <div class="disc-reason-right">
                     <div class="disc-reason-bar-wrap">
-                        <div class="disc-reason-bar" style="width:${Math.round(cnt/topReasons[0][1]*100)}%"></div>
+                        <div class="disc-reason-bar" style="width:${Math.round(cnt / topReasons[0][1] * 100)}%"></div>
                     </div>
                     <span class="disc-reason-count">${cnt}</span>
                 </div>
             </div>`).join('')
-        : `<div style="padding:32px;text-align:center;color:var(--text-3);">✅ No discrepancy reasons found — all clean!</div>`;
+            : `<div style="padding:32px;text-align:center;color:var(--text-3);">✅ No discrepancy reasons found — all clean!</div>`;
     }
 
     // Verification by country table
@@ -1263,20 +1329,20 @@ function populateVerificationTab(stats, recent) {
     recent.forEach(r => {
         const c = r.country || 'Unknown';
         if (!isValidCountry(c)) return;
-        if (!countrySt[c]) countrySt[c] = {total:0,verified:0,discrepancy:0,error:0};
+        if (!countrySt[c]) countrySt[c] = { total: 0, verified: 0, discrepancy: 0, error: 0 };
         countrySt[c].total++;
-        const s = (r.status||'').toLowerCase();
-        if (s==='verified') countrySt[c].verified++;
-        else if (s==='discrepancy') countrySt[c].discrepancy++;
-        else if (s==='error') countrySt[c].error++;
+        const s = (r.status || '').toLowerCase();
+        if (s === 'verified') countrySt[c].verified++;
+        else if (s === 'discrepancy') countrySt[c].discrepancy++;
+        else if (s === 'error') countrySt[c].error++;
     });
     const vcTbody = document.getElementById('an-verif-country-tbody');
     if (vcTbody) {
-        const vcEntries = Object.entries(countrySt).sort((a,b)=>b[1].total-a[1].total);
-        vcTbody.innerHTML = vcEntries.length ? vcEntries.map(([country,st]) => {
-            const rate = (st.verified/st.total*100).toFixed(0);
-            const rateColor = rate>=80?'var(--green)':rate>=50?'var(--accent)':'var(--red)';
-            return `<tr class="clickable-row" onclick="geoRowDrilldown('${country.replace(/'/g,"\\'")}', ${st.total})">
+        const vcEntries = Object.entries(countrySt).sort((a, b) => b[1].total - a[1].total);
+        vcTbody.innerHTML = vcEntries.length ? vcEntries.map(([country, st]) => {
+            const rate = (st.verified / st.total * 100).toFixed(0);
+            const rateColor = rate >= 80 ? 'var(--green)' : rate >= 50 ? 'var(--accent)' : 'var(--red)';
+            return `<tr class="clickable-row" onclick="geoRowDrilldown('${country.replace(/'/g, "\\'")}', ${st.total})">
                 <td>${getFlag(country)} <strong>${escHtml(country)}</strong></td>
                 <td style="text-align:center;">${st.total}</td>
                 <td style="text-align:center;color:var(--green);font-weight:700;">${st.verified}</td>
@@ -1292,7 +1358,7 @@ function populateVerificationTab(stats, recent) {
                 </td>
             </tr>`;
         }).join('')
-        : `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:24px;">No verification data available — run verification first</td></tr>`;
+            : `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:24px;">No verification data available — run verification first</td></tr>`;
     }
 }
 
@@ -1311,35 +1377,35 @@ async function fetchAnalytics() {
     }
 
     // Always-available data from the dashboard
-    const recent        = globalData?.recent         || [];
-    const stats         = globalData?.stats          || {};
+    const recent = globalData?.recent || [];
+    const stats = globalData?.stats || {};
     const countryCounts = globalData?.country_counts || {};
-    const domainCounts  = globalData?.domain_counts  || {};
+    const domainCounts = globalData?.domain_counts || {};
 
     // Try supplementary analytics API (may be empty if no verification run)
-    let d = { course_category:{}, pricing_category:{}, variant_category:{}, country_pivot:{}, domain_pivot:{} };
+    let d = { course_category: {}, pricing_category: {}, variant_category: {}, country_pivot: {}, domain_pivot: {} };
     try {
-        const res  = await fetch('/api/analytics.json');
+        const res = await fetch(API_BASE_URL + '/api/analytics.json');
         const json = await res.json();
         if (json.status === 'success' && json.data) { d = analyticsData = json.data; }
-    } catch(e) { console.warn('[Analytics] analytics.json not available, using dashboard data only'); }
+    } catch (e) { console.warn('[Analytics] analytics.json not available, using dashboard data only'); }
 
     // Merge: prefer analytics data; fall back to globalData equivalents
-    const effectiveCountryPivot = Object.keys(d.country_pivot||{}).length > 0
+    const effectiveCountryPivot = Object.keys(d.country_pivot || {}).length > 0
         ? d.country_pivot
-        : Object.fromEntries(Object.entries(countryCounts).filter(([k])=>isValidCountry(k)));
+        : Object.fromEntries(Object.entries(countryCounts).filter(([k]) => isValidCountry(k)));
 
     let effectiveDomainPivot = d.domain_pivot || {};
     if (Object.keys(effectiveDomainPivot).length === 0 && Object.keys(domainCounts).length > 0) {
         effectiveDomainPivot = {};
         Object.entries(domainCounts).forEach(([dom, total]) => {
-            const dr  = recent.filter(r => (r.domain||'').toLowerCase().includes(dom.toLowerCase()));
-            const ind = dr.filter(r => (r.country||'').toLowerCase().includes('india')).length || Math.round(total * 0.7);
+            const dr = recent.filter(r => (r.domain || '').toLowerCase().includes(dom.toLowerCase()));
+            const ind = dr.filter(r => (r.country || '').toLowerCase().includes('india')).length || Math.round(total * 0.7);
             effectiveDomainPivot[dom] = { Total: total, Indian: ind, International: total - ind };
         });
     }
 
-    const effectiveCourseCategory = Object.keys(d.course_category||{}).length > 0
+    const effectiveCourseCategory = Object.keys(d.course_category || {}).length > 0
         ? d.course_category : domainCounts;
 
     // Populate all sections
@@ -1349,16 +1415,16 @@ async function fetchAnalytics() {
     populatePricingChart(d.pricing_category);
 
     // India vs World - always from country_counts (truth)
-    const realTotal  = stats.total || Object.values(countryCounts).reduce((s,v)=>s+v,0) || 1;
+    const realTotal = stats.total || Object.values(countryCounts).reduce((s, v) => s + v, 0) || 1;
     const indiaTotal = Object.entries(countryCounts)
         .filter(([k]) => k.toLowerCase().includes('india'))
-        .reduce((s,[,v]) => s+(Number(v)||0), 0);
+        .reduce((s, [, v]) => s + (Number(v) || 0), 0);
     populateSplitVisual((indiaTotal / realTotal) * 100);
 
     populateAnTopCountries(effectiveCountryPivot);
 
     geoTableData = Object.entries(effectiveCountryPivot)
-        .filter(([k])=>isValidCountry(k)).sort((a,b)=>b[1]-a[1]);
+        .filter(([k]) => isValidCountry(k)).sort((a, b) => b[1] - a[1]);
     renderGeoTable();
 
     populateDomainTab(effectiveDomainPivot);
@@ -1378,22 +1444,22 @@ function initUpload() {
     const label = document.getElementById('upload-label-global');
     if (!input) return;
 
-    const isLocal = ['localhost','127.0.0.1'].includes(window.location.hostname);
+    const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
     if (!isLocal && label) label.style.display = 'none';
 
     input.addEventListener('change', async () => {
         if (!input.files.length) return;
-        if (!isLocal) { alert('Upload is only available on the local dashboard.'); input.value=''; return; }
+        if (!isLocal) { alert('Upload is only available on the local dashboard.'); input.value = ''; return; }
         const orig = label.textContent;
         label.textContent = 'Uploading…';
         const fd = new FormData();
         for (const f of input.files) fd.append('files[]', f);
         try {
-            const res    = await fetch('/api/upload', { method:'POST', body:fd });
+            const res = await fetch(API_BASE_URL + '/api/upload', { method: 'POST', body: fd });
             const result = await res.json();
             alert(result.status === 'success' ? `✓ ${result.message}` : `✗ ${result.message}`);
             if (result.status === 'success') { allCoursesData = []; fetchData(); }
-        } catch(e) { alert('Upload failed.'); }
+        } catch (e) { alert('Upload failed.'); }
         finally { label.textContent = orig; input.value = ''; }
     });
 }
@@ -1402,19 +1468,24 @@ function initUpload() {
 //  HELPERS
 // ================================================================
 function getBadgeClass(status) {
-    switch ((status||'').toLowerCase()) {
-        case 'verified':    return 'badge-verified';
-        case 'error':       return 'badge-error';
+    switch ((status || '').toLowerCase()) {
+        case 'verified': return 'badge-verified';
+        case 'error': return 'badge-error';
         case 'discrepancy': return 'badge-discrepancy';
-        default:            return 'badge-open';
+        default: return 'badge-open';
     }
 }
 
 function escHtml(str) {
     if (!str) return '';
     return String(str)
-        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function escJs(str) {
+    if (!str) return '';
+    return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
 }
 
 // ================================================================

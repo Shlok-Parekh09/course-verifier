@@ -19,3 +19,4 @@ gunicorn
 pandas
 
 
+pymongo==4.6.3
