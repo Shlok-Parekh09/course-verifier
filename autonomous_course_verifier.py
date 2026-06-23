@@ -7561,6 +7561,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         course['lang_match'] = l_m
                         course['sk_match'] = s_m
                         course['uni_match'] = u_m
+                        course['country_match'] = co_m
                         
                         # At least one major match means we accept the fallback
                         is_match = (c_m or d_m or m_m or s_m)
