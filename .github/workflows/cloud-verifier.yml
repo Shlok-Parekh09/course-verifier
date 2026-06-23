@@ -48,5 +48,6 @@ jobs:
           git add autonomous_verified_*.json || true
           git add master_dashboard_results.json || true
           git add CombinedWork.xlsx || true
+          git add fees.xlsx || true
           git commit -m "chore: save cloud verification progress" || echo "No changes to commit"
           git push
