@@ -1,0 +1,44 @@
+name: Cloud Course Verifier
+
+on:
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      CI: true
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install System Dependencies (Chrome & Xvfb)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr libtesseract-dev xvfb x11-utils
+          # GitHub Actions Ubuntu-latest already has Google Chrome installed, 
+          # but we need to ensure xvfb can run headlessly.
+
+      - name: Install Python Dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run Verification (Virtual Display)
+        # Using xvfb-run to simulate a real monitor for undetected_chromedriver
+        run: |
+          xvfb-run --auto-servernum python autonomous_course_verifier.py
+
+      - name: Commit and Push Results (Checkpoint Failsafe)
+        if: always() # CRITICAL: This ensures your checkpoint saves even if the 6-hour limit is reached!
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add autonomous_verified_*.json master_dashboard_results.json CombinedWork.xlsx || echo "No files to add"
+          git commit -m "chore: save cloud verification progress" || echo "No changes to commit"
+          git push

@@ -8108,7 +8108,10 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         pdf_path = sys.argv[1].strip()
     else:
-        pdf_path = input("Enter the PDF filename: ").strip()
+        if os.environ.get('CI') == 'true':
+            pdf_path = "1.pdf"
+        else:
+            pdf_path = input("Enter the PDF filename: ").strip()
 
     if not os.path.exists(pdf_path):
         print(f"\nError: '{pdf_path}' not found.")
@@ -8119,7 +8122,11 @@ if __name__ == "__main__":
     start_idx = 0
     resume = False
     if os.path.exists(f"autonomous_verified_{os.path.basename(pdf_path)}.json"):
-        choice = input(f"\n[!] Checkpoint found (autonomous_verified_{os.path.basename(pdf_path)}.json). Resume from last run? (y/n): ").strip().lower()
+        if os.environ.get('CI') == 'true':
+            choice = 'y'
+            print("[*] CI mode detected. Auto-resuming from checkpoint.")
+        else:
+            choice = input(f"\n[!] Checkpoint found (autonomous_verified_{os.path.basename(pdf_path)}.json). Resume from last run? (y/n): ").strip().lower()
         if choice == 'y':
             try:
                 with open(f"autonomous_verified_{os.path.basename(pdf_path)}.json", "r", encoding="utf-8") as f:
@@ -8179,7 +8186,10 @@ if __name__ == "__main__":
     max_page = max((c.get('page_num', 1) for c in agent.courses), default=1)
 
     # Ask the user for an optional manual start page
-    manual_start = input(f"\n[?] From which page number ({min_page}-{max_page}) do you want to start web verification? (Press Enter to use default/checkpoint): ").strip()
+    if os.environ.get('CI') == 'true':
+        manual_start = ""
+    else:
+        manual_start = input(f"\n[?] From which page number ({min_page}-{max_page}) do you want to start web verification? (Press Enter to use default/checkpoint): ").strip()
     if manual_start.isdigit():
         start_page = int(manual_start)
         manual_idx = len(agent.courses)
@@ -8198,7 +8208,10 @@ if __name__ == "__main__":
     end_idx = len(agent.courses)
     min_page = min((c.get('page_num', 1) for c in agent.courses), default=1)
     max_page = max((c.get('page_num', 1) for c in agent.courses), default=1)
-    manual_end = input(f"\n[?] Up to which page number ({min_page}-{max_page}) do you want to run web verification? (Press Enter for all remaining): ").strip()
+    if os.environ.get('CI') == 'true':
+        manual_end = ""
+    else:
+        manual_end = input(f"\n[?] Up to which page number ({min_page}-{max_page}) do you want to run web verification? (Press Enter for all remaining): ").strip()
     if manual_end.isdigit():
         end_page = int(manual_end)
         for i, c in enumerate(agent.courses):
@@ -8238,7 +8251,10 @@ if __name__ == "__main__":
     print("\n[*] Verifying QS/NIRF rankings based on updated web extraction data...")
     agent.verify_rankings(start_idx=start_idx, end_idx=end_idx)
 
-    pdf_name = input("\n[?] Enter the name for the final PDF report (without .pdf, press Enter for default): ").strip()
+    if os.environ.get('CI') == 'true':
+        pdf_name = "Autonomous_Course_Verification_Report"
+    else:
+        pdf_name = input("\n[?] Enter the name for the final PDF report (without .pdf, press Enter for default): ").strip()
     if not pdf_name:
         pdf_name = "Autonomous_Course_Verification_Report"
         
@@ -8276,4 +8292,5 @@ if __name__ == "__main__":
     
     # Prevent undetected_chromedriver from spamming WinError 6 during Python teardown
     import os
-    os._exit(0)
+    if os.environ.get('CI') != 'true':
+        os._exit(0)

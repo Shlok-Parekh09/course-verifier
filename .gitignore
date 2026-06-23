@@ -39,3 +39,4 @@ skills-lock.json
 
 # MongoDB Connection
 mongo_uri.txt
+*.pdf
