@@ -12,6 +12,16 @@ from werkzeug.utils import secure_filename
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024 # 50 MB
 
+# CORS — allow the Firebase-hosted static site (and any other client) to call
+# this dashboard API cross-origin. Set CORS_ALLOW_ORIGIN to a specific origin
+# in production if you want to lock it down; defaults to '*'.
+@app.after_request
+def _add_cors_headers(resp):
+    resp.headers['Access-Control-Allow-Origin'] = os.environ.get('CORS_ALLOW_ORIGIN', '*')
+    resp.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, DELETE, OPTIONS'
+    return resp
+
 # Issue category constants (mirrored from verifier)
 ISSUE_CATEGORY_WEBSITE = "website_issue"
 ISSUE_CATEGORY_COURSE = "course_issue"
@@ -835,8 +845,11 @@ def api_upload():
                             if all(matches):
                                 c['status'] = 'Verified'
                                 c['disc_reason'] = ''
+                                c['issue_category'] = ISSUE_CATEGORY_VERIFIED
+                                c['issue_sub_type'] = ''
                             else:
                                 c['status'] = 'Discrepancy'
+                                c['issue_category'] = ISSUE_CATEGORY_COURSE
                                 fails = []
                                 if not c['cost_match']: fails.append('Cost')
                                 if not c['duration_match']: fails.append('Duration')
