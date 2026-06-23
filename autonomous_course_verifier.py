@@ -7172,17 +7172,17 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         web_duration = l_durd
                         web_mode = l_modd
                         web_language = l_land
-                        
-                    # Final platform specific hardcodes
-                    if any(platform in str(driver.current_url).lower() or platform in url.lower() for platform in ['nptel', 'swayam', 'coursera', 'edx']):
-                        mode_match = True
-                        web_mode = "Online"
                         web_country = l_countryd
                         sk_detail = l_skd
                         if not llm_uni_match and ("not " in str(llm_unid).lower() or "provided by" in str(llm_unid).lower()):
                             uni_match = False
                         else:
                             uni_match = uni_match or llm_uni_match
+                        
+                    # Final platform specific hardcodes
+                    if any(platform in str(driver.current_url).lower() or platform in url.lower() for platform in ['nptel', 'swayam', 'coursera', 'edx']):
+                        mode_match = True
+                        web_mode = "Online"
                         
                         # Re-apply heuristics
                         is_india_fallback = str(course.get('country', '')).lower() in ['india', 'in', 'ind', 'bharat']
