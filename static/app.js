@@ -343,6 +343,8 @@ function updateCards(stats) {
     document.getElementById('error-count').textContent        = (stats.errors || 0) + (stats.unverified || 0);
     document.getElementById('website-issue-count').textContent = stats.website_issues || 0;
     document.getElementById('course-issue-count').textContent  = stats.course_issues || 0;
+    const oic = document.getElementById('open-issue-count');
+    if (oic) oic.textContent = (stats.open_issues != null ? stats.open_issues : 0);
 
     // Dynamic trend % labels
     const t = stats.total || 1;
@@ -352,6 +354,8 @@ function updateCards(stats) {
     document.getElementById('kpi-webissue-trend').textContent  = `🔗 ${Math.round((stats.website_issues||0)/t*100)}% site broken`;
     document.getElementById('kpi-courseissue-trend').textContent = `📋 ${Math.round((stats.course_issues||0)/t*100)}% data mismatch`;
     document.getElementById('kpi-total-trend').textContent     = `— ${t} records`;
+    const koi = document.getElementById('kpi-openissue-trend');
+    if (koi) koi.textContent = stats.open_issues ? `✓ ${stats.open_issues} open` : '✓ All clear';
 }
 
 function updatePieChart(stats) {
@@ -638,15 +642,105 @@ async function showCourseModal(courseId, fallbackName, fallbackUni) {
     ];
 
     const tbody = document.getElementById('modal-table-body');
-    tbody.innerHTML = rows.map(row => `
-        <tr style="border-bottom:1px solid var(--border);">
+    // Per-attribute issue solving
+    currentModalCourseId = c.id;
+    const solvedAttrs = Array.isArray(c.solved_attrs) ? c.solved_attrs : [];
+    const falseRows = rows.filter(r => r.status === 'FALSE');
+    const solvedCount = falseRows.filter(r => solvedAttrs.includes(r.attribute)).length;
+    const isWebsiteIssue = c.issue_category === 'website_issue';
+    const isCourseIssue   = c.issue_category === 'course_issue';
+    const hasOpenAttrs    = falseRows.some(r => !solvedAttrs.includes(r.attribute));
+
+    tbody.innerHTML = rows.map(row => {
+        const isFalse = row.status === 'FALSE';
+        const solved  = isFalse && solvedAttrs.includes(row.attribute);
+        const attrJs = JSON.stringify(row.attribute).replace(/"/g, '&quot;');
+        let action = '<span style="color:var(--text-3);font-size:0.75rem;">—</span>';
+        if (isFalse) {
+            action = solved
+                ? `<button class="solve-tick solved" title="Mark unsolved" onclick="solveCourse(${c.id},${attrJs},true)">✓ Solved</button>`
+                : `<button class="solve-tick" title="Mark this issue solved" onclick="solveCourse(${c.id},${attrJs},false)">✓ Solve</button>`;
+        }
+        const statusTxt = solved ? 'SOLVED' : row.status;
+        const statusClr = (row.status==='MATCH' || solved) ? 'var(--green)' : 'var(--red)';
+        return `
+        <tr style="border-bottom:1px solid var(--border);" class="${solved?'solved-row':''}">
             <td style="padding:10px 12px;color:var(--text-1);font-weight:600;font-size:0.85rem;">${row.attribute}</td>
             <td style="padding:10px 12px;color:var(--text-2);font-size:0.85rem;">${escHtml(row.original)}</td>
             <td style="padding:10px 12px;color:var(--text-2);font-size:0.85rem;">${escHtml(row.verified)}</td>
-            <td style="padding:10px 12px;text-align:center;font-weight:700;font-size:0.8rem;letter-spacing:0.04em;color:${row.status==='MATCH'?'var(--green)':'var(--red)'};">${row.status}</td>
-        </tr>`).join('');
+            <td style="padding:10px 12px;text-align:center;font-weight:700;font-size:0.8rem;letter-spacing:0.04em;color:${statusClr};">${statusTxt}</td>
+            <td style="padding:6px 10px;text-align:center;">${action}</td>
+        </tr>`;
+    }).join('');
+
+    // Header solve controls
+    const solveAllBtn = document.getElementById('solve-all-btn');
+    const solveWebBtn = document.getElementById('solve-website-btn');
+    const progress   = document.getElementById('modal-solve-progress');
+    if (solveAllBtn) {
+        solveAllBtn.style.display = (isCourseIssue && hasOpenAttrs) ? '' : 'none';
+        solveAllBtn.textContent = `✓ Solve all (${falseRows.length - solvedCount} open)`;
+        solveAllBtn.onclick = () => solveCourse(c.id, '_all', false);
+    }
+    if (solveWebBtn) {
+        solveWebBtn.style.display = isWebsiteIssue ? '' : 'none';
+        solveWebBtn.onclick = () => solveCourse(c.id, '_website', false);
+    }
+    if (progress) {
+        if (isCourseIssue && falseRows.length > 0) {
+            progress.style.display = '';
+            progress.textContent = `Solved ${solvedCount}/${falseRows.length}`;
+        } else {
+            progress.style.display = 'none';
+        }
+    }
 
     document.getElementById('course-modal').classList.add('open');
+}
+
+// ── Per-issue solving ─────────────────────────────────────────────
+let currentModalCourseId = null;
+
+async function solveCourse(courseId, attr, unsolve) {
+    if (courseId == null) return;
+    try {
+        const res = await fetch(`/api/course/${courseId}/solve`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({attr, unsolve: !!unsolve})
+        });
+        const data = await res.json();
+        if (data.status !== 'success') { alert(data.message || 'Solve failed'); return; }
+
+        // Merge returned course fields into cached data
+        const upd = data.course || {};
+        const mergeInto = list => {
+            const c = list.find(x => String(x.id) === String(courseId));
+            if (c) {
+                c.issue_category = upd.issue_category;
+                c.issue_sub_type = upd.issue_sub_type;
+                c.status = upd.status;
+                c.disc_reason = upd.disc_reason;
+                c.solved_attrs = upd.solved_attrs || [];
+            }
+        };
+        mergeInto(allCoursesData);
+        mergeInto(recentData);
+
+        // Live-update KPIs + issue donut from returned stats
+        if (data.stats) {
+            updateCards(data.stats);
+            updateIssuePieChart(data.stats);
+        }
+
+        // Re-render the open modal so ticks/progress reflect the new state,
+        // then refresh from the server so every other user (5s poll) converges.
+        showCourseModal(courseId);
+        if (data.stats) fetchData();
+    } catch (e) {
+        console.error('Solve error:', e);
+        alert('Solve request failed.');
+    }
 }
 
 function initModal() {
@@ -1297,6 +1391,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Chain: fetch dashboard data first, then analytics (analytics needs globalData)
     fetchData().then(() => fetchAnalytics());
 
-    // Periodic refresh for dashboard data; analytics refreshes on tab click
-    setInterval(fetchData, 8000);
+    // Periodic refresh for dashboard data; analytics refreshes on tab click.
+    // 5s poll keeps every viewer (multiple users) in sync in near-real time —
+    // any Solved action is persisted server-side and shows up here within 5s.
+    setInterval(fetchData, 5000);
 });

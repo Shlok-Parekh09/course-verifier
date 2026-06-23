@@ -77,6 +77,11 @@
                     <div class="kpi-value" id="course-issue-count">0</div>
                     <span class="kpi-trend warn" id="kpi-courseissue-trend">📋 Mismatch</span>
                 </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Open Issues</div>
+                    <div class="kpi-value" id="open-issue-count">0</div>
+                    <span class="kpi-trend warn" id="kpi-openissue-trend">✓ Solve to decrement</span>
+                </div>
             </div>
 
             <!-- Country-wise Analysis  ← MAIN DASHBOARD SECTION -->
@@ -533,6 +538,9 @@
         <div class="modal-hdr">
             <h3 id="modal-course-title">Course Details</h3>
             <div style="display:flex; gap:10px; align-items:center;">
+                <span id="modal-solve-progress" class="modal-progress" style="display:none;"></span>
+                <button id="solve-all-btn" class="modal-solve" style="display:none;">✓ Solve all</button>
+                <button id="solve-website-btn" class="modal-solve" style="display:none;">✓ Solved</button>
                 <button id="delete-course-btn" class="modal-del">Delete</button>
                 <button id="close-modal" class="modal-close">✕</button>
             </div>
@@ -544,6 +552,7 @@
                     <th style="padding:10px 12px; text-align:left; font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--text-3);">Original (PDF)</th>
                     <th style="padding:10px 12px; text-align:left; font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--text-3);">Verified (Web)</th>
                     <th style="padding:10px 12px; text-align:center; font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--text-3);">Status</th>
+                    <th style="padding:10px 12px; text-align:center; font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--text-3);">Action</th>
                 </tr>
             </thead>
             <tbody id="modal-table-body"></tbody>
@@ -551,6 +560,6 @@
     </div>
 </div>
 
-<script src="/static/app.js?v=5"></script>
+<script src="/static/app.js?v=6"></script>
 </body>
 </html>
