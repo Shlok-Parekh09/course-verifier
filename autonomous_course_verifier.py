@@ -5901,13 +5901,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         import threading
         
         checkpoint_lock = threading.Lock()
-        # GitHub Actions (CI) only has 2 cores and 7GB RAM. Running 6 browsers causes Out of Memory crashes.
-        if os.environ.get('CI') == 'true':
-            NUM_BROWSERS = 2
-            print("[*] CI Environment detected. Limiting to 2 concurrent browsers to prevent memory crashes.")
-        else:
-            NUM_BROWSERS = 6  # User requested 6 threads locally.
-        
+        NUM_BROWSERS = 6  # User requested 6 threads. Restarting after every course ensures memory stays low.
         if NUM_BROWSERS <= 0: return
         
         import subprocess
