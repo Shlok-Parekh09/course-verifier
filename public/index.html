@@ -1,89 +1,565 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Welcome to Firebase Hosting</title>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Course Verifier Dashboard</title>
+    <meta name="description" content="Live course verification and country-wise analysis platform by Khushboo Singh">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css?v=5">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/chartjs-chart-geo@4.2.8/build/index.umd.min.js"></script>
+    <script src="https://kit.fontawesome.com/997b419143.js" crossorigin="anonymous"></script>
+</head>
+<body>
 
-    <!-- update the version number as needed -->
-    <script defer src="/__/firebase/12.15.0/firebase-app-compat.js"></script>
-    <!-- include only the Firebase features as you need -->
-    <script defer src="/__/firebase/12.15.0/firebase-auth-compat.js"></script>
-    <script defer src="/__/firebase/12.15.0/firebase-database-compat.js"></script>
-    <script defer src="/__/firebase/12.15.0/firebase-firestore-compat.js"></script>
-    <script defer src="/__/firebase/12.15.0/firebase-functions-compat.js"></script>
-    <script defer src="/__/firebase/12.15.0/firebase-messaging-compat.js"></script>
-    <script defer src="/__/firebase/12.15.0/firebase-storage-compat.js"></script>
-    <script defer src="/__/firebase/12.15.0/firebase-analytics-compat.js"></script>
-    <script defer src="/__/firebase/12.15.0/firebase-remote-config-compat.js"></script>
-    <script defer src="/__/firebase/12.15.0/firebase-performance-compat.js"></script>
-    <!-- 
-      initialize the SDK after all desired features are loaded, set useEmulator to false
-      to avoid connecting the SDK to running emulators.
-    -->
-    <script defer src="/__/firebase/init.js?useEmulator=true"></script>
+<!-- ══════════════ TOP NAVBAR ══════════════ -->
+<nav class="navbar">
+    <a class="navbar-logo" href="#">
+        <div class="logo-icon">⬡</div>
+        CourseVerify
+    </a>
 
-    <style media="screen">
-      body { background: #ECEFF1; color: rgba(0,0,0,0.87); font-family: Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; }
-      #message { background: white; max-width: 360px; margin: 100px auto 16px; padding: 32px 24px; border-radius: 3px; }
-      #message h2 { color: #ffa100; font-weight: bold; font-size: 16px; margin: 0 0 8px; }
-      #message h1 { font-size: 22px; font-weight: 300; color: rgba(0,0,0,0.6); margin: 0 0 16px;}
-      #message p { line-height: 140%; margin: 16px 0 24px; font-size: 14px; }
-      #message a { display: block; text-align: center; background: #039be5; text-transform: uppercase; text-decoration: none; color: white; padding: 16px; border-radius: 4px; }
-      #message, #message a { box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24); }
-      #load { color: rgba(0,0,0,0.4); text-align: center; font-size: 13px; }
-      @media (max-width: 600px) {
-        body, #message { margin-top: 0; background: white; box-shadow: none; }
-        body { border-top: 16px solid #ffa100; }
-      }
-    </style>
-  </head>
-  <body>
-    <div id="message">
-      <h2>Welcome</h2>
-      <h1>Firebase Hosting Setup Complete</h1>
-      <p>You're seeing this because you've successfully setup Firebase Hosting. Now it's time to go build something extraordinary!</p>
-      <a target="_blank" href="https://firebase.google.com/docs/hosting/">Open Hosting Documentation</a>
+    <div class="navbar-tabs" id="nav-tabs">
+        <a href="#" data-target="tab-dashboard" class="active">Dashboard</a>
+        <a href="#" data-target="tab-analytics">Analytics</a>
+        <a href="#" data-target="tab-verification">Verification</a>
+        <a href="#" data-target="tab-courses">All Courses</a>
+        
     </div>
-    <p id="load">Firebase SDK Loading&hellip;</p>
 
-    <script>
-      document.addEventListener('DOMContentLoaded', function() {
-        const loadEl = document.querySelector('#load');
-        // // 🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥
-        // // The Firebase SDK is initialized and available here!
-        //
-        // firebase.auth().onAuthStateChanged(user => { });
-        // firebase.database().ref('/path/to/ref').on('value', snapshot => { });
-        // firebase.firestore().doc('/foo/bar').get().then(() => { });
-        // firebase.functions().httpsCallable('yourFunction')().then(() => { });
-        // firebase.messaging().requestPermission().then(() => { });
-        // firebase.storage().ref('/path/to/ref').getDownloadURL().then(() => { });
-        // firebase.analytics(); // call to activate
-        // firebase.analytics().logEvent('tutorial_completed');
-        // firebase.performance(); // call to activate
-        //
-        // // 🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥
+    <div class="navbar-right">
+        <span class="theme-label" id="theme-label">Dark</span>
+        <div class="theme-toggle" id="theme-toggle" title="Toggle dark/light mode"></div>
 
-        try {
-          let app = firebase.app();
-          let features = [
-            'auth', 
-            'database', 
-            'firestore',
-            'functions',
-            'messaging', 
-            'storage', 
-            'analytics', 
-            'remoteConfig',
-            'performance',
-          ].filter(feature => typeof app[feature] === 'function');
-          loadEl.textContent = `Firebase SDK loaded with ${features.join(', ')}`;
-        } catch (e) {
-          console.error(e);
-          loadEl.textContent = 'Error loading the Firebase SDK, check the console.';
-        }
-      });
-    </script>
-  </body>
+        <input type="file" id="pdf-upload-global" multiple accept=".pdf" style="display:none;">
+        <label for="pdf-upload-global" class="upload-btn" id="upload-label-global">↑ Upload PDFs</label>
+    </div>
+</nav>
+
+<!-- ══════════════ PAGE SHELL ══════════════ -->
+<div class="page">
+
+    <!-- ══════════ DASHBOARD TAB ══════════ -->
+    <div id="tab-dashboard" class="tab-content active">
+        <div class="dash-wrap">
+
+            <!-- KPI Cards -->
+            <div class="kpi-row">
+                <div class="kpi-card">
+                    <div class="kpi-label">Total Courses</div>
+                    <div class="kpi-value" id="total-count">0</div>
+                    <span class="kpi-trend neu" id="kpi-total-trend">— All time</span>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Perfect Matches</div>
+                    <div class="kpi-value" id="verified-count">0</div>
+                    <span class="kpi-trend up" id="kpi-verified-trend">↑ Verified</span>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Discrepancies</div>
+                    <div class="kpi-value" id="discrepancy-count">0</div>
+                    <span class="kpi-trend warn" id="kpi-disc-trend">⚠ Need review</span>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Errors / Unverified</div>
+                    <div class="kpi-value" id="error-count">0</div>
+                    <span class="kpi-trend down" id="kpi-err-trend">✕ Failed</span>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Website Issues</div>
+                    <div class="kpi-value" id="website-issue-count">0</div>
+                    <span class="kpi-trend down" id="kpi-webissue-trend">🔗 Broken</span>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Course Issues</div>
+                    <div class="kpi-value" id="course-issue-count">0</div>
+                    <span class="kpi-trend warn" id="kpi-courseissue-trend">📋 Mismatch</span>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Open Issues</div>
+                    <div class="kpi-value" id="open-issue-count">0</div>
+                    <span class="kpi-trend warn" id="kpi-openissue-trend">✓ Solve to decrement</span>
+                </div>
+            </div>
+
+            <!-- Country-wise Analysis  ← MAIN DASHBOARD SECTION -->
+            <div class="country-split">
+                <!-- World Map -->
+                <div class="panel">
+                    <div class="panel-hdr">
+                        <div>
+                            <div class="panel-title">Course Distribution Map</div>
+                            <div class="panel-sub">Courses by country of origin</div>
+                        </div>
+                        <div class="icon-btn" id="map-expand-btn" title="Expand">⤢</div>
+                    </div>
+                    <div class="chart-wrap chart-h420">
+                        <canvas id="countryMapChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Country Leaderboard -->
+                <div class="panel">
+                    <div class="panel-hdr">
+                        <div>
+                            <div class="panel-title">Country Leaders</div>
+                            <div class="panel-sub">Top countries by course count</div>
+                        </div>
+                        <div class="icon-btn" id="country-toggle-view" title="Switch view">≡</div>
+                    </div>
+                    <div id="country-list" class="country-list">
+                        <!-- populated by JS -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Charts Row -->
+            <div class="main-grid">
+                <div style="display:grid; gap:20px; align-items:start;">
+
+                    <!-- Line Chart: Country Trend -->
+                    <div class="panel">
+                        <div class="panel-hdr">
+                            <div>
+                                <div class="panel-title">Country-wise Course Trend</div>
+                                <div class="panel-sub">Distribution across countries</div>
+                            </div>
+                        </div>
+                        <div class="chart-wrap chart-h260">
+                            <canvas id="countryLineChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Bar Chart -->
+                    <div class="panel">
+                        <div class="panel-hdr">
+                            <div class="panel-title">Course Breakdown</div>
+                            <div class="pill-toggle" id="bar-toggle-pills">
+                                <button class="active" data-val="domain">Domain</button>
+                                <button data-val="country">Country</button>
+                            </div>
+                        </div>
+                        <div class="chart-wrap chart-h260">
+                            <canvas id="coursesBarChart"></canvas>
+                        </div>
+                        <p class="hint">Click a bar to filter the detail table</p>
+                    </div>
+
+                </div>
+
+                <!-- Right: Donut + Filtered Table -->
+                <div style="display:grid; gap:20px; align-items:start;">
+
+                    <!-- Doughnut -->
+                    <div class="panel">
+                        <div class="panel-hdr">
+                            <div class="panel-title">Verification Breakdown</div>
+                        </div>
+                        <div class="chart-wrap chart-h260">
+                            <canvas id="statusPieChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Issue Category Doughnut -->
+                    <div class="panel">
+                        <div class="panel-hdr">
+                            <div class="panel-title">Issue Category Breakdown</div>
+                        </div>
+                        <div class="chart-wrap chart-h260">
+                            <canvas id="issuePieChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Filter Summary Cards -->
+                    <div class="panel" id="course-details-panel" style="display:none;">
+                        <div class="panel-hdr">
+                            <div class="panel-title">Filtered Courses &nbsp;<span id="active-filter-badge" class="badge badge-open"></span></div>
+                            <button id="clear-filter" class="btn-pg">✕ Clear</button>
+                        </div>
+                        <div class="tbl-wrap" style="max-height:280px;">
+                            <table class="data-table">
+                                <thead><tr>
+                                    <th>Name</th><th>University</th>
+                                    <th>Country</th><th>QS</th><th>NIRF</th>
+                                </tr></thead>
+                                <tbody id="course-details-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ══════════ VERIFICATION TAB ══════════ -->
+    <div id="tab-verification" class="tab-content">
+        <div style="padding:24px 28px;">
+            <div class="panel">
+                <div class="panel-hdr">
+                    <div class="panel-title">Recent Verifications</div>
+                    <div class="pag">
+                        <button id="recent-prev-page" class="btn-pg">← Prev</button>
+                        <span id="recent-page-info">Page 1</span>
+                        <button id="recent-next-page" class="btn-pg">Next →</button>
+                    </div>
+                </div>
+                <div class="tbl-wrap" style="max-height:72vh;">
+                    <table class="data-table">
+                        <thead><tr>
+                            <th>Course Name</th><th>University</th>
+                            <th>Status</th><th>Reason</th><th>Page</th>
+                        </tr></thead>
+                        <tbody id="recent-verifications-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════ ALL COURSES TAB ══════════ -->
+    <div id="tab-courses" class="tab-content">
+        <div style="padding:24px 28px;">
+            <div class="panel">
+                <div class="panel-hdr">
+                    <div class="panel-title">Master Course Database</div>
+                    <div class="pag">
+                        <button id="prev-page" class="btn-pg">← Prev</button>
+                        <span id="page-info">Page 1</span>
+                        <button id="next-page" class="btn-pg">Next →</button>
+                    </div>
+                </div>
+                <div class="tbl-wrap" style="max-height:72vh;">
+                    <table class="data-table">
+                        <thead><tr>
+                            <th>#</th><th>Name</th><th>University</th>
+                            <th>Domain</th><th>Country</th>
+                            <th>QS</th><th>NIRF</th><th>Status</th>
+                        </tr></thead>
+                        <tbody id="all-courses-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════ ANALYTICS TAB ══════════ -->
+    <div id="tab-analytics" class="tab-content">
+        <div class="analytics-wrap">
+
+            <!-- Analytics Page Header -->
+            <div class="analytics-page-hdr">
+                <div class="analytics-page-title">
+                    <div class="analytics-icon">📊</div>
+                    <div>
+                        <h2>Course Analytics</h2>
+                        <p>Deep-dive into every dimension of the global portfolio</p>
+                    </div>
+                </div>
+                <nav class="analytics-subnav" id="analytics-subnav">
+                    <button class="asubtab active" data-atab="atab-overview">📋 Overview</button>
+                    <button class="asubtab" data-atab="atab-geography">🌍 Geography</button>
+                    <button class="asubtab" data-atab="atab-domains">🔬 Specializations</button>
+                    <button class="asubtab" data-atab="atab-verification">✅ Verification</button>
+                </nav>
+            </div>
+
+            <!-- Analytics KPI Cards (always visible) -->
+            <div class="analytics-kpi-row">
+                <div class="a-stat-card a-blue" title="Click to see breakdown" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-overview]').click()">
+                    <div class="a-stat-icon">📚</div>
+                    <div class="a-stat-body">
+                        <div class="a-stat-val" id="an-total">—</div>
+                        <div class="a-stat-label">Total Unique Courses</div>
+                        <div class="a-stat-sub" id="an-variants-sub">— delivery variants</div>
+                    </div>
+                </div>
+                <div class="a-stat-card a-green" title="Click to filter" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-geography]').click()">
+                    <div class="a-stat-icon">🇮🇳</div>
+                    <div class="a-stat-body">
+                        <div class="a-stat-val" id="an-indian">—</div>
+                        <div class="a-stat-label">Indian Programs</div>
+                        <div class="a-stat-sub" id="an-indian-pct">—% of total catalog</div>
+                    </div>
+                </div>
+                <div class="a-stat-card a-purple" title="Click to see international breakdown" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-geography]').click()">
+                    <div class="a-stat-icon">🌐</div>
+                    <div class="a-stat-body">
+                        <div class="a-stat-val" id="an-intl">—</div>
+                        <div class="a-stat-label">International Programs</div>
+                        <div class="a-stat-sub" id="an-countries-count">— countries represented</div>
+                    </div>
+                </div>
+                <div class="a-stat-card a-orange" title="Click to see verification stats" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-verification]').click()">
+                    <div class="a-stat-icon">✅</div>
+                    <div class="a-stat-body">
+                        <div class="a-stat-val" id="an-matchrate">—%</div>
+                        <div class="a-stat-label">Verification Match Rate</div>
+                        <div class="a-stat-sub" id="an-verified-sub">— courses perfectly verified</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── OVERVIEW sub-tab ── -->
+            <div id="atab-overview" class="atab-content active">
+
+                <!-- Auto-computed Insight Cards -->
+                <div class="insight-cards-row" id="insight-cards-row"></div>
+
+                <div class="an-overview-grid">
+
+                    <!-- Doughnut: Academic Credential Mix -->
+                    <div class="an-card an-card-lg">
+                        <div class="an-card-hdr">
+                            <div>
+                                <div class="an-card-title">Academic Credential Mix</div>
+                                <div class="an-card-sub">Categorization by degree & certification level — click a segment</div>
+                            </div>
+                            <div class="an-badge indigo">Credential Levels</div>
+                        </div>
+                        <div class="an-donut-wrap">
+                            <div class="an-chart-zone" style="height:300px; position:relative;">
+                                <canvas id="an-credential-chart"></canvas>
+                            </div>
+                            <div id="an-credential-legend" class="an-legend-grid"></div>
+                        </div>
+                    </div>
+
+                    <!-- India vs International Split -->
+                    <div class="an-card">
+                        <div class="an-card-hdr">
+                            <div>
+                                <div class="an-card-title">🇮🇳 India vs 🌐 World</div>
+                                <div class="an-card-sub">Portfolio split by origin</div>
+                            </div>
+                        </div>
+                        <div id="an-split-visual" class="an-split-block"></div>
+                        <div id="an-top-countries" class="an-hub-list" style="margin-top:16px;"></div>
+                        <button class="an-cta-btn" onclick="document.querySelector('.asubtab[data-atab=atab-geography]').click()">
+                            View Full Geographic Report →
+                        </button>
+                    </div>
+
+                    <!-- Full-width Pricing Bar Chart -->
+                    <div class="an-card an-full-width">
+                        <div class="an-card-hdr">
+                            <div>
+                                <div class="an-card-title">Cost-Access Intelligence</div>
+                                <div class="an-card-sub">Subsidized and free learning path availability — click bars to drill down</div>
+                            </div>
+                            <div class="an-badge rose">Pricing Segments</div>
+                        </div>
+                        <div class="an-chart-zone" style="height:280px; position:relative;">
+                            <canvas id="an-pricing-chart"></canvas>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- ── GEOGRAPHY sub-tab ── -->
+            <div id="atab-geography" class="atab-content">
+                <div class="an-section-hdr">
+                    <div>
+                        <div class="an-section-title">Geographic Footprint</div>
+                        <div class="an-section-sub">Click any row to see its courses · sorted by volume</div>
+                    </div>
+                    <div class="an-search-wrap">
+                        <span class="an-search-icon">🔍</span>
+                        <input type="text" id="an-country-search" placeholder="Search country…" class="an-search-input">
+                    </div>
+                </div>
+
+                <div class="an-card an-full-width" style="padding:0; overflow:hidden;">
+                    <div class="tbl-wrap" style="max-height:55vh;">
+                        <table class="data-table an-geo-table">
+                            <thead><tr>
+                                <th style="width:56px;">Rank</th>
+                                <th>Country</th>
+                                <th style="text-align:center;">Courses</th>
+                                <th style="text-align:center;">Verified ✅</th>
+                                <th style="text-align:center;">Issues ⚠️</th>
+                                <th style="text-align:right;">Share</th>
+                                <th style="width:120px;">Distribution</th>
+                            </tr></thead>
+                            <tbody id="an-country-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Drill-down panel for geography -->
+                <div id="geo-drilldown" class="drilldown-panel" style="display:none;">
+                    <div class="drilldown-hdr">
+                        <div id="geo-drilldown-title" class="drilldown-title"></div>
+                        <button class="drilldown-close" onclick="closeDrilldown('geo-drilldown')">✕ Close</button>
+                    </div>
+                    <div class="tbl-wrap" style="max-height:40vh;">
+                        <table class="data-table">
+                            <thead><tr><th>#</th><th>Course Name</th><th>University</th><th>Domain</th><th>Status</th></tr></thead>
+                            <tbody id="geo-drilldown-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── SPECIALIZATIONS sub-tab ── -->
+            <div id="atab-domains" class="atab-content">
+                <div class="an-section-hdr" style="margin-bottom:20px;">
+                    <div>
+                        <div class="an-section-title">Domain Intelligence</div>
+                        <div class="an-section-sub">Click any row or bar to drill into courses of that specialization</div>
+                    </div>
+                </div>
+
+                <!-- Domain bar chart -->
+                <div class="an-card an-full-width">
+                    <div class="an-card-hdr">
+                        <div class="an-card-title">📊 Domain Saturation · click bars to explore</div>
+                        <div class="an-badge slate">Unique Offerings</div>
+                    </div>
+                    <div class="an-chart-zone" style="height:340px; position:relative;">
+                        <canvas id="an-domain-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Domain table -->
+                <div class="an-card an-full-width" style="padding:0; overflow:hidden;">
+                    <div class="tbl-wrap" style="max-height:45vh;">
+                        <table class="data-table an-domain-table">
+                            <thead><tr>
+                                <th>Specialization</th>
+                                <th style="text-align:center;">Total</th>
+                                <th style="text-align:center;">🇮🇳 Indian</th>
+                                <th style="text-align:center;">🌐 Intl</th>
+                                <th style="text-align:center;">✅ Verified</th>
+                                <th style="text-align:center;">⚠️ Issues</th>
+                                <th style="width:100px;">Mix</th>
+                            </tr></thead>
+                            <tbody id="an-domain-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Drill-down panel for domains -->
+                <div id="dom-drilldown" class="drilldown-panel" style="display:none;">
+                    <div class="drilldown-hdr">
+                        <div id="dom-drilldown-title" class="drilldown-title"></div>
+                        <button class="drilldown-close" onclick="closeDrilldown('dom-drilldown')">✕ Close</button>
+                    </div>
+                    <div class="tbl-wrap" style="max-height:40vh;">
+                        <table class="data-table">
+                            <thead><tr><th>#</th><th>Course Name</th><th>University</th><th>Country</th><th>Status</th><th>Note</th></tr></thead>
+                            <tbody id="dom-drilldown-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── VERIFICATION sub-tab ── -->
+            <div id="atab-verification" class="atab-content">
+                <div class="an-section-hdr" style="margin-bottom:20px;">
+                    <div>
+                        <div class="an-section-title">Verification Intelligence</div>
+                        <div class="an-section-sub">Accuracy rates, discrepancy reasons, and quality signals across the catalog</div>
+                    </div>
+                </div>
+
+                <!-- Verification KPI row -->
+                <div class="verif-kpi-row" id="verif-kpi-row"></div>
+
+                <div class="an-overview-grid" style="margin-top:20px;">
+                    <!-- Verification status doughnut -->
+                    <div class="an-card">
+                        <div class="an-card-hdr">
+                            <div class="an-card-title">Verification Status Breakdown</div>
+                            <div class="an-badge indigo">Live Data</div>
+                        </div>
+                        <div class="an-chart-zone" style="height:280px; position:relative;">
+                            <canvas id="an-status-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Top discrepancy reasons -->
+                    <div class="an-card">
+                        <div class="an-card-hdr">
+                            <div class="an-card-title">⚠️ Top Discrepancy Reasons</div>
+                            <div class="an-badge rose">Quality Flags</div>
+                        </div>
+                        <div id="an-disc-reasons" class="disc-reason-list"></div>
+                    </div>
+
+                    <!-- Verification rate by country (full width) -->
+                    <div class="an-card an-full-width" style="padding:0; overflow:hidden;">
+                        <div style="padding:20px 24px 12px;">
+                            <div class="an-card-title">Verification Rate by Country</div>
+                            <div class="an-card-sub">Countries with verified + discrepant courses — click row to drill down</div>
+                        </div>
+                        <div class="tbl-wrap" style="max-height:45vh;">
+                            <table class="data-table">
+                                <thead><tr>
+                                    <th>Country</th>
+                                    <th style="text-align:center;">Total</th>
+                                    <th style="text-align:center;">✅ Verified</th>
+                                    <th style="text-align:center;">⚠️ Discrepant</th>
+                                    <th style="text-align:center;">❌ Error</th>
+                                    <th>Match Rate</th>
+                                </tr></thead>
+                                <tbody id="an-verif-country-tbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Verification drill-down -->
+                <div id="verif-drilldown" class="drilldown-panel" style="display:none;">
+                    <div class="drilldown-hdr">
+                        <div id="verif-drilldown-title" class="drilldown-title"></div>
+                        <button class="drilldown-close" onclick="closeDrilldown('verif-drilldown')">✕ Close</button>
+                    </div>
+                    <div class="tbl-wrap" style="max-height:40vh;">
+                        <table class="data-table">
+                            <thead><tr><th>#</th><th>Course Name</th><th>University</th><th>Domain</th><th>Status</th><th>Reason</th></tr></thead>
+                            <tbody id="verif-drilldown-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div><!-- /tab-analytics -->
+
+    
+<!-- ══════════════ COURSE DETAIL MODAL ══════════════ -->
+<div id="course-modal" class="modal-overlay">
+    <div class="modal-box">
+        <div class="modal-hdr">
+            <h3 id="modal-course-title">Course Details</h3>
+            <div style="display:flex; gap:10px; align-items:center;">
+                <span id="modal-solve-progress" class="modal-progress" style="display:none;"></span>
+                <button id="solve-all-btn" class="modal-solve" style="display:none;">✓ Solve all</button>
+                <button id="solve-website-btn" class="modal-solve" style="display:none;">✓ Solved</button>
+                <button id="delete-course-btn" class="modal-del">Delete</button>
+                <button id="close-modal" class="modal-close">✕</button>
+            </div>
+        </div>
+        <table style="width:100%; border-collapse:collapse;" id="modal-table">
+            <thead>
+                <tr style="border-bottom:1px solid var(--border);">
+                    <th style="padding:10px 12px; text-align:left; font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--text-3);">Attribute</th>
+                    <th style="padding:10px 12px; text-align:left; font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--text-3);">Original (PDF)</th>
+                    <th style="padding:10px 12px; text-align:left; font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--text-3);">Verified (Web)</th>
+                    <th style="padding:10px 12px; text-align:center; font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--text-3);">Status</th>
+                    <th style="padding:10px 12px; text-align:center; font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--text-3);">Action</th>
+                </tr>
+            </thead>
+            <tbody id="modal-table-body"></tbody>
+        </table>
+    </div>
+</div>
+
+<script src="/static/app.js?v=6"></script>
+</body>
 </html>

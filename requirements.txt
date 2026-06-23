@@ -14,4 +14,4 @@ selenium
 undetected-chromedriver
 Flask
 Werkzeug
-firebase-admin
+firebase-admingunicorn

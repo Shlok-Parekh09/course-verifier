@@ -20,6 +20,7 @@ def _add_cors_headers(resp):
     resp.headers['Access-Control-Allow-Origin'] = os.environ.get('CORS_ALLOW_ORIGIN', '*')
     resp.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
     resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, DELETE, OPTIONS'
+    resp.headers['Access-Control-Allow-Private-Network'] = 'true'
     return resp
 
 # Issue category constants (mirrored from verifier)
@@ -28,23 +29,30 @@ ISSUE_CATEGORY_COURSE = "course_issue"
 ISSUE_CATEGORY_VERIFIED = "verified"
 
 # Initialize Firebase
+import os
 db = None
 try:
     if os.path.exists('serviceAccountKey.json'):
         cred = credentials.Certificate('serviceAccountKey.json')
-        # Check if already initialized to avoid errors in hot-reloads
         if not firebase_admin._apps:
             firebase_admin.initialize_app(cred)
         db = firestore.client()
         print("Connected to Firestore (Local)")
+    elif os.environ.get('FIREBASE_SERVICE_ACCOUNT_KEY'):
+        import json
+        key_dict = json.loads(os.environ.get('FIREBASE_SERVICE_ACCOUNT_KEY'))
+        cred = credentials.Certificate(key_dict)
+        if not firebase_admin._apps:
+            firebase_admin.initialize_app(cred)
+        db = firestore.client()
+        print("Connected to Firestore (Render/Env Var)")
     else:
         if not firebase_admin._apps:
             firebase_admin.initialize_app()
         db = firestore.client()
-        print("Connected to Firestore (Cloud Run)")
+        print("Connected to Firestore (Cloud Run / ADC)")
 except Exception as e:
     print("Firestore initialization failed:", e)
-
 JSON_FILES = ["autonomous_verified_link_compile.pdf.json", "autonomous_verified_link_compile.pdf..json"]
 PERSISTENT_FILE = "1.json"
 global_courses = []
@@ -184,8 +192,8 @@ def save_courses(updated_courses=None):
             print(f"[SAVE] ✓ Saved to local file: {PERSISTENT_FILE}")
         except Exception as e:
             print(f"[SAVE] ✗ Error saving to local file: {e}")
-            raise  # Re-raise to prevent silent failures
-            
+            # Do not raise in Cloud Run environment to avoid breaking the API response
+            pass
         # 2. Update Firestore - SAVE ALL COURSES, not just updated_courses
         if db:
             try:
@@ -400,6 +408,17 @@ def load_courses():
             
             issue_cat = d.get('issue_category', '')
             issue_sub = d.get('issue_sub_type', '')
+            
+            # --- DYNAMIC WEBSITE ISSUE HEURISTIC ---
+            desc_text = str(d.get('cost_description', '')) + " " + str(d.get('duration_description', '')) + " " + str(d.get('cost_verified', '')) + " " + str(d.get('duration_verified', ''))
+            all_false = not any([
+                d.get('cost_match'), d.get('duration_match'), d.get('mode_match'),
+                d.get('lang_match'), d.get('country_match'), d.get('uni_match'),
+                d.get('sk_match')
+            ])
+            if all_false and 'page load error' in desc_text.lower():
+                issue_cat = ISSUE_CATEGORY_WEBSITE
+            
             # Derive status from issue_category if present, else fall back to old logic
             if issue_cat == ISSUE_CATEGORY_VERIFIED:
                 status = 'Verified'
@@ -559,8 +578,9 @@ def api_data():
         "recent": [c for c in global_courses if c['status'] in ['Discrepancy', 'Error'] and 'pdf_page' in c]
     })
 
-@app.route("/api/course/<int:course_id>", methods=["DELETE"])
-def api_delete_course(course_id):
+@app.route("/api/course/<int:course_id>", methods=["DELETE", "OPTIONS"])
+def delete_course(course_id):
+    if request.method == "OPTIONS": return "", 204
     global global_courses
     
     idx_to_delete = None
@@ -590,8 +610,9 @@ def api_delete_course(course_id):
     else:
         return jsonify({"status": "error", "message": "Course not found"}), 404
 
-@app.route("/api/course/<int:course_id>/solve", methods=["POST"])
-def api_solve_course(course_id):
+@app.route("/api/course/<int:course_id>/solve", methods=["POST", "OPTIONS"])
+def solve_course_issue(course_id):
+    if request.method == "OPTIONS": return "", 204
     """Mark one issue (or all issues) in a course as Solved.
     Body: {"attr": "Cost" | "_all" | "_website", "unsolve": false}
       - "Cost"/"Duration"/...  -> toggle that single attribute
@@ -743,8 +764,9 @@ def api_analytics():
         import traceback
         return jsonify({"status": "error", "message": str(e), "trace": traceback.format_exc()})
 
-@app.route("/api/upload", methods=["POST"])
-def api_upload():
+@app.route("/api/upload", methods=["POST", "OPTIONS"])
+def upload_data():
+    if request.method == "OPTIONS": return "", 204
     if 'files[]' not in request.files:
         return jsonify({"status": "error", "message": "No files uploaded"})
         

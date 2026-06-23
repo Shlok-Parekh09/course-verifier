@@ -879,6 +879,53 @@ body.light-mode .theme-toggle::after {
 
 .modal-del:hover { background: var(--red); color: #fff; }
 
+/* ── Solve buttons (green) ─────────────────────────────────────── */
+.modal-solve {
+    padding: 6px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--green-bg);
+    background: var(--green-bg);
+    color: var(--green);
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: 'Inter', sans-serif;
+    transition: var(--transition);
+}
+.modal-solve:hover { background: var(--green); color: #fff; }
+
+.modal-progress {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--green);
+    background: var(--green-bg);
+    border: 1px solid var(--green-bg);
+    padding: 4px 10px;
+    border-radius: 8px;
+}
+
+.solve-tick {
+    padding: 3px 9px;
+    border-radius: 6px;
+    border: 1px solid var(--red-bg);
+    background: var(--red-bg);
+    color: var(--red);
+    font-size: 0.72rem;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: 'Inter', sans-serif;
+    transition: var(--transition);
+}
+.solve-tick:hover { background: var(--red); color: #fff; }
+.solve-tick.solved {
+    border-color: var(--green-bg);
+    background: var(--green-bg);
+    color: var(--green);
+}
+.solve-tick.solved:hover { background: var(--green); color: #fff; }
+
+tr.solved-row td { opacity: 0.62; }
+
 /* ================================================================
    HINT & MISC
    ================================================================ */

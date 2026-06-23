@@ -566,6 +566,22 @@ async function loadAllCourses() {
         const res  = await fetch('/api/courses.json');
         const data = await res.json();
         allCoursesData = (data.courses || []).sort((a,b) => parseInt(a.id||'9') - parseInt(b.id||'9'));
+        recentData     = data.recent  || [];
+        
+        // --- DYNAMIC WEBSITE ISSUE HEURISTIC ---
+        const applyHeuristic = (c) => {
+            if (c.issue_category === 'verified') return;
+            const desc = (String(c.cost_description||'') + " " + String(c.duration_description||'') + " " + String(c.cost_verified||'') + " " + String(c.duration_verified||'')).toLowerCase();
+            const allFalse = !c.cost_match && !c.duration_match && !c.mode_match && !c.lang_match && !c.country_match && !c.uni_match && !c.sk_match;
+            if (allFalse && desc.includes('page load error')) {
+                c.issue_category = 'website_issue';
+                c.status = 'Error';
+            }
+        };
+        allCoursesData.forEach(applyHeuristic);
+        recentData.forEach(applyHeuristic);
+        // ---------------------------------------
+        
         renderCoursesPage();
     } catch(e) {
         if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--red);">Error loading courses</td></tr>';
@@ -613,6 +629,20 @@ async function showCourseModal(courseId, fallbackName, fallbackUni) {
         try {
             const res  = await fetch('/api/courses.json');
             const data = await res.json();
+            
+            // --- DYNAMIC WEBSITE ISSUE HEURISTIC ---
+            const applyHeuristic = (c) => {
+                if (c.issue_category === 'verified') return;
+                const desc = (String(c.cost_description||'') + " " + String(c.duration_description||'') + " " + String(c.cost_verified||'') + " " + String(c.duration_verified||'')).toLowerCase();
+                const allFalse = !c.cost_match && !c.duration_match && !c.mode_match && !c.lang_match && !c.country_match && !c.uni_match && !c.sk_match;
+                if (allFalse && desc.includes('page load error')) {
+                    c.issue_category = 'website_issue';
+                    c.status = 'Error';
+                }
+            };
+            if (data.courses) data.courses.forEach(applyHeuristic);
+            // ---------------------------------------
+            
             allCoursesData = data.courses || [];
         } catch(e) { return; }
     }
@@ -695,6 +725,12 @@ async function showCourseModal(courseId, fallbackName, fallbackUni) {
         }
     }
 
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const deleteBtn = document.getElementById('delete-course-btn');
+    if (deleteBtn) {
+        deleteBtn.style.display = isLocal ? '' : 'none';
+    }
+
     document.getElementById('course-modal').classList.add('open');
 }
 
@@ -704,7 +740,11 @@ let currentModalCourseId = null;
 async function solveCourse(courseId, attr, unsolve) {
     if (courseId == null) return;
     try {
-        const res = await fetch(`/api/course/${courseId}/solve`, {
+        const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        // IMPORTANT: Replace the URL below with your actual Render URL after deploying!
+        const baseUrl = isLocal ? '' : 'https://course-verifier-api.onrender.com';
+        
+        const res = await fetch(`${baseUrl}/api/course/${courseId}/solve`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({attr, unsolve: !!unsolve})

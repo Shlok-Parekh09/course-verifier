@@ -574,6 +574,8 @@ def normalize_mode_label(value):
 
 
 def modes_equivalent(pdf_mode, web_mode):
+    if len(str(web_mode)) > 50:
+        return None
     pdf_norm = normalize_mode_label(pdf_mode)
     web_norm = normalize_mode_label(web_mode)
     if not pdf_norm or not web_norm:
@@ -4008,11 +4010,7 @@ Output JSON format:
                     print(f"    -> [Sanity] duration_match corrected to TRUE (LLM description strongly implies match).")
                     duration_match = True
         
-        # MODE sanity: check extracted string using modes_equivalent
-        if not mode_match and mode_detail and course.get('mode'):
-            if modes_equivalent(course['mode'], mode_detail):
-                print(f"    -> [Sanity] mode_match corrected to TRUE (modes_equivalent passed).")
-                mode_match = True
+
         
         # COUNTRY sanity: common abbreviation/full name pairs
         if not country_match and country_detail:
@@ -7288,9 +7286,11 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     
                     # Common Platforms Online Override
                     if any(p in clean_url for p in ['coursera.org', 'edx.org', 'futurelearn.com', 'mitxonline.mit.edu', 'swayam.gov.in', 'nptel.ac.in', 'udacity.com', 'udemy.com']):
-                        mode_match = True
                         web_mode = "Online"
-                        print(f"    -> [Heuristic] Platform '{clean_url.split('/')[0]}' automatically confirmed as Online Mode.")
+                        pdf_mode_val = course.get('mode', '')
+                        mode_equiv = modes_equivalent(pdf_mode_val, "Online")
+                        mode_match = mode_equiv if mode_equiv is not None else False
+                        print(f"    -> [Heuristic] Platform '{clean_url.split('/')[0]}' automatically confirmed as Online Mode. Match is now {mode_match}")
                         
                     if course_uni_check:
                         words = [w for w in re.split(r'\W+', course_uni_check.lower()) if len(w) > 4 and w not in ['university', 'institute', 'technology', 'science', 'national', 'state', 'college', 'open']]

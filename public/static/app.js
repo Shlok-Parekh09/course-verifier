@@ -149,6 +149,33 @@ function initCharts() {
         });
     }
 
+    // 2b. Issue Category Doughnut
+    const iCtx = document.getElementById('issuePieChart')?.getContext('2d');
+    if (iCtx) {
+        window.issueChart = new Chart(iCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Website Issues', 'Course Issues', 'Verified'],
+                datasets: [{
+                    data: [0, 0, 0],
+                    backgroundColor: ['#f16b6b', '#f5a623', '#1dda9f'],
+                    borderWidth: 0,
+                    hoverOffset: 8
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                cutout: '72%',
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: { usePointStyle: true, padding: 18, font: { size: 11 } }
+                    }
+                }
+            }
+        });
+    }
+
     // 3. Horizontal Bar Chart
     const bCtx = document.getElementById('coursesBarChart')?.getContext('2d');
     if (bCtx) {
@@ -314,13 +341,21 @@ function updateCards(stats) {
     document.getElementById('verified-count').textContent     = stats.verified || 0;
     document.getElementById('discrepancy-count').textContent  = stats.discrepancies || 0;
     document.getElementById('error-count').textContent        = (stats.errors || 0) + (stats.unverified || 0);
+    document.getElementById('website-issue-count').textContent = stats.website_issues || 0;
+    document.getElementById('course-issue-count').textContent  = stats.course_issues || 0;
+    const oic = document.getElementById('open-issue-count');
+    if (oic) oic.textContent = (stats.open_issues != null ? stats.open_issues : 0);
 
     // Dynamic trend % labels
     const t = stats.total || 1;
     document.getElementById('kpi-verified-trend').textContent  = `↑ ${Math.round((stats.verified||0)/t*100)}% match rate`;
     document.getElementById('kpi-disc-trend').textContent      = `⚠ ${Math.round((stats.discrepancies||0)/t*100)}% flagged`;
     document.getElementById('kpi-err-trend').textContent       = `✕ ${Math.round(((stats.errors||0)+(stats.unverified||0))/t*100)}% failed`;
+    document.getElementById('kpi-webissue-trend').textContent  = `🔗 ${Math.round((stats.website_issues||0)/t*100)}% site broken`;
+    document.getElementById('kpi-courseissue-trend').textContent = `📋 ${Math.round((stats.course_issues||0)/t*100)}% data mismatch`;
     document.getElementById('kpi-total-trend').textContent     = `— ${t} records`;
+    const koi = document.getElementById('kpi-openissue-trend');
+    if (koi) koi.textContent = stats.open_issues ? `✓ ${stats.open_issues} open` : '✓ All clear';
 }
 
 function updatePieChart(stats) {
@@ -329,6 +364,14 @@ function updatePieChart(stats) {
         stats.verified, stats.discrepancies, stats.errors, stats.unverified
     ];
     statusChart.update();
+}
+
+function updateIssuePieChart(stats) {
+    if (!window.issueChart) return;
+    window.issueChart.data.datasets[0].data = [
+        stats.website_issues || 0, stats.course_issues || 0, stats.verified || 0
+    ];
+    window.issueChart.update();
 }
 
 function updateBarChart() {
@@ -488,14 +531,20 @@ function renderRecentPage() {
     const slice  = recentData.slice(start, start + RECENT_PAGE_SIZE);
     tbody.innerHTML = slice.length === 0
         ? '<tr><td colspan="5" style="text-align:center;">No verifications yet.</td></tr>'
-        : slice.map(c => `
+        : slice.map(c => {
+            const issueLabel = c.issue_category ? (c.issue_sub_type || c.issue_category).replace(/_/g, ' ') : c.status;
+            const badgeCls = c.issue_category === 'website_issue' ? 'badge-error' :
+                             c.issue_category === 'course_issue' ? 'badge-discrepancy' :
+                             getBadgeClass(c.status);
+            return `
             <tr onclick="showCourseModal('${c.id||''}','${escHtml(c.name)}','${escHtml(c.university||'')}')">
                 <td><strong>${escHtml(c.name)}</strong></td>
                 <td>${escHtml(c.university||'—')}</td>
-                <td><span class="badge ${getBadgeClass(c.status)}">${c.status}</span></td>
+                <td><span class="badge ${badgeCls}" title="${escHtml(c.issue_category || '')}">${issueLabel}</span></td>
                 <td style="max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(c.disc_reason||'—')}</td>
                 <td>${c.pdf_page||'—'}</td>
-            </tr>`).join('');
+            </tr>`;
+        }).join('');
     if (info) info.textContent = `Page ${currentRecentPage} of ${total} (${recentData.length})`;
 }
 
@@ -517,6 +566,22 @@ async function loadAllCourses() {
         const res  = await fetch('/api/courses.json');
         const data = await res.json();
         allCoursesData = (data.courses || []).sort((a,b) => parseInt(a.id||'9') - parseInt(b.id||'9'));
+        recentData     = data.recent  || [];
+        
+        // --- DYNAMIC WEBSITE ISSUE HEURISTIC ---
+        const applyHeuristic = (c) => {
+            if (c.issue_category === 'verified') return;
+            const desc = (String(c.cost_description||'') + " " + String(c.duration_description||'') + " " + String(c.cost_verified||'') + " " + String(c.duration_verified||'')).toLowerCase();
+            const allFalse = !c.cost_match && !c.duration_match && !c.mode_match && !c.lang_match && !c.country_match && !c.uni_match && !c.sk_match;
+            if (allFalse && desc.includes('page load error')) {
+                c.issue_category = 'website_issue';
+                c.status = 'Error';
+            }
+        };
+        allCoursesData.forEach(applyHeuristic);
+        recentData.forEach(applyHeuristic);
+        // ---------------------------------------
+        
         renderCoursesPage();
     } catch(e) {
         if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--red);">Error loading courses</td></tr>';
@@ -530,8 +595,12 @@ function renderCoursesPage() {
     const total = Math.ceil(allCoursesData.length / PAGE_SIZE);
     const start = (currentPage - 1) * PAGE_SIZE;
     const slice = allCoursesData.slice(start, start + PAGE_SIZE);
-    tbody.innerHTML = slice.map(c => `
-        <tr onclick="showCourseModal('${c.id}')">
+    tbody.innerHTML = slice.map(c => {
+        const issueLabel = c.issue_category ? (c.issue_sub_type || c.issue_category).replace(/_/g, ' ') : c.status;
+        const badgeCls = c.issue_category === 'website_issue' ? 'badge-error' :
+                         c.issue_category === 'course_issue' ? 'badge-discrepancy' :
+                         getBadgeClass(c.status);
+        return `<tr onclick="showCourseModal('${c.id}')">
             <td>${c.id}</td>
             <td><strong>${escHtml(c.name)}</strong></td>
             <td>${escHtml(c.university||'—')}</td>
@@ -539,8 +608,9 @@ function renderCoursesPage() {
             <td>${escHtml(c.country||'—')}</td>
             <td>${c.has_qs_badge   ? '<span class="badge badge-verified">Yes</span>' : '<span class="badge badge-error">No</span>'}</td>
             <td>${c.has_nirf_badge ? '<span class="badge badge-verified">Yes</span>' : '<span class="badge badge-error">No</span>'}</td>
-            <td><span class="badge ${getBadgeClass(c.status)}">${c.status}</span></td>
-        </tr>`).join('');
+            <td><span class="badge ${badgeCls}" title="${escHtml(c.issue_category || '')}">${issueLabel}</span></td>
+        </tr>`;
+    }).join('');
     if (info) info.textContent = `Page ${currentPage} of ${total} (${allCoursesData.length} courses)`;
 }
 
@@ -559,6 +629,20 @@ async function showCourseModal(courseId, fallbackName, fallbackUni) {
         try {
             const res  = await fetch('/api/courses.json');
             const data = await res.json();
+            
+            // --- DYNAMIC WEBSITE ISSUE HEURISTIC ---
+            const applyHeuristic = (c) => {
+                if (c.issue_category === 'verified') return;
+                const desc = (String(c.cost_description||'') + " " + String(c.duration_description||'') + " " + String(c.cost_verified||'') + " " + String(c.duration_verified||'')).toLowerCase();
+                const allFalse = !c.cost_match && !c.duration_match && !c.mode_match && !c.lang_match && !c.country_match && !c.uni_match && !c.sk_match;
+                if (allFalse && desc.includes('page load error')) {
+                    c.issue_category = 'website_issue';
+                    c.status = 'Error';
+                }
+            };
+            if (data.courses) data.courses.forEach(applyHeuristic);
+            // ---------------------------------------
+            
             allCoursesData = data.courses || [];
         } catch(e) { return; }
     }
@@ -588,15 +672,124 @@ async function showCourseModal(courseId, fallbackName, fallbackUni) {
     ];
 
     const tbody = document.getElementById('modal-table-body');
-    tbody.innerHTML = rows.map(row => `
-        <tr style="border-bottom:1px solid var(--border);">
+    // Per-attribute issue solving
+    currentModalCourseId = c.id;
+    const solvedAttrs = Array.isArray(c.solved_attrs) ? c.solved_attrs : [];
+    const falseRows = rows.filter(r => r.status === 'FALSE');
+    const solvedCount = falseRows.filter(r => solvedAttrs.includes(r.attribute)).length;
+    const isWebsiteIssue = c.issue_category === 'website_issue';
+    const isCourseIssue   = c.issue_category === 'course_issue';
+    const hasOpenAttrs    = falseRows.some(r => !solvedAttrs.includes(r.attribute));
+
+    tbody.innerHTML = rows.map(row => {
+        const isFalse = row.status === 'FALSE';
+        const solved  = isFalse && solvedAttrs.includes(row.attribute);
+        const attrJs = JSON.stringify(row.attribute).replace(/"/g, '&quot;');
+        let action = '<span style="color:var(--text-3);font-size:0.75rem;">—</span>';
+        if (isFalse) {
+            action = solved
+                ? `<button class="solve-tick solved" title="Mark unsolved" onclick="solveCourse(${c.id},${attrJs},true)">✓ Solved</button>`
+                : `<button class="solve-tick" title="Mark this issue solved" onclick="solveCourse(${c.id},${attrJs},false)">✓ Solve</button>`;
+        }
+        const statusTxt = solved ? 'SOLVED' : row.status;
+        const statusClr = (row.status==='MATCH' || solved) ? 'var(--green)' : 'var(--red)';
+        return `
+        <tr style="border-bottom:1px solid var(--border);" class="${solved?'solved-row':''}">
             <td style="padding:10px 12px;color:var(--text-1);font-weight:600;font-size:0.85rem;">${row.attribute}</td>
             <td style="padding:10px 12px;color:var(--text-2);font-size:0.85rem;">${escHtml(row.original)}</td>
             <td style="padding:10px 12px;color:var(--text-2);font-size:0.85rem;">${escHtml(row.verified)}</td>
-            <td style="padding:10px 12px;text-align:center;font-weight:700;font-size:0.8rem;letter-spacing:0.04em;color:${row.status==='MATCH'?'var(--green)':'var(--red)'};">${row.status}</td>
-        </tr>`).join('');
+            <td style="padding:10px 12px;text-align:center;font-weight:700;font-size:0.8rem;letter-spacing:0.04em;color:${statusClr};">${statusTxt}</td>
+            <td style="padding:6px 10px;text-align:center;">${action}</td>
+        </tr>`;
+    }).join('');
+
+    // Header solve controls
+    const solveAllBtn = document.getElementById('solve-all-btn');
+    const solveWebBtn = document.getElementById('solve-website-btn');
+    const progress   = document.getElementById('modal-solve-progress');
+    if (solveAllBtn) {
+        solveAllBtn.style.display = (isCourseIssue && hasOpenAttrs) ? '' : 'none';
+        solveAllBtn.textContent = `✓ Solve all (${falseRows.length - solvedCount} open)`;
+        solveAllBtn.onclick = () => solveCourse(c.id, '_all', false);
+    }
+    if (solveWebBtn) {
+        solveWebBtn.style.display = isWebsiteIssue ? '' : 'none';
+        solveWebBtn.onclick = () => solveCourse(c.id, '_website', false);
+    }
+    if (progress) {
+        if (isCourseIssue && falseRows.length > 0) {
+            progress.style.display = '';
+            progress.textContent = `Solved ${solvedCount}/${falseRows.length}`;
+        } else {
+            progress.style.display = 'none';
+        }
+    }
+
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const deleteBtn = document.getElementById('delete-course-btn');
+    if (deleteBtn) {
+        deleteBtn.style.display = isLocal ? '' : 'none';
+    }
 
     document.getElementById('course-modal').classList.add('open');
+}
+
+// ── Per-issue solving ─────────────────────────────────────────────
+let currentModalCourseId = null;
+
+async function solveCourse(courseId, attr, unsolve) {
+    if (courseId == null) return;
+    try {
+        const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        const baseUrl = isLocal ? '' : 'http://localhost:5000';
+        const res = await fetch(`${baseUrl}/api/course/${courseId}/solve`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({attr, unsolve: !!unsolve})
+        });
+        const data = await res.json();
+        if (data.status !== 'success') { alert(data.message || 'Solve failed'); return; }
+
+        // Merge returned course fields into cached data
+        const upd = data.course || {};
+        const mergeInto = list => {
+            const c = list.find(x => String(x.id) === String(courseId));
+            if (c) {
+                c.issue_category = upd.issue_category;
+                c.issue_sub_type = upd.issue_sub_type;
+                c.status = upd.status;
+                c.disc_reason = upd.disc_reason;
+                c.solved_attrs = upd.solved_attrs || [];
+            }
+        };
+        mergeInto(allCoursesData);
+        mergeInto(recentData);
+
+        // Live-update KPIs + issue donut from returned stats
+        if (data.stats) {
+            updateCards(data.stats);
+            updateIssuePieChart(data.stats);
+        }
+
+        // Re-render the open modal so ticks/progress reflect the new state,
+        // then refresh from the server so every other user (5s poll) converges.
+        showCourseModal(courseId);
+        if (data.stats) fetchData();
+    } catch (e) {
+        console.error('Solve error:', e);
+        alert('Solve request failed.');
+    }
+}
+
+function initModal() {
+    document.getElementById('close-modal')?.addEventListener('click', () =>
+        document.getElementById('course-modal').classList.remove('open'));
+    document.getElementById('delete-course-btn')?.addEventListener('click', () =>
+        alert('Deleting from the online viewer is disabled. Please use the local dashboard.'));
+    document.getElementById('course-modal')?.addEventListener('click', e => {
+        if (e.target === document.getElementById('course-modal'))
+            document.getElementById('course-modal').classList.remove('open');
+    });
 }
 
 // ================================================================
@@ -611,6 +804,7 @@ async function fetchData() {
         globalData = data;
         updateCards(data.stats);
         updatePieChart(data.stats);
+        updateIssuePieChart(data.stats);
         updateBarChart();
         updateLineChart(data.country_counts);
         updateMapChart(data.country_counts);
@@ -1235,6 +1429,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Chain: fetch dashboard data first, then analytics (analytics needs globalData)
     fetchData().then(() => fetchAnalytics());
 
-    // Periodic refresh for dashboard data; analytics refreshes on tab click
-    setInterval(fetchData, 8000);
+    // Periodic refresh for dashboard data; analytics refreshes on tab click.
+    // 5s poll keeps every viewer (multiple users) in sync in near-real time —
+    // any Solved action is persisted server-side and shows up here within 5s.
+    setInterval(fetchData, 5000);
 });
