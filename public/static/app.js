@@ -7,7 +7,7 @@
 // IMPORTANT: Replace the URL below with your actual Render URL after deploying!
 // e.g., 'https://your-app-name.onrender.com'
 const isLocalEnv = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-let API_BASE_URL = isLocalEnv ? '' : 'https://course-verifier-api.onrender.com';
+let API_BASE_URL = isLocalEnv ? '' : 'https://course-verifier.vercel.app';
 if (API_BASE_URL.endsWith('/')) {
     API_BASE_URL = API_BASE_URL.slice(0, -1);
 }
