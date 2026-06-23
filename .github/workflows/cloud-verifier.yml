@@ -44,7 +44,7 @@ jobs:
 
       - name: Install Python Dependencies
         run: |
-          pip install -r requirements.txt python-dotenv gdown
+          pip install -r requirements-verifier.txt python-dotenv gdown
 
       - name: Download PDF from Google Drive
         run: |
