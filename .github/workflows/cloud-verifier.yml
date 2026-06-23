@@ -45,6 +45,8 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add autonomous_verified_*.json master_dashboard_results.json CombinedWork.xlsx || echo "No files to add"
+          git add autonomous_verified_*.json || true
+          git add master_dashboard_results.json || true
+          git add CombinedWork.xlsx || true
           git commit -m "chore: save cloud verification progress" || echo "No changes to commit"
           git push
