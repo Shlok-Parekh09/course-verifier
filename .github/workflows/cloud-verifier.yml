@@ -6,6 +6,8 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CI: true
 
@@ -27,7 +29,7 @@ jobs:
 
       - name: Install Python Dependencies
         run: |
-          pip install -r requirements.txt
+          pip install -r requirements.txt python-dotenv
 
       - name: Run Verification (Virtual Display)
         # Using xvfb-run to simulate a real monitor for undetected_chromedriver
