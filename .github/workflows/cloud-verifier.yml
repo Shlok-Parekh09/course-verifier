@@ -29,7 +29,11 @@ jobs:
 
       - name: Install Python Dependencies
         run: |
-          pip install -r requirements.txt python-dotenv
+          pip install -r requirements.txt python-dotenv gdown
+
+      - name: Download PDF from Google Drive
+        run: |
+          gdown --id 1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd -O link_compile.pdf
 
       - name: Run Verification (Virtual Display)
         # Using xvfb-run to simulate a real monitor for undetected_chromedriver
