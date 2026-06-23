@@ -197,7 +197,7 @@ def save_courses(updated_courses=None):
                 if courses_to_save:
                     operations = []
                     for c in courses_to_save:
-                        operations.append(UpdateOne({'id': str(c.get('id'))}, {'$set': c}, upsert=True))
+                        operations.append(UpdateOne({'id': int(c.get('id')) if str(c.get('id')).isdigit() else c.get('id')}, {'$set': c}, upsert=True))
                     
                     if operations:
                         db.courses.bulk_write(operations)

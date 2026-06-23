@@ -42,7 +42,7 @@ except Exception as e:
 print("Uploading to MongoDB Atlas... This will only take a few seconds.")
 operations = []
 for c in courses:
-    operations.append(UpdateOne({'id': str(c.get('id'))}, {'$set': c}, upsert=True))
+    operations.append(UpdateOne({'id': int(c.get('id')) if str(c.get('id')).isdigit() else c.get('id')}, {'$set': c}, upsert=True))
 
 if operations:
     result = db.courses.bulk_write(operations)
