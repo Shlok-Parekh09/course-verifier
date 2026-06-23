@@ -5994,6 +5994,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 blocked_urls = [
                     '*admissionportal*', '*login*', '*Login*',
                     '*.mp4', '*.webm', '*.avi', '*.gif',
+                    '*.jpg', '*.jpeg', '*.png', '*.webp', '*.svg',
+                    '*.woff', '*.woff2', '*.ttf', '*.otf',
                     '*youtube.com/*', '*vimeo.com/*',
                     '*google-analytics.com/*', '*googletagmanager.com/*',
                     '*doubleclick.net/*', '*facebook.com/tr*'
