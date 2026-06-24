@@ -331,6 +331,16 @@ def save_courses(updated_courses=None):
         import traceback
         traceback.print_exc()
 
+def _pdf_table_text(c):
+    """Flatten a course's pdf_table row values into one string so the web-issue
+    heuristic can spot signals like 'Page Load Error' that live inside the
+    nested table rows rather than in top-level fields."""
+    parts = []
+    for row in (c.get('pdf_table') or []):
+        if isinstance(row, dict):
+            parts.extend(str(v) for v in row.values())
+    return ' '.join(parts)
+
 def load_courses():
     global global_courses
     global_courses.clear()
@@ -392,7 +402,7 @@ def load_courses():
             issue_sub = d.get('issue_sub_type', '')
             
             # --- DYNAMIC WEBSITE ISSUE HEURISTIC ---
-            desc_text = str(d.get('cost_description', '')) + " " + str(d.get('duration_description', '')) + " " + str(d.get('cost_verified', '')) + " " + str(d.get('duration_verified', '')) + " " + str(d.get('reason', ''))
+            desc_text = str(d.get('cost_description', '')) + " " + str(d.get('duration_description', '')) + " " + str(d.get('cost_verified', '')) + " " + str(d.get('duration_verified', '')) + " " + str(d.get('reason', '')) + " " + _pdf_table_text(d)
             
             # Explicit network/page load errors
             has_page_error = 'page load error' in desc_text.lower() or 'website unreachable' in desc_text.lower() or 'llm fallback' in desc_text.lower()
@@ -470,7 +480,7 @@ def load_courses():
     # APPLY HEURISTIC TO ALL LOADED COURSES (From Mongo or Local)
     for c in global_courses:
         # Check both disc_reason and reason since they might be labeled differently depending on the source
-        desc_text = str(c.get('cost_description', '')) + " " + str(c.get('duration_description', '')) + " " + str(c.get('cost_verified', '')) + " " + str(c.get('duration_verified', '')) + " " + str(c.get('disc_reason', '')) + " " + str(c.get('reason', ''))
+        desc_text = str(c.get('cost_description', '')) + " " + str(c.get('duration_description', '')) + " " + str(c.get('cost_verified', '')) + " " + str(c.get('duration_verified', '')) + " " + str(c.get('disc_reason', '')) + " " + str(c.get('reason', '')) + " " + _pdf_table_text(c)
         
         has_page_error = 'page load error' in desc_text.lower() or 'website unreachable' in desc_text.lower() or 'llm fallback' in desc_text.lower()
         has_uni_match = c.get('uni_match') is not False
