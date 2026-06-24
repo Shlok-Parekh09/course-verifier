@@ -23,6 +23,13 @@ let currentRecentPage = 1;
 const PAGE_SIZE = 100;
 const RECENT_PAGE_SIZE = 30;
 let lastDataHash = '';
+// Change-detection hashes for poll-driven renders. Mirrors the lastDataHash
+// pattern in updateRecentVerifications: skip the expensive re-render when the
+// underlying payload is byte-identical to the previous poll.
+let lastStatsHash = '';
+let lastCountryHash = '';
+let lastBarHash = '';
+let firstDataFetch = true;
 
 // ── Tab filter state (real, client-side, never fabricated) ───────
 let verificationFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', attr: 'all' };
@@ -53,6 +60,38 @@ function getDomainCategory(idxRaw) {
 
 const ALL_DOMAIN_LABELS = DOMAIN_RANGES.map(r => r.label);
 
+// ── Academic-domain normalizer (mirrors backend normalize_domain) ──────
+// The raw `domain` field arrives as a mix of Title Case ("Bachelors") and
+// UPPERCASE ("BACHELORS DEGREE"); these are the same degree. Collapse them to
+// one canonical label so the Dashboard breakdown, the analytics credential
+// chart, and the filtered-table drill-down all agree.
+const _CANON_DOMAIN_FRAGMENTS = [
+    ['post graduate diploma', "Post Graduate Diploma"],
+    ['post grad diploma',     "Post Graduate Diploma"],
+    ['graduate diploma',      "Post Graduate Diploma"],
+    ['post graduate certificate', "Post Graduate Certificate"],
+    ['post grad certificate', "Post Graduate Certificate"],
+    ['post grad cert',        "Post Graduate Certificate"],
+    ['bachelor',              "Bachelor's Degree"],
+    ['master',                "Master's Degree"],
+    ['pg',                    "Master's Degree"],
+    ['diploma',               "Diploma"],
+    ['certificate',           "Certificate"],
+    ['cert',                  "Certificate"],
+    ['free to audit',         "Free to Audit"],
+    ['high value low cost',   "High Value Low Cost"],
+    ['free',                  "Free"],
+];
+function normalizeDomain(raw) {
+    if (!raw) return 'Other';
+    const k = String(raw).toLowerCase().replace('gradiuate', 'graduate').trim();
+    if (!k || ['unknown', 'unknown domain', 'none', 'null'].includes(k)) return 'Other';
+    for (const [frag, label] of _CANON_DOMAIN_FRAGMENTS) {
+        if (k.includes(frag)) return label;
+    }
+    return 'Other';
+}
+
 const ATTR_TO_MATCH = {
     Cost: 'cost_match', Duration: 'duration_match', Mode: 'mode_match',
     Language: 'lang_match', Country: 'country_match', University: 'uni_match', Skills: 'sk_match'
@@ -68,7 +107,7 @@ const SUBTYPE_LABELS = {
     'name_mismatch': 'Name Mismatch', 'course_discontinued': 'Discontinued',
     'course_replaced': 'Replaced', 'wrong_url': 'Wrong URL', 'perfect_match': 'Perfect Match'
 };
-let statusChart, barChart, mapChart, lineChart;
+let barChart, mapChart, lineChart;
 let barMode = 'domain'; // 'domain' | 'country'
 
 // ── Country flag emoji helper ─────────────────────────────────────
@@ -174,33 +213,6 @@ function initCharts() {
                 scales: {
                     y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.04)' } },
                     x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { maxRotation: 45 } }
-                }
-            }
-        });
-    }
-
-    // 2. Status Doughnut
-    const pCtx = document.getElementById('statusPieChart')?.getContext('2d');
-    if (pCtx) {
-        statusChart = new Chart(pCtx, {
-            type: 'doughnut',
-            data: {
-                labels: ['Verified', 'Discrepancies', 'Errors', 'Unverified'],
-                datasets: [{
-                    data: [0, 0, 0, 0],
-                    backgroundColor: ['#1dda9f', '#f46a22', '#f16b6b', '#3d4268'],
-                    borderWidth: 0,
-                    hoverOffset: 8
-                }]
-            },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                cutout: '72%',
-                plugins: {
-                    legend: {
-                        position: 'bottom',
-                        labels: { usePointStyle: true, padding: 18, font: { size: 11 } }
-                    }
                 }
             }
         });
@@ -381,30 +393,22 @@ function renderKpiStrip(prefix, stats) {
     set(prefix + '-web', stats ? (stats.website_issues ?? '—') : '—');
 }
 
-function updatePieChart(stats) {
-    if (!statusChart) return;
-    statusChart.data.datasets[0].data = [
-        stats.verified, stats.discrepancies, stats.errors, stats.unverified
-    ];
-    statusChart.update();
-}
-
-function updateIssuePieChart(stats) {
+function updateIssuePieChart(stats, animate = true) {
     if (!window.issueChart) return;
     window.issueChart.data.datasets[0].data = [
         stats.website_issues || 0, stats.course_issues || 0, stats.verified || 0
     ];
-    window.issueChart.update();
+    if (animate) window.issueChart.update(); else window.issueChart.update('none');
 }
 
-function updateBarChart() {
+function updateBarChart(animate = true) {
     if (!barChart || !globalData) return;
     const src = barMode === 'domain' ? globalData.domain_counts : globalData.country_counts;
     let entries = Object.entries(src || {}).sort((a, b) => b[1] - a[1]);
     if (barMode === 'country') entries = entries.slice(0, 12);
     barChart.data.labels = entries.map(e => e[0]);
     barChart.data.datasets[0].data = entries.map(e => e[1]);
-    barChart.update();
+    if (animate) barChart.update(); else barChart.update('none');
 }
 
 // ── Shared country name validator ───────────────────────────────
@@ -418,7 +422,7 @@ function isValidCountry(k) {
         !s.startsWith('not found');
 }
 
-function updateLineChart(countryCounts) {
+function updateLineChart(countryCounts, animate = true) {
     if (!lineChart) return;
     const sorted = Object.entries(countryCounts || {})
         .filter(([k]) => isValidCountry(k))
@@ -427,10 +431,10 @@ function updateLineChart(countryCounts) {
     countryDataList = sorted;
     lineChart.data.labels = sorted.map(x => x[0]);
     lineChart.data.datasets[0].data = sorted.map(x => x[1]);
-    lineChart.update();
+    if (animate) lineChart.update(); else lineChart.update('none');
 }
 
-function updateMapChart(countryCounts) {
+function updateMapChart(countryCounts, animate = true) {
     if (!mapChart || !mapChart.data?.datasets?.[0]?.data?.length) return;
 
     // First pass: collect raw counts and store on feature for tooltip
@@ -450,14 +454,15 @@ function updateMapChart(countryCounts) {
     // Second pass: sqrt-compress values so dominant countries (e.g. India)
     // don't bleach out all others on the choropleth color scale.
     const vals = mapChart.data.datasets[0].data.map(d => d.value).filter(v => v > 0);
-    if (vals.length === 0) { mapChart.update(); return; }
+    const commit = () => { if (animate) mapChart.update(); else mapChart.update('none'); };
+    if (vals.length === 0) { commit(); return; }
     const maxSqrt = Math.sqrt(Math.max(...vals));
     mapChart.data.datasets[0].data.forEach(d => {
         // Compressed display value, real count preserved in d.feature._realCount
         d.value = d.value > 0 ? (Math.sqrt(d.value) / maxSqrt) * 100 : 0;
     });
 
-    mapChart.update();
+    commit();
 }
 
 function updateCountryLeaderboard(countryCounts, containerId = 'country-list') {
@@ -499,14 +504,14 @@ function renderFilteredTable(type, value) {
     const tbody = document.getElementById('course-details-body');
     if (!tbody || !globalData?.recent) return;
     const filtered = globalData.recent.filter(c =>
-        type === 'domain' ? c.domain === value :
+        type === 'domain' ? normalizeDomain(c.domain) === value :
             type === 'country' ? c.country === value : true
     );
     tbody.innerHTML = filtered.length === 0
         ? '<tr><td colspan="5" class="empty-state">No courses found</td></tr>'
         : filtered.map(c => `
             <tr onclick="showCourseModal('${c.id || ''}', '${escJs(c.name)}', '${escJs(c.university || '')}')">
-                <td><strong>${escHtml(c.name)}</strong></td>
+                <td class="course-name-cell" title="${escHtml(c.name)}"><strong>${escHtml(c.name)}</strong></td>
                 <td>${escHtml(c.university || '—')}</td>
                 <td>${escHtml(c.country || '—')}</td>
                 <td>${c.has_qs_badge ? '<span class="badge badge-verified">Yes</span>' : '<span class="badge badge-error">No</span>'}</td>
@@ -579,7 +584,7 @@ function getFilteredVerificationData() {
         // Domain filter uses idx-based category
         if (f.domain !== 'all' && getDomainCategory(c.id) !== f.domain) return false;
         if (f.attr !== 'all') { const key = ATTR_TO_MATCH[f.attr]; if (key && c[key] !== false) return false; }
-        if (q && !(`${c.name} ${c.university || ''}`.toLowerCase().includes(q))) return false;
+        if (q && !`${c.name} ${c.university || ''} ${c.country || ''} ${c.status || ''} ${c.disc_reason || ''} ${getDomainCategory(c.id)} ${normalizeDomain(c.domain)}`.toLowerCase().includes(q)) return false;
         return true;
     });
 }
@@ -598,7 +603,7 @@ function getFilteredCourseData() {
         if (f.qs === 'no' && c.has_qs_badge) return false;
         if (f.nirf === 'yes' && !c.has_nirf_badge) return false;
         if (f.nirf === 'no' && c.has_nirf_badge) return false;
-        if (q && !(`${c.name} ${c.university || ''} ${c.domain || ''} ${getDomainCategory(c.id)}`.toLowerCase().includes(q))) return false;
+        if (q && !`${c.name} ${c.university || ''} ${c.country || ''} ${c.domain || ''} ${c.status || ''} ${c.disc_reason || ''} ${getDomainCategory(c.id)} ${normalizeDomain(c.domain)}`.toLowerCase().includes(q)) return false;
         return true;
     });
 }
@@ -636,10 +641,17 @@ function jumpToCourses(partial) {
 }
 
 function initFilters() {
+    // Debounce the text search so each keystroke doesn't fully re-render
+    // thousands of rows; selects apply immediately (change event is discrete).
+    const debounce = (fn, ms) => {
+        let t = null;
+        return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+    };
     const wire = (id, key, stateObj, applyFn, isText) => {
         const el = document.getElementById(id);
         if (!el) return;
-        const handler = () => { stateObj[key] = isText ? el.value.trim() : el.value; applyFn(); };
+        const apply = isText ? debounce(applyFn, 120) : applyFn;
+        const handler = () => { stateObj[key] = isText ? el.value.trim() : el.value; apply(); };
         el.addEventListener('input', handler);
         el.addEventListener('change', handler);
     };
@@ -716,7 +728,7 @@ function renderRecentPage() {
     const start = (currentRecentPage - 1) * RECENT_PAGE_SIZE;
     const slice = filteredData.slice(start, start + RECENT_PAGE_SIZE);
     tbody.innerHTML = slice.length === 0
-        ? '<tr><td colspan="6" class="empty-state">No courses match the current filters.</td></tr>'
+        ? '<tr><td colspan="7" class="empty-state">No courses match the current filters.</td></tr>'
         : slice.map(c => {
             const issueLabel = c.issue_category ? (c.issue_sub_type || c.issue_category).replace(/_/g, ' ') : c.status;
             const badgeCls = c.issue_category === 'website_issue' ? 'badge-error' :
@@ -724,13 +736,15 @@ function renderRecentPage() {
                     getBadgeClass(c.status);
             const domainCat = getDomainCategory(c.id);
             const domClick  = `event.stopPropagation();verificationFilter.domain='${escJs(domainCat)}';syncVerificationFilters();applyVerificationFilter();`;
+            const fullName = escHtml(c.name);
             return `
             <tr onclick="showCourseModal('${c.id || ''}','${escJs(c.name)}','${escJs(c.university || '')}')">
-                <td><strong>${escHtml(c.name)}</strong></td>
+                <td class="col-idx">${c.id || '—'}</td>
+                <td class="course-name-cell" title="${fullName}"><strong>${escHtml(c.name)}</strong></td>
                 <td>${escHtml(c.university || '—')}</td>
                 <td><span class="domain-pill cell-filter" title="Filter by domain" onclick="${domClick}">${escHtml(domainCat)}</span></td>
                 <td><span class="badge ${badgeCls}" title="${escHtml(c.issue_category || '')}">${issueLabel}</span></td>
-                <td style="max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(c.disc_reason || '—')}</td>
+                <td style="max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escHtml(c.disc_reason || '')}">${escHtml(c.disc_reason || '—')}</td>
                 <td>${c.pdf_page || '—'}</td>
             </tr>`;
         }).join('');
@@ -788,8 +802,8 @@ function renderCoursesPage() {
             const domainCat   = getDomainCategory(c.id);
             const domainClick = `event.stopPropagation();courseFilter.domain='${escJs(domainCat)}';syncCourseFilters();applyCourseFilter();`;
             return `<tr onclick="showCourseModal('${c.id}')">
-            <td>${c.id}</td>
-            <td><strong>${escHtml(c.name)}</strong></td>
+            <td class="col-idx">${c.id}</td>
+            <td class="course-name-cell" title="${escHtml(c.name)}"><strong>${escHtml(c.name)}</strong></td>
             <td>${escHtml(c.university || '—')}</td>
             <td>
                 <span class="domain-pill cell-filter" title="Filter by domain category" onclick="${domainClick}">${escHtml(domainCat)}</span>
@@ -982,9 +996,8 @@ async function solveCourse(courseId, attr, unsolve) {
 
         if (data.stats) {
             // Every headline number updates the instant a solve is persisted —
-            // the 4 KPI parameters, both sticky strips, and both doughnuts.
+            // the 4 KPI parameters, both sticky strips, and the issue doughnut.
             updateCards(data.stats);
-            updatePieChart(data.stats);
             updateIssuePieChart(data.stats);
         }
         // Re-apply active filters so both tabs reflect the change immediately.
@@ -1055,19 +1068,42 @@ async function fetchData() {
         if (data.status !== 'success') return;
 
         globalData = data;
-        updateCards(data.stats);
-        updatePieChart(data.stats);
-        updateIssuePieChart(data.stats);
-        updateBarChart();
-        updateLineChart(data.country_counts);
-        updateMapChart(data.country_counts);
-        updateCountryLeaderboard(data.country_counts, 'country-list');
+
+        // ── Change-guarded, no-animation renders ──────────────────────
+        // Only re-render the expensive visuals when their underlying data
+        // actually changed since the last poll. A 5s tick that returns
+        // identical data therefore produces zero visible flicker. The very
+        // first fetch keeps Chart.js animations so the initial paint feels
+        // alive; every subsequent poll uses update('none').
+        const animate = firstDataFetch;
+        const statsHash = JSON.stringify(data.stats);
+        const countryHash = JSON.stringify(data.country_counts);
+        const barSrc = barMode === 'domain' ? data.domain_counts : data.country_counts;
+        const barHash = JSON.stringify(barSrc);
+
+        if (statsHash !== lastStatsHash) {
+            updateCards(data.stats);
+            updateIssuePieChart(data.stats, animate);
+            lastStatsHash = statsHash;
+        }
+        if (barHash !== lastBarHash) {
+            updateBarChart(animate);
+            lastBarHash = barHash;
+        }
+        if (countryHash !== lastCountryHash) {
+            updateLineChart(data.country_counts, animate);
+            updateMapChart(data.country_counts, animate);
+            updateCountryLeaderboard(data.country_counts, 'country-list');
+            lastCountryHash = countryHash;
+        }
 
         // Real recent courses only — no fabricated fallback rows.
+        // (Already content-hash guarded via lastDataHash.)
         updateRecentVerifications(data.recent || []);
 
         if (currentFilter.type) applyFilter(currentFilter.type, currentFilter.value);
         document.body.dataset.loading = 'false';
+        firstDataFetch = false;
     } catch (e) {
         console.error('Data fetch error:', e);
     }
@@ -1082,6 +1118,7 @@ let anPricingChart = null;
 let anDomainChart = null;
 let anStatusChart = null;
 let analyticsData = null;
+let lastAnalyticsHash = '';
 let geoTableData = [];
 
 const PALETTE = ['#6366f1', '#818cf8', '#f43f5e', '#1dda9f', '#f59e0b', '#06b6d4', '#ec4899', '#8b5cf6'];
@@ -1336,10 +1373,24 @@ function populateAnTopCountries(countryPivot) {
 }
 
 // ── Geography table ──────────────────────────────────────────────
+// Per-country verified/issues come from the server `country_status` map
+// (computed over ALL courses). The old code derived them from `recent`,
+// which excludes Verified courses — so verified was always 0/—. country_status
+// fixes that. We fall back to `recent` only if the map is absent (old server).
+function countryStatusFor(name) {
+    const cs = globalData?.country_status || {};
+    if (cs[name]) return cs[name];
+    const nl = String(name).toLowerCase();
+    for (const k of Object.keys(cs)) {
+        const kl = k.toLowerCase();
+        if (kl === nl || kl.includes(nl) || nl.includes(kl)) return cs[k];
+    }
+    return null;
+}
+
 function renderGeoTable(search = '') {
     const tbody = document.getElementById('an-country-tbody');
     if (!tbody) return;
-    const recent = globalData?.recent || [];
     const total = geoTableData.reduce((s, [, v]) => s + v, 0) || 1;
     const max = geoTableData[0]?.[1] || 1;
     const rows = search ? geoTableData.filter(([k]) => k.toLowerCase().includes(search)) : geoTableData;
@@ -1347,17 +1398,15 @@ function renderGeoTable(search = '') {
     tbody.innerHTML = rows.length === 0
         ? `<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:24px;">No results</td></tr>`
         : rows.map(([name, cnt], i) => {
-            // Compute verified / issues from recent data
-            const matching = recent.filter(r => (r.country || '').toLowerCase().includes(name.toLowerCase())
-                || name.toLowerCase().includes((r.country || '').toLowerCase()));
-            const verified = matching.filter(r => (r.status || '').toLowerCase() === 'verified').length;
-            const issues = matching.filter(r => (r.status || '').toLowerCase() !== 'verified' && r.status).length;
+            const st = countryStatusFor(name);
+            const verified = st ? st.verified : 0;
+            const issues = st ? (st.total - st.verified) : 0;
             return `<tr class="clickable-row" onclick="geoRowDrilldown('${name.replace(/'/g, "\\'")}', ${cnt})" title="Click to see courses">
                 <td><span class="geo-rank">${(i + 1).toString().padStart(2, '0')}</span></td>
                 <td><span style="font-size:1.1rem;margin-right:8px;">${getFlag(name)}</span><strong>${escHtml(name)}</strong></td>
                 <td style="text-align:center;"><span class="geo-volume-badge">${cnt}</span></td>
-                <td style="text-align:center;"><span style="color:var(--green);font-weight:700;">${verified || '—'}</span></td>
-                <td style="text-align:center;"><span style="color:var(--accent);font-weight:700;">${issues || '—'}</span></td>
+                <td style="text-align:center;"><span style="color:var(--green);font-weight:700;">${st ? verified : '—'}</span></td>
+                <td style="text-align:center;"><span style="color:var(--accent);font-weight:700;">${st ? issues : '—'}</span></td>
                 <td style="text-align:right;"><span class="geo-share">${((cnt / total) * 100).toFixed(1)}%</span></td>
                 <td><div class="geo-prog-wrap"><div class="geo-prog-bar" style="width:${Math.round(cnt / max * 100)}%"></div></div></td>
             </tr>`;
@@ -1372,7 +1421,7 @@ function geoRowDrilldown(countryName, cnt) {
     );
     const rows = matches.length ? matches.map((r, i) => `<tr>
         <td style="color:var(--text-3);">${i + 1}</td>
-        <td style="font-weight:600;">${escHtml(r.name || r.course_name || '—')}</td>
+        <td class="course-name-cell" style="font-weight:600;" title="${escHtml(r.name || r.course_name || '')}">${escHtml(r.name || r.course_name || '—')}</td>
         <td style="color:var(--text-2);">${escHtml(r.university || '—')}</td>
         <td>${escHtml(r.domain || '—')}</td>
         <td>${statusBadge(r.status)}</td>
@@ -1444,7 +1493,7 @@ function domainRowDrilldown(domainName) {
         (r.domain || '').toLowerCase().includes(domainName.toLowerCase()));
     const rows = matches.length ? matches.map((r, i) => `<tr>
         <td style="color:var(--text-3);">${i + 1}</td>
-        <td style="font-weight:600;">${escHtml(r.name || r.course_name || '—')}</td>
+        <td class="course-name-cell" style="font-weight:600;" title="${escHtml(r.name || r.course_name || '')}">${escHtml(r.name || r.course_name || '—')}</td>
         <td>${escHtml(r.university || '—')}</td>
         <td>${escHtml(r.country || '—')}</td>
         <td>${statusBadge(r.status)}</td>
@@ -1472,7 +1521,6 @@ function populateVerificationTab(stats, recent) {
             { label: 'Verified', val: stats.verified || 0, pct: (stats.verified || 0) / tot, color: 'var(--green)' },
             { label: 'Discrepancies', val: stats.discrepancies || 0, pct: (stats.discrepancies || 0) / tot, color: 'var(--accent)' },
             { label: 'Errors', val: stats.errors || 0, pct: (stats.errors || 0) / tot, color: 'var(--red)' },
-            { label: 'Unverified', val: stats.unverified || 0, pct: (stats.unverified || 0) / tot, color: 'var(--purple)' },
         ];
         kpiRow.innerHTML = verKpis.map(k => `
             <div class="verif-kpi-card" style="border-left:4px solid ${k.color};">
@@ -1492,10 +1540,10 @@ function populateVerificationTab(stats, recent) {
         anStatusChart = new Chart(ctx, {
             type: 'doughnut',
             data: {
-                labels: ['Verified', 'Discrepancy', 'Error', 'Unverified'],
+                labels: ['Verified', 'Discrepancy', 'Error'],
                 datasets: [{
-                    data: [stats.verified || 0, stats.discrepancies || 0, stats.errors || 0, stats.unverified || 0],
-                    backgroundColor: ['#1dda9f', '#f59e0b', '#f43f5e', '#6366f1'],
+                    data: [stats.verified || 0, stats.discrepancies || 0, stats.errors || 0],
+                    backgroundColor: ['#1dda9f', '#f59e0b', '#f43f5e'],
                     borderColor: 'transparent', borderWidth: 0, hoverOffset: 10
                 }]
             },
@@ -1530,23 +1578,19 @@ function populateVerificationTab(stats, recent) {
             : `<div style="padding:32px;text-align:center;color:var(--text-3);">✅ No discrepancy reasons found — all clean!</div>`;
     }
 
-    // Verification by country table
-    const countrySt = {};
-    recent.forEach(r => {
-        const c = r.country || 'Unknown';
-        if (!isValidCountry(c)) return;
-        if (!countrySt[c]) countrySt[c] = { total: 0, verified: 0, discrepancy: 0, error: 0 };
-        countrySt[c].total++;
-        const s = (r.status || '').toLowerCase();
-        if (s === 'verified') countrySt[c].verified++;
-        else if (s === 'discrepancy') countrySt[c].discrepancy++;
-        else if (s === 'error') countrySt[c].error++;
-    });
+    // Verification by country table — from server `country_status` (computed
+    // over ALL courses, incl. Verified). The old code scanned `recent`, which
+    // excluded Verified courses, so verified was always 0 and verified-only
+    // countries were missing entirely.
+    const csMap = globalData?.country_status || {};
+    const vcEntries = Object.entries(csMap)
+        .filter(([c]) => isValidCountry(c))
+        .map(([c, st]) => [c, { total: st.total || 0, verified: st.verified || 0, discrepancy: st.discrepancies || 0, error: st.errors || 0 }])
+        .sort((a, b) => b[1].total - a[1].total);
     const vcTbody = document.getElementById('an-verif-country-tbody');
     if (vcTbody) {
-        const vcEntries = Object.entries(countrySt).sort((a, b) => b[1].total - a[1].total);
         vcTbody.innerHTML = vcEntries.length ? vcEntries.map(([country, st]) => {
-            const rate = (st.verified / st.total * 100).toFixed(0);
+            const rate = st.total ? (st.verified / st.total * 100).toFixed(0) : 0;
             const rateColor = rate >= 80 ? 'var(--green)' : rate >= 50 ? 'var(--accent)' : 'var(--red)';
             return `<tr class="clickable-row" onclick="geoRowDrilldown('${country.replace(/'/g, "\\'")}', ${st.total})">
                 <td>${getFlag(country)} <strong>${escHtml(country)}</strong></td>
@@ -1570,31 +1614,15 @@ function populateVerificationTab(stats, recent) {
 
 
 // -- Main fetch ----------------------------------------------------------
-async function fetchAnalytics() {
-    // Wait for dashboard data if not yet ready
-    if (!globalData) {
-        let waited = 0;
-        await new Promise(resolve => {
-            const poll = setInterval(() => {
-                waited += 100;
-                if (globalData || waited >= 6000) { clearInterval(poll); resolve(); }
-            }, 100);
-        });
-    }
-
+// Renders every Analytics section from a given analytics payload `d`,
+// merging it with the live globalData. Pure/synchronous so the cached path
+// can paint instantly on tab re-open. Extracted from the old fetchAnalytics.
+function renderAnalytics(d) {
     // Always-available data from the dashboard
     const recent = globalData?.recent || [];
     const stats = globalData?.stats || {};
     const countryCounts = globalData?.country_counts || {};
     const domainCounts = globalData?.domain_counts || {};
-
-    // Try supplementary analytics API (may be empty if no verification run)
-    let d = { course_category: {}, pricing_category: {}, variant_category: {}, country_pivot: {}, domain_pivot: {} };
-    try {
-        const res = await fetch(API_BASE_URL + '/api/analytics.json');
-        const json = await res.json();
-        if (json.status === 'success' && json.data) { d = analyticsData = json.data; }
-    } catch (e) { console.warn('[Analytics] analytics.json not available, using dashboard data only'); }
 
     // Merge: prefer analytics data; fall back to globalData equivalents
     const effectiveCountryPivot = Object.keys(d.country_pivot || {}).length > 0
@@ -1638,6 +1666,66 @@ async function fetchAnalytics() {
     populateVerificationTab(stats, recent);
 
     console.log('[Analytics] OK - total:', realTotal, '| countries:', geoTableData.length, '| india:', indiaTotal);
+}
+
+// Fetch /api/analytics.json and return the parsed `data` payload, or null on
+// failure. Updates lastAnalyticsHash when a payload is successfully read.
+async function fetchAnalyticsPayload() {
+    try {
+        const res = await fetch(API_BASE_URL + '/api/analytics.json');
+        const json = await res.json();
+        if (json.status === 'success' && json.data) {
+            return json.data;
+        }
+    } catch (e) {
+        console.warn('[Analytics] analytics.json not available, using dashboard data only');
+    }
+    return null;
+}
+
+async function fetchAnalytics() {
+    // Wait for dashboard data if not yet ready (very first call only).
+    if (!globalData && !analyticsData) {
+        let waited = 0;
+        await new Promise(resolve => {
+            const poll = setInterval(() => {
+                waited += 100;
+                if (globalData || waited >= 6000) { clearInterval(poll); resolve(); }
+            }, 100);
+        });
+    }
+
+    // Cached path: render the last-known payload synchronously (instant tab
+    // switch), then re-fetch in the background and re-render only if the
+    // JSON actually changed.
+    if (analyticsData) {
+        renderAnalytics(analyticsData);
+        refreshAnalyticsInBackground();
+        return;
+    }
+
+    // First load: fetch then render.
+    const payload = await fetchAnalyticsPayload();
+    if (payload) {
+        analyticsData = payload;
+        lastAnalyticsHash = JSON.stringify(payload);
+        renderAnalytics(payload);
+    } else {
+        // No analytics available yet — render with the empty-shape defaults
+        // so the tab still shows dashboard-derived data.
+        renderAnalytics({ course_category: {}, pricing_category: {}, variant_category: {}, country_pivot: {}, domain_pivot: {} });
+    }
+}
+
+// Background refresh used by the cached path. Non-blocking: does not await.
+async function refreshAnalyticsInBackground() {
+    const payload = await fetchAnalyticsPayload();
+    if (!payload) return;
+    const hash = JSON.stringify(payload);
+    if (hash === lastAnalyticsHash) return;
+    analyticsData = payload;
+    lastAnalyticsHash = hash;
+    renderAnalytics(payload);
 }
 
 

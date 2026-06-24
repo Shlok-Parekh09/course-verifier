@@ -96,6 +96,39 @@ def clean_country(country):
     country = country.replace('Country:', '').replace('(Online)', '').strip()
     return country if country else 'Unknown'
 
+# Canonical academic-domain labels. The raw `domain` field arrives from a mix
+# of upload-filename matching (Title Case, e.g. "Bachelors") and CombinedWork
+# migration (UPPERCASE, e.g. "BACHELORS DEGREE"). These are the same degrees
+# spelled differently — collapse them to one canonical label so the Dashboard
+# "Course Breakdown" and Analytics "Credential Mix" don't split a degree into
+# multiple bars/segments.
+_CANON_DOMAIN_MAP = [
+    ("bachelor",          "Bachelor's Degree"),
+    ("master",            "Master's Degree"),
+    ("post graduate diploma", "Post Graduate Diploma"),
+    ("post graduate certificate", "Post Graduate Certificate"),
+    ("post grad diploma", "Post Graduate Diploma"),
+    ("post grad cert",    "Post Graduate Certificate"),
+    ("graduate diploma",  "Diploma"),
+    ("diploma",            "Diploma"),
+    ("certificate",        "Certificate"),
+    ("free to audit",     "Free to Audit"),
+    ("high value low cost", "High Value Low Cost"),
+    ("free",              "Free"),
+]
+
+def normalize_domain(raw):
+    """Collapse case/spelling variants of a course domain/type to one label."""
+    if not raw:
+        return "Other"
+    key = str(raw).strip().lower()
+    if not key or key in ('unknown', 'unknown domain', 'none', 'null'):
+        return "Other"
+    for frag, label in _CANON_DOMAIN_MAP:
+        if frag in key:
+            return label
+    return "Other"
+
 # ── Per-attribute issue model (mirrors the modal table in app.js) ──────────────
 # An "issue" is any attribute row whose verified value does NOT match the PDF.
 # Users can tick individual attributes as Solved, or solve every open issue in a
@@ -299,24 +332,35 @@ def save_courses(updated_courses=None):
                 elif c.get('issue_category') == ISSUE_CATEGORY_COURSE and sub:
                     course_sub_counts[sub] = course_sub_counts.get(sub, 0) + 1
                 if c.get('issue_category') == ISSUE_CATEGORY_WEBSITE:
-                    dom = c.get('domain', 'Unknown')
+                    dom = normalize_domain(c.get('domain', 'Unknown'))
                     domain_issue_counts[dom] = domain_issue_counts.get(dom, 0) + 1
 
             domain_warnings = [{"domain": d, "issue_count": cnt} for d, cnt in domain_issue_counts.items() if cnt >= 3]
 
             domain_counts = {}
             country_counts = {}
+            country_status = {}
             discrepancy_list = []
             website_issue_list = []
             course_issue_list = []
 
             for c in global_courses:
-                d = c.get('domain')
+                d = normalize_domain(c.get('domain')) if c.get('domain') else None
                 if d:
                     domain_counts[d] = domain_counts.get(d, 0) + 1
                 cty = c.get('country')
                 if cty and cty != 'Unknown':
+                    cty = clean_country(cty)
                     country_counts[cty] = country_counts.get(cty, 0) + 1
+                    st = country_status.setdefault(cty, {"total": 0, "verified": 0, "discrepancies": 0, "errors": 0})
+                    st["total"] += 1
+                    s = c.get('status')
+                    if s == 'Verified':
+                        st["verified"] += 1
+                    elif s == 'Discrepancy':
+                        st["discrepancies"] += 1
+                    elif s == 'Error':
+                        st["errors"] += 1
 
                 if c.get('status') == 'Discrepancy':
                     discrepancy_list.append({
@@ -359,6 +403,7 @@ def save_courses(updated_courses=None):
                 "domain_warnings": domain_warnings,
                 "domain_counts": domain_counts,
                 "country_counts": country_counts,
+                "country_status": country_status,
                 "discrepancy_list": discrepancy_list,
                 "website_issue_list": website_issue_list,
                 "course_issue_list": course_issue_list,
@@ -747,7 +792,7 @@ def api_data():
     domain_issue_counts = {}
     for c in global_courses:
         if c.get('issue_category') == ISSUE_CATEGORY_WEBSITE:
-            dom = c.get('domain', 'Unknown')
+            dom = normalize_domain(c.get('domain', 'Unknown'))
             domain_issue_counts[dom] = domain_issue_counts.get(dom, 0) + 1
     domain_warnings = [
         {"domain": d, "issue_count": cnt}
@@ -756,15 +801,28 @@ def api_data():
 
     domain_counts = {}
     country_counts = {}
+    country_status = {}
     discrepancy_list = []
     website_issue_list = []
     course_issue_list = []
 
     for c in global_courses:
-        if c['domain']:
-            domain_counts[c['domain']] = domain_counts.get(c['domain'], 0) + 1
-        if c['country'] and c['country'] != 'Unknown':
-            country_counts[c['country']] = country_counts.get(c['country'], 0) + 1
+        if c.get('domain'):
+            dom = normalize_domain(c.get('domain'))
+            domain_counts[dom] = domain_counts.get(dom, 0) + 1
+        cty = c.get('country')
+        if cty and cty != 'Unknown':
+            cty = clean_country(cty)
+            country_counts[cty] = country_counts.get(cty, 0) + 1
+            st = country_status.setdefault(cty, {"total": 0, "verified": 0, "discrepancies": 0, "errors": 0})
+            st["total"] += 1
+            s = c.get('status')
+            if s == 'Verified':
+                st["verified"] += 1
+            elif s == 'Discrepancy':
+                st["discrepancies"] += 1
+            elif s == 'Error':
+                st["errors"] += 1
 
         if c['status'] == 'Discrepancy':
             discrepancy_list.append({
@@ -807,6 +865,7 @@ def api_data():
         "domain_warnings": domain_warnings,
         "domain_counts": domain_counts,
         "country_counts": country_counts,
+        "country_status": country_status,
         "discrepancy_list": discrepancy_list,
         "website_issue_list": website_issue_list,
         "course_issue_list": course_issue_list,
@@ -984,32 +1043,62 @@ def api_analytics():
             # Country Count
             country_counts = df['Country'].value_counts().to_dict()
             data['country_pivot'] = country_counts
-            
-            # Course Categories (Indian vs Int)
-            indian = df[df['Country'] == 'India'].shape[0]
-            intl = df[df['Country'] != 'India'].shape[0]
-            data['course_category']['Indian Programs'] = indian
-            data['course_category']['International Programs'] = intl
-            data['course_category']['Total Programs'] = indian + intl
-            
-            # Extract Levels
+
+            # Academic credential mix — DEGREE LEVELS ONLY.
+            # Geography (Indian vs International) is shown elsewhere (split
+            # visual + Geography sub-tab); it must not pollute the credential
+            # doughnut. Labels are canonical and agree with normalize_domain()
+            # so the Analytics credential chart and the Dashboard breakdown match.
             def get_level(ctype):
-                ctype = str(ctype).lower()
-                if 'bach' in ctype or 'ug' in ctype: return "Bachelor's Degrees"
-                if 'mast' in ctype or 'pg' in ctype: return "Master's Degrees"
-                if 'dip' in ctype: return "Diplomas"
-                if 'cert' in ctype: return "Certificates"
+                c = str(ctype).lower().replace('gradiuate', 'graduate').strip()
+                if 'post graduate diploma' in c or 'post grad diploma' in c or 'graduate diploma' in c:
+                    return "Post Graduate Diploma"
+                if 'post graduate certificate' in c or 'post grad certificate' in c or 'post grad cert' in c:
+                    return "Post Graduate Certificate"
+                if 'bachelor' in c or c == 'ug' or 'undergrad' in c:
+                    return "Bachelor's Degree"
+                if 'master' in c or 'pg' in c:
+                    return "Master's Degree"
+                if 'diploma' in c:
+                    return "Diploma"
+                if 'cert' in c:
+                    return "Certificate"
                 return "Other"
-                
+
             levels = df['Course Type'].apply(get_level).value_counts().to_dict()
             for k, v in levels.items():
-                if k != 'Other': data['course_category'][k] = v
-                
-            # Pricing
-            free = df[df['Fees'].astype(str).str.contains('free|0', case=False, na=False)].shape[0]
-            data['pricing_category']['Free Courses'] = free
-            data['pricing_category']['Affordable'] = df.shape[0] - free
-            data['pricing_category']['Total Pricing'] = df.shape[0]
+                if k != 'Other':
+                    data['course_category'][k] = int(v)
+
+            # Pricing — calibrated cost-access intelligence (INR).
+            # Old code matched any fee containing the digit "0" → ~everything.
+            # Now: parse the numeric fee (strip ₹/commas), bucket into 4 tiers.
+            import re as _re
+            def parse_fee_tier(fee):
+                s = str(fee).lower()
+                if 'free' in s:
+                    return 'Free'
+                m = _re.search(r'[\d][\d,]*(?:\.\d+)?', str(fee))
+                if not m:
+                    return None
+                try:
+                    val = float(m.group(0).replace(',', ''))
+                except ValueError:
+                    return None
+                if val <= 0:
+                    return 'Free'
+                if val <= 50000:
+                    return 'Affordable'
+                if val <= 200000:
+                    return 'Mid'
+                return 'Premium'
+
+            pricing = {'Free': 0, 'Affordable': 0, 'Mid': 0, 'Premium': 0}
+            for fee in df['Fees'].tolist():
+                tier = parse_fee_tier(fee)
+                if tier:
+                    pricing[tier] = pricing.get(tier, 0) + 1
+            data['pricing_category'] = pricing
 
         # 2. Parse Variants (link_compile.pdf.json)
         json_file = 'autonomous_verified_link_compile.pdf.json'
@@ -1131,13 +1220,13 @@ def upload_data():
                             # Detect and assign exact domain from filename
                             raw_name = file.filename.replace('_', ' ').replace('-', ' ').lower()
                             valid_domains = [
-                                "High Value Low Cost", "Post Graduate Certificate", "Certificate", 
-                                "Bachelors", "Masters", "Post Graduate Diploma", "Diploma", 
+                                "High Value Low Cost", "Post Graduate Certificate", "Certificate",
+                                "Bachelors", "Masters", "Post Graduate Diploma", "Diploma",
                                 "Free to Audit", "Free"
                             ]
                             for d in valid_domains:
                                 if d.lower() in raw_name:
-                                    c['domain'] = d
+                                    c['domain'] = normalize_domain(d)
                                     break
                             
                             matches = [c['cost_match'], c['duration_match'], c['mode_match'], c['lang_match'], c['country_match'], c['uni_match'], c['sk_match']]

@@ -7,7 +7,7 @@
     <meta name="description" content="Live course verification and country-wise analysis platform by Khushboo Singh">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=9">
+    <link rel="stylesheet" href="/static/style.css?v=10">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://unpkg.com/chartjs-chart-geo@4.2.8/build/index.umd.min.js"></script>
     <script src="https://kit.fontawesome.com/997b419143.js" crossorigin="anonymous"></script>
@@ -123,7 +123,6 @@
                             <div class="panel-title">Course Breakdown</div>
                             <div class="pill-toggle" id="bar-toggle-pills">
                                 <button class="active" data-val="domain">Domain</button>
-                                <button data-val="country">Country</button>
                             </div>
                         </div>
                         <div class="chart-wrap chart-h260">
@@ -136,16 +135,6 @@
 
                 <!-- Right: Donut + Filtered Table -->
                 <div style="display:grid; gap:20px; align-items:start;">
-
-                    <!-- Doughnut -->
-                    <div class="panel">
-                        <div class="panel-hdr">
-                            <div class="panel-title">Verification Breakdown</div>
-                        </div>
-                        <div class="chart-wrap chart-h260">
-                            <canvas id="statusPieChart"></canvas>
-                        </div>
-                    </div>
 
                     <!-- Issue Category Doughnut -->
                     <div class="panel">
@@ -259,6 +248,7 @@
                 <div class="tbl-wrap" style="max-height:72vh;">
                     <table class="data-table">
                         <thead><tr>
+                            <th class="col-idx">#</th>
                             <th>Course Name</th><th>University</th>
                             <th>Domain</th><th>Status</th><th>Reason</th><th>Page</th>
                         </tr></thead>
@@ -675,6 +665,6 @@
     </div>
 </div>
 
-<script src="/static/app.js?v=9"></script>
+<script src="/static/app.js?v=10"></script>
 </body>
 </html>
