@@ -1747,12 +1747,11 @@ function initUpload() {
     const label = document.getElementById('upload-label-global');
     if (!input) return;
 
-    const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
-    if (!isLocal && label) label.style.display = 'none';
+    if (!isLocalEnv && label) label.style.display = 'none';
 
     input.addEventListener('change', async () => {
         if (!input.files.length) return;
-        if (!isLocal) { alert('Upload is only available on the local dashboard.'); input.value = ''; return; }
+        if (!isLocalEnv) { alert('Upload is only available on the local dashboard.'); input.value = ''; return; }
         const orig = label.textContent;
         label.textContent = 'Uploading…';
         const fd = new FormData();
