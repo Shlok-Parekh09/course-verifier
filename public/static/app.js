@@ -1,11 +1,11 @@
 /* ================================================================
-   COURSE VERIFIER  ·  APP.JS  v5
+   COURSE VERIFIER  ·  APP.JS  v6
    ================================================================ */
 
 'use strict';
 
-// IMPORTANT: Replace the URL below with your actual Render URL after deploying!
-// e.g., 'https://your-app-name.onrender.com'
+// Production API is the hosted Vercel deployment; locally the Flask app
+// serves the API on the same origin, so no base URL is needed.
 const isLocalEnv = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 let API_BASE_URL = isLocalEnv ? '' : 'https://course-verifier.vercel.app';
 if (API_BASE_URL.endsWith('/')) {
@@ -14,7 +14,7 @@ if (API_BASE_URL.endsWith('/')) {
 
 // ── State ────────────────────────────────────────────────────────
 let globalData = null;
-let currentFilter = { type: null, value: null };
+let currentFilter = { type: null, value: null };   // Dashboard bar-chart filter (filtered table panel)
 let countryDataList = [];
 let allCoursesData = [];
 let recentData = [];
@@ -24,8 +24,26 @@ const PAGE_SIZE = 100;
 const RECENT_PAGE_SIZE = 30;
 let lastDataHash = '';
 
+// ── Tab filter state (real, client-side, never fabricated) ───────
+let verificationFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', attr: 'all' };
+let courseFilter       = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', qs: 'any', nirf: 'any' };
+
+const ATTR_TO_MATCH = {
+    Cost: 'cost_match', Duration: 'duration_match', Mode: 'mode_match',
+    Language: 'lang_match', Country: 'country_match', University: 'uni_match', Skills: 'sk_match'
+};
+const SUBTYPE_LABELS = {
+    '404_not_found': '404 Not Found', 'ssl_error': 'SSL Error', 'timeout': 'Timeout',
+    'blocked_by_waf': 'Blocked by WAF', 'dns_fail': 'DNS Fail', 'login_required': 'Login Required',
+    'redirect_loop': 'Redirect Loop', 'server_error': 'Server Error', 'site_down': 'Site Down',
+    'multiple_mismatches': 'Multiple Mismatches', 'cost_mismatch': 'Cost Mismatch',
+    'duration_mismatch': 'Duration Mismatch', 'university_mismatch': 'University Mismatch',
+    'country_mismatch': 'Country Mismatch', 'mode_mismatch': 'Mode Mismatch',
+    'language_mismatch': 'Language Mismatch', 'skills_mismatch': 'Skills Mismatch',
+    'name_mismatch': 'Name Mismatch', 'course_discontinued': 'Discontinued',
+    'course_replaced': 'Replaced', 'wrong_url': 'Wrong URL', 'perfect_match': 'Perfect Match'
+};
 let statusChart, barChart, mapChart, lineChart;
-let authorDomainChart, authorAccuracyChart;
 let barMode = 'domain'; // 'domain' | 'country'
 
 // ── Country flag emoji helper ─────────────────────────────────────
@@ -65,6 +83,13 @@ function initTheme() {
             if (label) label.textContent = isLight ? 'Light' : 'Dark';
         });
     }
+
+    // Dashboard KPI cards drill through to the Verification tab with a
+    // real filter applied (no more loose single-field flag).
+    document.getElementById('kpi-card-discrepancies')?.addEventListener('click', () =>
+        jumpToVerification({ status: 'Discrepancy' }));
+    document.getElementById('kpi-card-website-issues')?.addEventListener('click', () =>
+        jumpToVerification({ status: 'Error', category: 'website_issue' }));
 }
 
 // ================================================================
@@ -78,7 +103,6 @@ function switchTab(targetId) {
     const link = document.querySelector(`#nav-tabs a[data-target="${targetId}"]`);
     if (link) link.classList.add('active');
     if (targetId === 'tab-courses') loadAllCourses();
-    if (targetId === 'tab-author' && globalData) populateAuthorTab(globalData);
     // Re-fetch analytics every time the tab is opened so data is always fresh
     if (targetId === 'tab-analytics') fetchAnalytics();
 }
@@ -287,63 +311,6 @@ function initCharts() {
     document.getElementById('clear-filter')?.addEventListener('click', () => applyFilter(null, null));
 }
 
-// ── Author charts (lazy-init) ─────────────────────────────────────
-function initAuthorCharts(domainData, stats) {
-    const dCtx = document.getElementById('authorDomainChart')?.getContext('2d');
-    if (dCtx) {
-        if (authorDomainChart) authorDomainChart.destroy();
-        const entries = Object.entries(domainData).sort((a, b) => b[1] - a[1]).slice(0, 8);
-        authorDomainChart = new Chart(dCtx, {
-            type: 'bar',
-            data: {
-                labels: entries.map(e => e[0]),
-                datasets: [{
-                    label: 'Courses',
-                    data: entries.map(e => e[1]),
-                    backgroundColor: [
-                        '#f46a22', '#c084fc', '#1dda9f', '#6eb4ff',
-                        '#f5a623', '#f16b6b', '#60a5fa', '#34d399'
-                    ],
-                    borderRadius: 6
-                }]
-            },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: {
-                    x: { grid: { display: false }, ticks: { font: { size: 10 } } },
-                    y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.04)' } }
-                }
-            }
-        });
-    }
-
-    const aCtx = document.getElementById('authorAccuracyChart')?.getContext('2d');
-    if (aCtx) {
-        if (authorAccuracyChart) authorAccuracyChart.destroy();
-        const total = (stats.total || 1);
-        authorAccuracyChart = new Chart(aCtx, {
-            type: 'doughnut',
-            data: {
-                labels: ['Matched', 'Discrepancy', 'Error'],
-                datasets: [{
-                    data: [stats.verified || 0, stats.discrepancies || 0, (stats.errors || 0) + (stats.unverified || 0)],
-                    backgroundColor: ['#1dda9f', '#f5a623', '#f16b6b'],
-                    borderWidth: 0,
-                    hoverOffset: 6
-                }]
-            },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                cutout: '68%',
-                plugins: {
-                    legend: { position: 'bottom', labels: { usePointStyle: true, padding: 16, font: { size: 11 } } }
-                }
-            }
-        });
-    }
-}
-
 // ================================================================
 //  DATA UPDATES
 // ================================================================
@@ -351,22 +318,42 @@ function updateCards(stats) {
     document.getElementById('total-count').textContent = stats.total || 0;
     document.getElementById('verified-count').textContent = stats.verified || 0;
     document.getElementById('discrepancy-count').textContent = stats.discrepancies || 0;
-    document.getElementById('error-count').textContent = (stats.errors || 0) + (stats.unverified || 0);
-    document.getElementById('website-issue-count').textContent = stats.website_issues || 0;
-    document.getElementById('course-issue-count').textContent = stats.course_issues || 0;
-    const oic = document.getElementById('open-issue-count');
-    if (oic) oic.textContent = (stats.open_issues != null ? stats.open_issues : 0);
+
+    const wCount = document.getElementById('website-issue-count');
+    if (wCount) wCount.textContent = stats.website_issues || 0;
+
+    // Extra Dashboard KPI cards — all populated from real stats only.
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    set('error-count', stats.errors || 0);
+    set('course-issue-count', stats.course_issues || 0);
+    set('open-issue-count', stats.open_issues || 0);
 
     // Dynamic trend % labels
     const t = stats.total || 1;
     document.getElementById('kpi-verified-trend').textContent = `↑ ${Math.round((stats.verified || 0) / t * 100)}% match rate`;
     document.getElementById('kpi-disc-trend').textContent = `⚠ ${Math.round((stats.discrepancies || 0) / t * 100)}% flagged`;
-    document.getElementById('kpi-err-trend').textContent = `✕ ${Math.round(((stats.errors || 0) + (stats.unverified || 0)) / t * 100)}% failed`;
-    document.getElementById('kpi-webissue-trend').textContent = `🔗 ${Math.round((stats.website_issues || 0) / t * 100)}% site broken`;
-    document.getElementById('kpi-courseissue-trend').textContent = `📋 ${Math.round((stats.course_issues || 0) / t * 100)}% data mismatch`;
+
+    const kpiWebTrend = document.getElementById('kpi-webissue-trend');
+    if (kpiWebTrend) kpiWebTrend.textContent = `🔗 ${Math.round((stats.website_issues || 0) / t * 100)}% site broken`;
+
+    set('kpi-err-trend', `✕ ${Math.round((stats.errors || 0) / t * 100)}% failed`);
+    set('kpi-courseissue-trend', `📋 ${Math.round((stats.course_issues || 0) / t * 100)}% mismatch`);
+    set('kpi-openissue-trend', stats.open_issues ? `${stats.open_issues} open` : '✓ none open');
+
     document.getElementById('kpi-total-trend').textContent = `— ${t} records`;
-    const koi = document.getElementById('kpi-openissue-trend');
-    if (koi) koi.textContent = stats.open_issues ? `✓ ${stats.open_issues} open` : '✓ All clear';
+
+    // Sticky KPI strips on the Verification & All Courses tabs share the same
+    // four real numbers so the headline parameters are always visible.
+    renderKpiStrip('vf', stats);
+    renderKpiStrip('cf', stats);
+}
+
+function renderKpiStrip(prefix, stats) {
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    set(prefix + '-total', stats ? (stats.total ?? '—') : '—');
+    set(prefix + '-verified', stats ? (stats.verified ?? '—') : '—');
+    set(prefix + '-disc', stats ? (stats.discrepancies ?? '—') : '—');
+    set(prefix + '-web', stats ? (stats.website_issues ?? '—') : '—');
 }
 
 function updatePieChart(stats) {
@@ -467,7 +454,7 @@ function updateCountryLeaderboard(countryCounts, containerId = 'country-list') {
 }
 
 // ================================================================
-//  FILTER
+//  DASHBOARD BAR-CHART FILTER (filtered detail panel)
 // ================================================================
 function applyFilter(type, value) {
     currentFilter = { type, value };
@@ -491,7 +478,7 @@ function renderFilteredTable(type, value) {
             type === 'country' ? c.country === value : true
     );
     tbody.innerHTML = filtered.length === 0
-        ? '<tr><td colspan="5" style="text-align:center;">No courses found</td></tr>'
+        ? '<tr><td colspan="5" class="empty-state">No courses found</td></tr>'
         : filtered.map(c => `
             <tr onclick="showCourseModal('${c.id || ''}', '${escJs(c.name)}', '${escJs(c.university || '')}')">
                 <td><strong>${escHtml(c.name)}</strong></td>
@@ -503,45 +490,203 @@ function renderFilteredTable(type, value) {
 }
 
 // ================================================================
-//  AUTHOR TAB
+//  TAB FILTERS  (real, client-side, no dummy data)
 // ================================================================
-function populateAuthorTab(data) {
-    const stats = data.stats || {};
-    const countries = Object.keys(data.country_counts || {})
-        .filter(k => k && k !== 'Unknown').length;
+function populateSelect(selectId, values) {
+    const sel = document.getElementById(selectId);
+    if (!sel) return;
+    const current = sel.value;
+    const first = sel.querySelector('option');            // keep the "All …" option
+    sel.innerHTML = '';
+    if (first) sel.appendChild(first);
+    [...values].filter(Boolean).sort().forEach(v => {
+        const o = document.createElement('option');
+        o.value = v; o.textContent = v;
+        sel.appendChild(o);
+    });
+    sel.value = [...sel.options].some(o => o.value === current) ? current : (first ? first.value : 'all');
+}
 
-    const el = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
-    el('a-total', stats.total || 0);
-    el('a-verified', stats.verified || 0);
-    el('a-disc', stats.discrepancies || 0);
-    el('a-countries', countries);
+function populateSubtypeSelect(selectId) {
+    const sel = document.getElementById(selectId);
+    if (!sel) return;
+    const wsc = globalData?.website_sub_counts || {};
+    const csc = globalData?.course_sub_counts || {};
+    const keys = [...new Set([...Object.keys(wsc), ...Object.keys(csc)])].filter(k => k);
+    const current = sel.value;
+    sel.innerHTML = '<option value="all">All Sub-Types</option>';
+    if (keys.length === 0) { sel.hidden = true; sel.value = 'all'; return; }
+    sel.hidden = false;
+    keys.sort().forEach(k => {
+        const o = document.createElement('option');
+        o.value = k; o.textContent = SUBTYPE_LABELS[k] || k.replace(/_/g, ' ');
+        sel.appendChild(o);
+    });
+    sel.value = [...sel.options].some(o => o.value === current) ? current : 'all';
+}
 
-    updateCountryLeaderboard(data.country_counts, 'author-country-list');
-    initAuthorCharts(data.domain_counts || {}, stats);
+function refreshFilterOptions() {
+    const vCountries = new Set(), vDomains = new Set();
+    recentData.forEach(c => { if (c.country) vCountries.add(c.country); if (c.domain) vDomains.add(c.domain); });
+    populateSelect('vf-country', vCountries);
+    populateSelect('vf-domain', vDomains);
+
+    const cCountries = new Set(), cDomains = new Set();
+    allCoursesData.forEach(c => { if (c.country) cCountries.add(c.country); if (c.domain) cDomains.add(c.domain); });
+    populateSelect('cf-country', cCountries);
+    populateSelect('cf-domain', cDomains);
+
+    populateSubtypeSelect('vf-subtype');
+    populateSubtypeSelect('cf-subtype');
+}
+
+function getFilteredVerificationData() {
+    const f = verificationFilter;
+    const q = f.search.trim().toLowerCase();
+    return recentData.filter(c => {
+        if (f.status !== 'all' && c.status !== f.status) return false;
+        if (f.category !== 'all' && c.issue_category !== f.category) return false;
+        if (f.subtype !== 'all' && (c.issue_sub_type || '') !== f.subtype) return false;
+        if (f.country !== 'all' && c.country !== f.country) return false;
+        if (f.domain !== 'all' && c.domain !== f.domain) return false;
+        if (f.attr !== 'all') { const key = ATTR_TO_MATCH[f.attr]; if (key && c[key] !== false) return false; }
+        if (q && !(`${c.name} ${c.university || ''}`.toLowerCase().includes(q))) return false;
+        return true;
+    });
+}
+
+function getFilteredCourseData() {
+    const f = courseFilter;
+    const q = f.search.trim().toLowerCase();
+    return allCoursesData.filter(c => {
+        if (f.status !== 'all' && c.status !== f.status) return false;
+        if (f.category !== 'all' && c.issue_category !== f.category) return false;
+        if (f.subtype !== 'all' && (c.issue_sub_type || '') !== f.subtype) return false;
+        if (f.country !== 'all' && c.country !== f.country) return false;
+        if (f.domain !== 'all' && c.domain !== f.domain) return false;
+        if (f.qs === 'yes' && !c.has_qs_badge) return false;
+        if (f.qs === 'no' && c.has_qs_badge) return false;
+        if (f.nirf === 'yes' && !c.has_nirf_badge) return false;
+        if (f.nirf === 'no' && c.has_nirf_badge) return false;
+        if (q && !(`${c.name} ${c.university || ''} ${c.domain || ''}`.toLowerCase().includes(q))) return false;
+        return true;
+    });
+}
+
+function syncVerificationFilters() {
+    const f = verificationFilter;
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    set('vf-search', f.search); set('vf-status', f.status); set('vf-category', f.category);
+    set('vf-subtype', f.subtype); set('vf-country', f.country); set('vf-domain', f.domain); set('vf-attr', f.attr);
+}
+
+function syncCourseFilters() {
+    const f = courseFilter;
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    set('cf-search', f.search); set('cf-status', f.status); set('cf-category', f.category);
+    set('cf-subtype', f.subtype); set('cf-country', f.country); set('cf-domain', f.domain);
+    set('cf-qs', f.qs); set('cf-nirf', f.nirf);
+}
+
+function applyVerificationFilter() { currentRecentPage = 1; renderRecentPage(); }
+function applyCourseFilter() { currentPage = 1; renderCoursesPage(); }
+
+function jumpToVerification(partial) {
+    verificationFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', attr: 'all', ...partial };
+    syncVerificationFilters();
+    switchTab('tab-verification');
+    applyVerificationFilter();
+}
+
+function jumpToCourses(partial) {
+    courseFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', qs: 'any', nirf: 'any', ...partial };
+    syncCourseFilters();
+    switchTab('tab-courses');
+    applyCourseFilter();
+}
+
+function initFilters() {
+    const wire = (id, key, stateObj, applyFn, isText) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const handler = () => { stateObj[key] = isText ? el.value.trim() : el.value; applyFn(); };
+        el.addEventListener('input', handler);
+        el.addEventListener('change', handler);
+    };
+    wire('vf-search', 'search', verificationFilter, applyVerificationFilter, true);
+    wire('vf-status', 'status', verificationFilter, applyVerificationFilter, false);
+    wire('vf-category', 'category', verificationFilter, applyVerificationFilter, false);
+    wire('vf-subtype', 'subtype', verificationFilter, applyVerificationFilter, false);
+    wire('vf-country', 'country', verificationFilter, applyVerificationFilter, false);
+    wire('vf-domain', 'domain', verificationFilter, applyVerificationFilter, false);
+    wire('vf-attr', 'attr', verificationFilter, applyVerificationFilter, false);
+
+    wire('cf-search', 'search', courseFilter, applyCourseFilter, true);
+    wire('cf-status', 'status', courseFilter, applyCourseFilter, false);
+    wire('cf-category', 'category', courseFilter, applyCourseFilter, false);
+    wire('cf-subtype', 'subtype', courseFilter, applyCourseFilter, false);
+    wire('cf-country', 'country', courseFilter, applyCourseFilter, false);
+    wire('cf-domain', 'domain', courseFilter, applyCourseFilter, false);
+    wire('cf-qs', 'qs', courseFilter, applyCourseFilter, false);
+    wire('cf-nirf', 'nirf', courseFilter, applyCourseFilter, false);
+
+    document.getElementById('vf-reset')?.addEventListener('click', () => {
+        verificationFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', attr: 'all' };
+        syncVerificationFilters(); applyVerificationFilter();
+    });
+    document.getElementById('cf-reset')?.addEventListener('click', () => {
+        courseFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', qs: 'any', nirf: 'any' };
+        syncCourseFilters(); applyCourseFilter();
+    });
+
+    // Sticky KPI strip cards cross-filter their own tab.
+    document.querySelectorAll('#vf-kpi-strip .kpi-strip-card').forEach(card => {
+        card.addEventListener('click', () => {
+            const partial = {};
+            if (card.dataset.status) partial.status = card.dataset.status;
+            if (card.dataset.category) partial.category = card.dataset.category;
+            verificationFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', attr: 'all', ...partial };
+            syncVerificationFilters(); applyVerificationFilter();
+        });
+    });
+    document.querySelectorAll('#cf-kpi-strip .kpi-strip-card').forEach(card => {
+        card.addEventListener('click', () => {
+            const partial = {};
+            if (card.dataset.status) partial.status = card.dataset.status;
+            if (card.dataset.category) partial.category = card.dataset.category;
+            courseFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', qs: 'any', nirf: 'any', ...partial };
+            syncCourseFilters(); applyCourseFilter();
+        });
+    });
 }
 
 // ================================================================
-//  RECENT VERIFICATIONS
+//  RECENT VERIFICATIONS  (Verification tab)
 // ================================================================
 function updateRecentVerifications(recent) {
     if (!recent) return;
-    const hash = JSON.stringify(recent.length);
+    // Content hash (not just length) so solve/upload changes re-render even
+    // when the row count is unchanged.
+    const hash = JSON.stringify(recent.map(c => `${c.id}:${c.status}:${(c.solved_attrs || []).join('.')}`));
     if (hash === lastDataHash) return;
     lastDataHash = hash;
     recentData = [...recent].sort((a, b) => parseInt(a.id || '9') - parseInt(b.id || '9'));
-    currentRecentPage = 1;
+    refreshFilterOptions();
     renderRecentPage();
 }
 
 function renderRecentPage() {
     const tbody = document.getElementById('recent-verifications-body');
     const info = document.getElementById('recent-page-info');
+    const countEl = document.getElementById('vf-count');
     if (!tbody) return;
-    const total = Math.ceil(recentData.length / RECENT_PAGE_SIZE) || 1;
+    const filteredData = getFilteredVerificationData();
+    const totalPages = Math.ceil(filteredData.length / RECENT_PAGE_SIZE) || 1;
+    if (currentRecentPage > totalPages) currentRecentPage = totalPages;
     const start = (currentRecentPage - 1) * RECENT_PAGE_SIZE;
-    const slice = recentData.slice(start, start + RECENT_PAGE_SIZE);
+    const slice = filteredData.slice(start, start + RECENT_PAGE_SIZE);
     tbody.innerHTML = slice.length === 0
-        ? '<tr><td colspan="5" style="text-align:center;">No verifications yet.</td></tr>'
+        ? '<tr><td colspan="5" class="empty-state">No courses match the current filters.</td></tr>'
         : slice.map(c => {
             const issueLabel = c.issue_category ? (c.issue_sub_type || c.issue_category).replace(/_/g, ' ') : c.status;
             const badgeCls = c.issue_category === 'website_issue' ? 'badge-error' :
@@ -556,80 +701,79 @@ function renderRecentPage() {
                 <td>${c.pdf_page || '—'}</td>
             </tr>`;
         }).join('');
-    if (info) info.textContent = `Page ${currentRecentPage} of ${total} (${recentData.length})`;
+    if (info) info.textContent = `Page ${currentRecentPage} of ${totalPages} · ${filteredData.length} courses`;
+    if (countEl) countEl.textContent = `Showing ${slice.length} of ${filteredData.length}`;
 }
 
 document.getElementById('recent-prev-page')?.addEventListener('click', () => {
     if (currentRecentPage > 1) { currentRecentPage--; renderRecentPage(); }
 });
 document.getElementById('recent-next-page')?.addEventListener('click', () => {
-    if (currentRecentPage < Math.ceil(recentData.length / RECENT_PAGE_SIZE)) { currentRecentPage++; renderRecentPage(); }
+    const max = Math.ceil(getFilteredVerificationData().length / RECENT_PAGE_SIZE);
+    if (currentRecentPage < max) { currentRecentPage++; renderRecentPage(); }
 });
 
 // ================================================================
 //  ALL COURSES
 // ================================================================
 async function loadAllCourses() {
-    if (allCoursesData.length > 0) { renderCoursesPage(); return; }
     const tbody = document.getElementById('all-courses-body');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;">Loading…</td></tr>';
+    if (allCoursesData.length > 0) { renderCoursesPage(); return; }
+    if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="empty-state">Loading…</td></tr>';
     try {
         const res = await fetch(API_BASE_URL + '/api/courses.json');
         const data = await res.json();
         allCoursesData = (data.courses || []).sort((a, b) => parseInt(a.id || '9') - parseInt(b.id || '9'));
-        recentData = data.recent || [];
-
-        // --- DYNAMIC WEBSITE ISSUE HEURISTIC ---
-        const applyHeuristic = (c) => {
-            if (c.issue_category === 'verified') return;
-            const desc = (String(c.cost_description || '') + " " + String(c.duration_description || '') + " " + String(c.cost_verified || '') + " " + String(c.duration_verified || '')).toLowerCase();
-            const allFalse = !c.cost_match && !c.duration_match && !c.mode_match && !c.lang_match && !c.country_match && !c.uni_match && !c.sk_match;
-            if (allFalse && desc.includes('page load error')) {
-                c.issue_category = 'website_issue';
-                c.status = 'Error';
-            }
-        };
-        allCoursesData.forEach(applyHeuristic);
-        recentData.forEach(applyHeuristic);
-        // ---------------------------------------
-
+        // NOTE: recentData is owned by /api/data.json (fetchData). Do not
+        // overwrite it from courses.json (which has no `recent` field) — that
+        // would wipe the Verification tab's data.
+        refreshFilterOptions();
         renderCoursesPage();
     } catch (e) {
-        if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--red);">Error loading courses</td></tr>';
+        if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="empty-state" style="color:var(--red);">Error loading courses</td></tr>';
     }
 }
 
 function renderCoursesPage() {
     const tbody = document.getElementById('all-courses-body');
     const info = document.getElementById('page-info');
+    const countEl = document.getElementById('cf-count');
     if (!tbody) return;
-    const total = Math.ceil(allCoursesData.length / PAGE_SIZE);
+    const filteredData = getFilteredCourseData();
+    const totalPages = Math.ceil(filteredData.length / PAGE_SIZE) || 1;
+    if (currentPage > totalPages) currentPage = totalPages;
     const start = (currentPage - 1) * PAGE_SIZE;
-    const slice = allCoursesData.slice(start, start + PAGE_SIZE);
-    tbody.innerHTML = slice.map(c => {
-        const issueLabel = c.issue_category ? (c.issue_sub_type || c.issue_category).replace(/_/g, ' ') : c.status;
-        const badgeCls = c.issue_category === 'website_issue' ? 'badge-error' :
-            c.issue_category === 'course_issue' ? 'badge-discrepancy' :
-                getBadgeClass(c.status);
-        return `<tr onclick="showCourseModal('${c.id}')">
+    const slice = filteredData.slice(start, start + PAGE_SIZE);
+    tbody.innerHTML = slice.length === 0
+        ? '<tr><td colspan="8" class="empty-state">No courses match the current filters.</td></tr>'
+        : slice.map(c => {
+            const issueLabel = c.issue_category ? (c.issue_sub_type || c.issue_category).replace(/_/g, ' ') : c.status;
+            const badgeCls = c.issue_category === 'website_issue' ? 'badge-error' :
+                c.issue_category === 'course_issue' ? 'badge-discrepancy' :
+                    getBadgeClass(c.status);
+            const statusClick = `event.stopPropagation();courseFilter.status='${c.status}';syncCourseFilters();applyCourseFilter();`;
+            const domainClick = `event.stopPropagation();courseFilter.domain='${escJs(c.domain || '')}';syncCourseFilters();applyCourseFilter();`;
+            return `<tr onclick="showCourseModal('${c.id}')">
             <td>${c.id}</td>
             <td><strong>${escHtml(c.name)}</strong></td>
             <td>${escHtml(c.university || '—')}</td>
-            <td>${escHtml(c.domain || '—')}</td>
+            <td><span class="cell-filter" title="Filter by domain" onclick="${domainClick}">${escHtml(c.domain || '—')}</span></td>
             <td>${escHtml(c.country || '—')}</td>
             <td>${c.has_qs_badge ? '<span class="badge badge-verified">Yes</span>' : '<span class="badge badge-error">No</span>'}</td>
             <td>${c.has_nirf_badge ? '<span class="badge badge-verified">Yes</span>' : '<span class="badge badge-error">No</span>'}</td>
-            <td><span class="badge ${badgeCls}" title="${escHtml(c.issue_category || '')}">${issueLabel}</span></td>
+            <td><span class="badge ${badgeCls} cell-filter" title="Filter by status" onclick="${statusClick}">${issueLabel}</span></td>
         </tr>`;
-    }).join('');
-    if (info) info.textContent = `Page ${currentPage} of ${total} (${allCoursesData.length} courses)`;
+        }).join('');
+    if (info) info.textContent = `Page ${currentPage} of ${totalPages} · ${filteredData.length} courses`;
+    if (countEl) countEl.textContent = `Showing ${slice.length} of ${filteredData.length}`;
 }
 
 document.getElementById('prev-page')?.addEventListener('click', () => {
     if (currentPage > 1) { currentPage--; renderCoursesPage(); }
 });
 document.getElementById('next-page')?.addEventListener('click', () => {
-    if (currentPage < Math.ceil(allCoursesData.length / PAGE_SIZE)) { currentPage++; renderCoursesPage(); }
+    const max = Math.ceil(getFilteredCourseData().length / PAGE_SIZE);
+    if (currentPage < max) { currentPage++; renderCoursesPage(); }
 });
 
 // ================================================================
@@ -640,21 +784,8 @@ async function showCourseModal(courseId, fallbackName, fallbackUni) {
         try {
             const res = await fetch(API_BASE_URL + '/api/courses.json');
             const data = await res.json();
-
-            // --- DYNAMIC WEBSITE ISSUE HEURISTIC ---
-            const applyHeuristic = (c) => {
-                if (c.issue_category === 'verified') return;
-                const desc = (String(c.cost_description || '') + " " + String(c.duration_description || '') + " " + String(c.cost_verified || '') + " " + String(c.duration_verified || '')).toLowerCase();
-                const allFalse = !c.cost_match && !c.duration_match && !c.mode_match && !c.lang_match && !c.country_match && !c.uni_match && !c.sk_match;
-                if (allFalse && desc.includes('page load error')) {
-                    c.issue_category = 'website_issue';
-                    c.status = 'Error';
-                }
-            };
-            if (data.courses) data.courses.forEach(applyHeuristic);
-            // ---------------------------------------
-
             allCoursesData = data.courses || [];
+            refreshFilterOptions();
         } catch (e) { return; }
     }
     let c = allCoursesData.find(x => String(x.id) === String(courseId));
@@ -663,27 +794,12 @@ async function showCourseModal(courseId, fallbackName, fallbackUni) {
 
     document.getElementById('modal-course-title').textContent = c.name;
 
-    const safe = v => v ? String(v) : 'Not Provided';
-    const has_qs = c.has_qs_badge;
-    const has_nirf = c.has_nirf_badge;
-    const has_free = c.has_free_box;
-    const web_free = c.web_cost && c.web_cost.toLowerCase().includes('free');
-
-    const rows = c.pdf_table || [
-        { attribute: 'Cost', original: safe(c.cost), verified: safe(c.web_cost), status: c.cost_match ? 'MATCH' : 'FALSE' },
-        { attribute: 'Duration', original: safe(c.duration), verified: safe(c.web_duration), status: c.duration_match ? 'MATCH' : 'FALSE' },
-        { attribute: 'Mode', original: safe(c.mode), verified: safe(c.web_mode), status: c.mode_match ? 'MATCH' : 'FALSE' },
-        { attribute: 'Language', original: safe(c.language), verified: safe(c.web_language), status: c.lang_match ? 'MATCH' : 'FALSE' },
-        { attribute: 'Country', original: safe(c.country), verified: safe(c.country_verified || c.web_country || 'Not Found'), status: c.country_match ? 'MATCH' : 'FALSE' },
-        { attribute: 'University', original: safe(c.university || c.uni), verified: safe(c.web_uni), status: c.uni_match ? 'MATCH' : 'FALSE' },
-        { attribute: 'Skills', original: safe(c.skills), verified: safe(c.skills_verified), status: c.sk_match ? 'MATCH' : 'FALSE' },
-        { attribute: 'QS Ranked', original: has_qs ? 'True (Badge)' : 'False', verified: safe(c.qs_detail), status: (c.qs_ranked || !has_qs) ? 'MATCH' : 'FALSE' },
-        { attribute: 'NIRF Ranked', original: has_nirf ? 'True (Badge)' : 'False', verified: safe(c.nirf_detail), status: (c.nirf_ranked || !has_nirf) ? 'MATCH' : 'FALSE' },
-        { attribute: 'Free Box', original: has_free ? 'True' : 'False', verified: web_free ? 'Free' : 'Paid', status: (has_free === web_free) ? 'MATCH' : 'FALSE' }
-    ];
+    // The backend is the single source of truth for issue classification —
+    // no client-side re-heuristic and no fabricated attribute rows. If a
+    // course has no pdf_table, show an honest empty state.
+    const rows = (c.pdf_table && c.pdf_table.length) ? c.pdf_table : [];
 
     const tbody = document.getElementById('modal-table-body');
-    // Per-attribute issue solving
     currentModalCourseId = c.id;
     const solvedAttrs = Array.isArray(c.solved_attrs) ? c.solved_attrs : [];
     const falseRows = rows.filter(r => r.status === 'FALSE');
@@ -692,31 +808,36 @@ async function showCourseModal(courseId, fallbackName, fallbackUni) {
     const isCourseIssue = c.issue_category === 'course_issue';
     const hasOpenAttrs = falseRows.some(r => !solvedAttrs.includes(r.attribute));
 
-    tbody.innerHTML = rows.map(row => {
-        const isFalse = row.status === 'FALSE';
-        const solved = isFalse && solvedAttrs.includes(row.attribute);
-        const attrJs = JSON.stringify(row.attribute).replace(/"/g, '&quot;');
-        let action = '<span style="color:var(--text-3);font-size:0.75rem;">—</span>';
-        if (isFalse) {
-            action = solved
-                ? `<button class="solve-tick solved" title="Mark unsolved" onclick="solveCourse(${c.id},${attrJs},true)">✓ Solved</button>`
-                : `<button class="solve-tick" title="Mark this issue solved" onclick="solveCourse(${c.id},${attrJs},false)">✓ Solve</button>`;
-        }
-        const statusTxt = solved ? 'SOLVED' : row.status;
-        const statusClr = (row.status === 'MATCH' || solved) ? 'var(--green)' : 'var(--red)';
-        return `
-        <tr style="border-bottom:1px solid var(--border);" class="${solved ? 'solved-row' : ''}">
-            <td style="padding:10px 12px;color:var(--text-1);font-weight:600;font-size:0.85rem;">${row.attribute}</td>
-            <td style="padding:10px 12px;color:var(--text-2);font-size:0.85rem;">${escHtml(row.original)}</td>
-            <td style="padding:10px 12px;color:var(--text-2);font-size:0.85rem;">${escHtml(row.verified)}</td>
-            <td style="padding:10px 12px;text-align:center;font-weight:700;font-size:0.8rem;letter-spacing:0.04em;color:${statusClr};">${statusTxt}</td>
-            <td style="padding:6px 10px;text-align:center;">${action}</td>
-        </tr>`;
-    }).join('');
+    if (rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No PDF verification data for this course.</td></tr>';
+    } else {
+        tbody.innerHTML = rows.map(row => {
+            const isFalse = row.status === 'FALSE';
+            const solved = isFalse && solvedAttrs.includes(row.attribute);
+            const attrJs = JSON.stringify(row.attribute).replace(/"/g, '&quot;');
+            let action = '<span style="color:var(--text-3);font-size:0.75rem;">—</span>';
+            if (isFalse) {
+                action = solved
+                    ? `<button class="solve-tick solved" title="Mark unsolved" onclick="solveCourse(${c.id},${attrJs},true)">✓ Solved</button>`
+                    : `<button class="solve-tick" title="Mark this issue solved" onclick="solveCourse(${c.id},${attrJs},false)">✓ Solve</button>`;
+            }
+            const statusTxt = solved ? 'SOLVED' : row.status;
+            const statusClr = (row.status === 'MATCH' || solved) ? 'var(--green)' : 'var(--red)';
+            return `
+            <tr style="border-bottom:1px solid var(--border);" class="${solved ? 'solved-row' : ''}">
+                <td style="padding:10px 12px;color:var(--text-1);font-weight:600;font-size:0.85rem;">${row.attribute}</td>
+                <td style="padding:10px 12px;color:var(--text-2);font-size:0.85rem;">${escHtml(row.original)}</td>
+                <td style="padding:10px 12px;color:var(--text-2);font-size:0.85rem;">${escHtml(row.verified)}</td>
+                <td style="padding:10px 12px;text-align:center;font-weight:700;font-size:0.8rem;letter-spacing:0.04em;color:${statusClr};">${statusTxt}</td>
+                <td style="padding:6px 10px;text-align:center;">${action}</td>
+            </tr>`;
+        }).join('');
+    }
 
     // Header solve controls
     const solveAllBtn = document.getElementById('solve-all-btn');
     const solveWebBtn = document.getElementById('solve-website-btn');
+    const removeVerifBtn = document.getElementById('remove-from-verification-btn');
     const progress = document.getElementById('modal-solve-progress');
     if (solveAllBtn) {
         solveAllBtn.style.display = (isCourseIssue && hasOpenAttrs) ? '' : 'none';
@@ -727,6 +848,12 @@ async function showCourseModal(courseId, fallbackName, fallbackUni) {
         solveWebBtn.style.display = isWebsiteIssue ? '' : 'none';
         solveWebBtn.onclick = () => solveCourse(c.id, '_website', false);
     }
+    // "Remove from Verification" — shown ONLY once the course is actually
+    // solved (Verified). Solving itself doesn't remove it; this button does.
+    if (removeVerifBtn) {
+        removeVerifBtn.style.display = (c.status === 'Verified') ? '' : 'none';
+        removeVerifBtn.onclick = () => removeFromVerification(c.id);
+    }
     if (progress) {
         if (isCourseIssue && falseRows.length > 0) {
             progress.style.display = '';
@@ -736,11 +863,9 @@ async function showCourseModal(courseId, fallbackName, fallbackUni) {
         }
     }
 
-    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    // Delete is a real action locally; disabled on the hosted dashboard.
     const deleteBtn = document.getElementById('delete-course-btn');
-    if (deleteBtn) {
-        deleteBtn.style.display = isLocal ? '' : 'none';
-    }
+    if (deleteBtn) deleteBtn.style.display = isLocalEnv ? '' : 'none';
 
     document.getElementById('course-modal').classList.add('open');
 }
@@ -750,14 +875,14 @@ let currentModalCourseId = null;
 
 async function solveCourse(courseId, attr, unsolve) {
     if (courseId == null) return;
-    
+
     // 1. OPTIMISTIC UI UPDATE (Blazing Fast)
     const c = allCoursesData.find(x => String(x.id) === String(courseId));
     let originalDataStr = null;
     if (c) {
         originalDataStr = JSON.stringify(c); // Backup for rollback
         c.solved_attrs = c.solved_attrs || [];
-        
+
         if (attr === '_website') {
             c.issue_category = unsolve ? 'website_issue' : 'verified';
             c.status = unsolve ? 'Error' : 'Verified';
@@ -785,14 +910,14 @@ async function solveCourse(courseId, attr, unsolve) {
         showCourseModal(courseId); // Instant UI refresh
     }
 
-    // 2. BACKGROUND SYNC TO RENDER
+    // 2. BACKGROUND SYNC TO SERVER
     try {
         const res = await fetch(`${API_BASE_URL}/api/course/${courseId}/solve`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ attr, unsolve: !!unsolve })
         });
-        
+
         const data = await res.json();
         if (data.status !== 'success') throw new Error(data.message || 'Solve failed');
 
@@ -805,14 +930,30 @@ async function solveCourse(courseId, attr, unsolve) {
             disc_reason: upd.disc_reason,
             solved_attrs: upd.solved_attrs || []
         });
+        // Update the course's row in place. It stays visible in the Verification
+        // tab (now marked Verified) until the user clicks "Remove from
+        // Verification" or the next poll syncs it out — a Verified course is
+        // excluded from the server's recent list, so it leaves within 5s anyway.
         const rc = recentData.find(x => String(x.id) === String(courseId));
-        if (rc) Object.assign(rc, { issue_category: upd.issue_category, status: upd.status });
+        if (rc) Object.assign(rc, {
+            issue_category: upd.issue_category,
+            issue_sub_type: upd.issue_sub_type,
+            status: upd.status,
+            disc_reason: upd.disc_reason,
+            solved_attrs: upd.solved_attrs || []
+        });
 
         if (data.stats) {
+            // Every headline number updates the instant a solve is persisted —
+            // the 4 KPI parameters, both sticky strips, and both doughnuts.
             updateCards(data.stats);
+            updatePieChart(data.stats);
             updateIssuePieChart(data.stats);
-            fetchData(); // Trigger full refresh
         }
+        // Re-apply active filters so both tabs reflect the change immediately.
+        applyVerificationFilter();
+        applyCourseFilter();
+        fetchData(); // Trigger full refresh
     } catch (e) {
         console.error('Solve error:', e);
         // Rollback on failure
@@ -820,15 +961,46 @@ async function solveCourse(courseId, attr, unsolve) {
             Object.assign(c, JSON.parse(originalDataStr));
             showCourseModal(courseId);
         }
-        alert('Network request failed. Your Render API might be sleeping/offline. Please wait 45 seconds and try again!');
+        // Re-sync from server so any optimistic removal is undone if the solve
+        // didn't actually persist.
+        fetchData();
+        alert('Network request failed. The API might be sleeping/offline. Please wait a few seconds and try again.');
+    }
+}
+
+// Remove an already-solved (Verified) course from the Verification tab view.
+// The course is already Verified server-side, so it's already excluded from the
+// server's recent list — this just drops it from the client list immediately
+// and closes the modal. (Re-openable from the All Courses tab if ever needed.)
+function removeFromVerification(courseId) {
+    recentData = recentData.filter(x => String(x.id) !== String(courseId));
+    document.getElementById('course-modal').classList.remove('open');
+    applyVerificationFilter();
+}
+
+async function deleteCourse() {
+    const id = currentModalCourseId;
+    if (id == null) return;
+    const c = allCoursesData.find(x => String(x.id) === String(id));
+    const name = c?.name || '';
+    if (!confirm(`Delete course #${id} — "${name}"?\n\nThis reindexes all course IDs and cannot be undone.`)) return;
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/course/${id}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.status !== 'success') throw new Error(data.message || 'Delete failed');
+        document.getElementById('course-modal').classList.remove('open');
+        allCoursesData = [];        // force reload from server
+        await loadAllCourses();
+        fetchData();
+    } catch (e) {
+        alert('Delete failed: ' + (e.message || 'network error'));
     }
 }
 
 function initModal() {
     document.getElementById('close-modal')?.addEventListener('click', () =>
         document.getElementById('course-modal').classList.remove('open'));
-    document.getElementById('delete-course-btn')?.addEventListener('click', () =>
-        alert('Deleting from the online viewer is disabled. Please use the local dashboard.'));
+    document.getElementById('delete-course-btn')?.addEventListener('click', deleteCourse);
     document.getElementById('course-modal')?.addEventListener('click', e => {
         if (e.target === document.getElementById('course-modal'))
             document.getElementById('course-modal').classList.remove('open');
@@ -839,6 +1011,7 @@ function initModal() {
 //  MAIN DATA FETCH
 // ================================================================
 async function fetchData() {
+    if (!globalData) document.body.dataset.loading = 'true';
     try {
         const res = await fetch(API_BASE_URL + '/api/data.json');
         const data = await res.json();
@@ -853,19 +1026,11 @@ async function fetchData() {
         updateMapChart(data.country_counts);
         updateCountryLeaderboard(data.country_counts, 'country-list');
 
-        const recent = data.recent?.length ? data.recent
-            : (data.discrepancy_list || []).map((d, i) => ({
-                id: String(i + 1), name: d.name, university: d.university,
-                status: 'Discrepancy', disc_reason: d.reason
-            }));
-        updateRecentVerifications(recent);
+        // Real recent courses only — no fabricated fallback rows.
+        updateRecentVerifications(data.recent || []);
 
         if (currentFilter.type) applyFilter(currentFilter.type, currentFilter.value);
-
-        // If author tab is active, refresh
-        if (document.getElementById('tab-author')?.classList.contains('active')) {
-            populateAuthorTab(data);
-        }
+        document.body.dataset.loading = 'false';
     } catch (e) {
         console.error('Data fetch error:', e);
     }
@@ -1104,7 +1269,15 @@ function populatePricingChart(pricingCategory) {
                 y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { precision: 0 } }
             },
             animation: { duration: 900, easing: 'easeOutQuart' },
-            onClick: (e, els) => { if (els.length) alert(`${entries[els[0].index][0]}: ${entries[els[0].index][1]} courses`); }
+            // Drill into All Courses via a real cost text-search on the bucket's
+            // first word (e.g. "Free Courses" → search "free" in cost). No
+            // fabricated mapping; an empty result honestly shows the empty-state.
+            onClick: (e, els) => {
+                if (!els.length) return;
+                const label = entries[els[0].index][0];
+                const kw = label.split(' ')[0].toLowerCase();
+                jumpToCourses({ search: kw });
+            }
         }
     });
 }
@@ -1247,13 +1420,9 @@ function domainRowDrilldown(domainName) {
 }
 
 // ── Category drill-down (credential doughnut click) ──────────────
+// Real cross-tab filter: jump to All Courses filtered by this domain/level.
 function openAnalyticsDrilldownByCategory(catLabel) {
-    const recent = globalData?.recent || [];
-    const matches = recent.filter(r =>
-        (r.category || r.level || r.type || '').toLowerCase().includes(catLabel.toLowerCase()) ||
-        catLabel.toLowerCase().includes((r.category || r.level || r.type || '').toLowerCase())
-    );
-    alert(`Category "${catLabel}": ${matches.length} courses in live data.\nFilter via the All Courses tab for full details.`);
+    jumpToCourses({ domain: catLabel });
 }
 
 // ── Verification tab ─────────────────────────────────────────────
@@ -1400,7 +1569,8 @@ async function fetchAnalytics() {
         effectiveDomainPivot = {};
         Object.entries(domainCounts).forEach(([dom, total]) => {
             const dr = recent.filter(r => (r.domain || '').toLowerCase().includes(dom.toLowerCase()));
-            const ind = dr.filter(r => (r.country || '').toLowerCase().includes('india')).length || Math.round(total * 0.7);
+            // Real Indian count from the data only — never an assumed percentage.
+            const ind = dr.filter(r => (r.country || '').toLowerCase().includes('india')).length;
             effectiveDomainPivot[dom] = { Total: total, Indian: ind, International: total - ind };
         });
     }
@@ -1495,6 +1665,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initTheme();
     initTabs();
     initCharts();
+    initFilters();
     initModal();
     initUpload();
     initAnalyticsSubTabs();

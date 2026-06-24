@@ -1616,3 +1616,167 @@ tr.solved-row td { opacity: 0.62; }
 .an-status-legend {
     display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; justify-content: center;
 }
+
+/* ================================================================
+   UPGRADE v7 — sticky KPI strip, filter bars, empty states
+   ================================================================ */
+
+/* Visually-hidden but accessible labels for filter controls */
+.vh {
+    position: absolute !important;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0,0,0,0);
+    white-space: nowrap; border: 0;
+}
+
+/* ── Sticky headline KPI strip ─────────────────────────────── */
+.kpi-strip {
+    position: sticky;
+    top: var(--navbar-h);
+    z-index: 20;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    padding: 14px 0 16px;
+    margin-bottom: 16px;
+    background: linear-gradient(180deg, var(--bg) 60%, transparent);
+}
+
+.kpi-strip-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 14px 16px;
+    cursor: pointer;
+    transition: var(--transition);
+    text-align: left;
+    position: relative;
+    overflow: hidden;
+}
+.kpi-strip-card::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: var(--text-3);
+    opacity: 0.5;
+}
+.kpi-strip-card:nth-child(1)::before { background: var(--blue); }
+.kpi-strip-card:nth-child(2)::before { background: var(--green); }
+.kpi-strip-card:nth-child(3)::before { background: var(--amber); }
+.kpi-strip-card:nth-child(4)::before { background: var(--red); }
+
+.kpi-strip-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-sm);
+}
+.kpi-strip-val {
+    font-size: 1.7rem;
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    line-height: 1;
+    margin-bottom: 4px;
+    color: var(--text-1);
+}
+.kpi-strip-card:nth-child(1) .kpi-strip-val { color: var(--blue); }
+.kpi-strip-card:nth-child(2) .kpi-strip-val { color: var(--green); }
+.kpi-strip-card:nth-child(3) .kpi-strip-val { color: var(--amber); }
+.kpi-strip-card:nth-child(4) .kpi-strip-val { color: var(--red); }
+.kpi-strip-label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-3);
+}
+
+/* ── Filter bar ────────────────────────────────────────────── */
+.filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+}
+.filter-input,
+.filter-select {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text-1);
+    font-family: 'Inter', sans-serif;
+    font-size: 0.8rem;
+    font-weight: 500;
+    padding: 7px 11px;
+    border-radius: 8px;
+    outline: none;
+    transition: var(--transition);
+    cursor: pointer;
+}
+.filter-input { flex: 1 1 220px; min-width: 180px; cursor: text; }
+.filter-select { flex: 0 0 auto; }
+.filter-input:focus,
+.filter-select:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.filter-select option { background: var(--bg-card); color: var(--text-1); }
+
+.filter-count {
+    margin-left: auto;
+    font-size: 0.74rem;
+    font-weight: 700;
+    color: var(--text-2);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    padding: 5px 12px;
+    border-radius: 20px;
+    white-space: nowrap;
+}
+.export-btn {
+    border-color: var(--green-bg) !important;
+    color: var(--green) !important;
+}
+.export-btn:hover { background: var(--green); color: #fff !important; border-color: var(--green) !important; }
+
+/* ── Empty / loading state row ─────────────────────────────── */
+.empty-state {
+    text-align: center;
+    color: var(--text-3);
+    font-style: italic;
+    padding: 32px 12px !important;
+    font-size: 0.85rem;
+}
+
+/* ── Zebra striping + clickable cells ──────────────────────── */
+.data-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.012); }
+body.light-mode .data-table tbody tr:nth-child(even) { background: rgba(0,0,0,0.018); }
+
+.cell-filter {
+    cursor: pointer;
+    border-radius: 6px;
+    padding: 2px 6px;
+    margin: -2px -6px;
+    display: inline-block;
+    transition: background 0.15s;
+}
+.cell-filter:hover { background: var(--bg-hover); }
+
+/* Loading skeleton state for KPI values */
+body[data-loading="true"] .kpi-value,
+body[data-loading="true"] .kpi-strip-val { opacity: 0.35; }
+
+/* ── Responsive filter wrap ────────────────────────────────── */
+@media (max-width: 900px) {
+    .kpi-strip { grid-template-columns: repeat(2, 1fr); }
+    .filter-count { margin-left: 0; width: 100%; text-align: center; }
+}
+@media (max-width: 600px) {
+    .kpi-strip { grid-template-columns: 1fr 1fr; }
+    .filter-input { flex: 1 1 100%; }
+}
