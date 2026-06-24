@@ -5891,7 +5891,9 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         import threading
         
         checkpoint_lock = threading.Lock()
-        NUM_BROWSERS = 6  # User requested 6 threads. Restarting after every course ensures memory stays low.
+        # Use fewer browsers on GitHub Actions (2-core VM = 6 browsers causes OOM/crashes)
+        is_ci = os.environ.get('CI', '').lower() == 'true'
+        NUM_BROWSERS = 3 if is_ci else 6  # 3 for CI (stable), 6 for local (fast)
         if NUM_BROWSERS <= 0: return
         
         import subprocess
@@ -5942,6 +5944,15 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             options.add_argument('--no-first-run')
             options.add_argument('--safebrowsing-disable-auto-update')
             options.add_argument('--js-flags=--max-old-space-size=256')
+            # CI-specific flags to prevent crashes on GitHub Actions 2-core runner
+            if is_ci:
+                options.add_argument('--headless=new')
+                options.add_argument('--disable-software-rasterizer')
+                options.add_argument('--disable-gl-drawing-for-tests')
+                options.add_argument('--disable-web-security')
+                options.add_argument('--allow-running-insecure-content')
+                options.add_argument('--memory-pressure-off')
+                options.add_argument('--max_old_space_size=512')
             fresh_profile = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"chrome_profile_{b_idx}")
             import shutil
             if os.path.exists(fresh_profile):

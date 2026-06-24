@@ -39,8 +39,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y tesseract-ocr libtesseract-dev xvfb x11-utils
-          # GitHub Actions Ubuntu-latest already has Google Chrome installed,
-          # but we need to ensure xvfb can run headlessly.
+          # Mount a tmpfs for /dev/shm to give Chrome enough shared memory (prevents tab crashes)
+          sudo mount -t tmpfs -o size=2g tmpfs /dev/shm || true
+          # Verify Chrome is available
+          google-chrome --version || true
 
       - name: Install Python Dependencies
         run: |
@@ -51,14 +53,18 @@ jobs:
           gdown "1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd" -O link_compile.pdf
 
       - name: Run Verification (Virtual Display)
-        # Using xvfb-run to simulate a real monitor for undetected_chromedriver
+        # xvfb-run provides a virtual display; --server-args sets screen depth/size
+        # The code auto-detects CI=true and uses 3 browsers + headless=new mode
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           START_PAGE: ${{ github.event.inputs.start_page }}
           END_PAGE: ${{ github.event.inputs.end_page }}
           PDF_NAME: autonomous_verified_report
+          DISPLAY: ":99"
         run: |
-          xvfb-run --auto-servernum python autonomous_course_verifier.py
+          Xvfb :99 -screen 0 1280x1024x24 -ac &
+          sleep 2
+          python autonomous_course_verifier.py
 
       - name: Remove input PDF before upload
         if: always()
