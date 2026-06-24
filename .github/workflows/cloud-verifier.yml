@@ -56,6 +56,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           START_PAGE: ${{ github.event.inputs.start_page }}
           END_PAGE: ${{ github.event.inputs.end_page }}
+          PDF_NAME: autonomous_verified_report
         run: |
           xvfb-run --auto-servernum python autonomous_course_verifier.py
 
@@ -71,3 +72,5 @@ jobs:
             CombinedWork.xlsx
             fees.xlsx
             rankings.db
+          exclude: |
+            link_compile.pdf

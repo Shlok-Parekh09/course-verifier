@@ -7984,31 +7984,28 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     v = '€' + v[1:]
                 return v
 
-            def fmt_web(val, default_val="Not specified"):
+            def fmt_web(val):
                 v = str(val).strip()
                 vl = v.lower()
                 # Sanitize: treat '...' (ellipsis) and its Unicode variant as missing
                 cleaned = v.replace('\u2026', '...')
-                if not v or vl in ['n/a', 'nan', 'none', 'not found', 'information not explicitly mentioned', 'information not explicitly mentioned on the webpage.'] or v.strip('-') == '' or cleaned.strip('.') == '' or cleaned.strip() == '...':
-                    return default_val
+                if not v or vl in ['n/a', 'nan', 'none'] or v.strip('-') == '' or cleaned.strip('.') == '' or cleaned.strip() == '...':
+                    return "Not specified"
                 # Fix euro symbol: replace '?' prefix with '€' when followed by digits
                 import re as _re
                 v = _re.sub(r'^\?(?=\d)', '€', v)
                 v = v.replace(' ? ', ' € ').replace(' ?.', ' €.').replace(',? ', ',€ ')
                 return v
 
-            draw_row('Cost', fmt_pdf(course.get('cost')), safe_val(fmt_web(course.get('web_cost'), "Tuition fees are subject to standard university policies.")), 'MATCH' if (course.get('cost_match') and not is_hard_error) else 'FALSE')
-            draw_row('Duration', fmt_pdf(course.get('duration')), safe_val(fmt_web(course.get('web_duration'), "The course duration aligns with standard academic program lengths.")), 'MATCH' if (course.get('duration_match') and not is_hard_error) else 'FALSE')
-            draw_row('Mode', fmt_pdf(course.get('mode')), safe_val(fmt_web(course.get('web_mode'), "The program is conducted in a traditional offline on-campus environment.")), 'MATCH' if (course.get('mode_match') and not is_hard_error) else 'FALSE')
-            draw_row('Language', fmt_pdf(course.get('language')), safe_val(fmt_web(course.get('web_language'), "The medium of instruction is English.")), 'MATCH' if (course.get('lang_match') and not is_hard_error) else 'FALSE')
-            draw_row('Country', fmt_pdf(course.get('country')), safe_val(fmt_web(course.get('country_verified'), course.get('country', 'India'))), 'MATCH' if (course.get('country_match') and not is_hard_error) else 'FALSE')
-            draw_row('University', fmt_pdf(course.get('uni')), safe_val(fmt_web(course.get('web_uni'), course.get('uni', 'The respective university'))), 'MATCH' if (course.get('uni_match') and not is_hard_error) else 'FALSE')
+            draw_row('Cost', fmt_pdf(course.get('cost')), safe_val(fmt_web(course.get('web_cost'))), 'MATCH' if (course.get('cost_match') and not is_hard_error) else 'FALSE')
+            draw_row('Duration', fmt_pdf(course.get('duration')), safe_val(fmt_web(course.get('web_duration'))), 'MATCH' if (course.get('duration_match') and not is_hard_error) else 'FALSE')
+            draw_row('Mode', fmt_pdf(course.get('mode')), safe_val(fmt_web(course.get('web_mode'))), 'MATCH' if (course.get('mode_match') and not is_hard_error) else 'FALSE')
+            draw_row('Language', fmt_pdf(course.get('language')), safe_val(fmt_web(course.get('web_language'))), 'MATCH' if (course.get('lang_match') and not is_hard_error) else 'FALSE')
+            draw_row('Country', fmt_pdf(course.get('country')), safe_val(fmt_web(course.get('country_verified'))), 'MATCH' if (course.get('country_match') and not is_hard_error) else 'FALSE')
+            draw_row('University', fmt_pdf(course.get('uni')), safe_val(fmt_web(course.get('web_uni'))), 'MATCH' if (course.get('uni_match') and not is_hard_error) else 'FALSE')
             
             sk_pdf = fmt_pdf(course.get('skills'))
-            fallback_skill = f"The curriculum provides comprehensive training in {course.get('name', 'this specialized field')}."
-            sk_web = fmt_web(course.get('skills_verified'), fallback_skill)
-            if sk_web == fallback_skill and sk_pdf == 'Not Provided in Source':
-                sk_web = 'Always Matched'
+            sk_web = fmt_web(course.get('skills_verified')) if course.get('skills_verified') else ('Always Matched' if sk_pdf != 'Not Provided in Source' else 'Not Found')
             draw_row('Skills', sk_pdf, safe_val(sk_web), 'MATCH' if (course.get('sk_match') and not is_hard_error) else 'FALSE')
 
             # Boolean Rank Display (Requirement 11)
@@ -8172,6 +8169,93 @@ if __name__ == "__main__":
     if not check_runtime_dependencies():
         sys.exit(1)
 
+    # ── REPORT-ONLY MODE ──────────────────────────────────────────────────────
+    # Usage: python autonomous_course_verifier.py --report-only [json_file] [start_page] [end_page]
+    # Loads an existing JSON, asks for page range, and generates the PDF report ONLY.
+    # No browser, no verification. Perfect for re-generating a report from a past run.
+    if '--report-only' in sys.argv:
+        args = [a for a in sys.argv[1:] if a != '--report-only']
+        
+        # Determine JSON file
+        json_file = None
+        if args and args[0].endswith('.json') and os.path.exists(args[0]):
+            json_file = args[0]
+        else:
+            # Find the most recently modified JSON in the directory
+            import glob
+            candidates = sorted(glob.glob("autonomous_verified_*.json"), key=os.path.getmtime, reverse=True)
+            if candidates:
+                print(f"[*] Available checkpoint JSON files:")
+                for i, f in enumerate(candidates[:10]):
+                    print(f"    [{i+1}] {f}")
+                choice_idx = input("[?] Enter number or full filename (Enter = use most recent): ").strip()
+                if choice_idx.isdigit() and 1 <= int(choice_idx) <= len(candidates):
+                    json_file = candidates[int(choice_idx) - 1]
+                elif choice_idx and os.path.exists(choice_idx):
+                    json_file = choice_idx
+                else:
+                    json_file = candidates[0]
+            else:
+                print("[!] No autonomous_verified_*.json found. Provide the json file as argument.")
+                sys.exit(1)
+
+        print(f"\n[*] REPORT-ONLY MODE: Loading {json_file} ...")
+        with open(json_file, 'r', encoding='utf-8') as f:
+            courses_data = json.load(f)
+
+        # Determine pdf_path for the agent (needed to set output filename base)
+        # Try to infer from JSON filename: autonomous_verified_<pdfname>.json
+        base = os.path.basename(json_file)
+        if base.startswith("autonomous_verified_") and base.endswith(".json"):
+            inferred_pdf = base[len("autonomous_verified_"):-len(".json")]
+        else:
+            inferred_pdf = "link_compile.pdf"
+        # Agent init needs the source PDF path — we pass the inferred name
+        # but the PDF file does not need to exist in report-only mode
+        agent = AutonomousCourseVerifier.__new__(AutonomousCourseVerifier)
+        agent.pdf_path = inferred_pdf
+        agent.base_name = os.path.splitext(os.path.basename(inferred_pdf))[0]
+        agent.output_pdf = f"autonomous_verified_{agent.base_name}.pdf"
+        agent.excel_name = f"autonomous_verified_{agent.base_name}.xlsx"
+        agent.courses = courses_data
+        agent.screenshots_dir = ""
+        agent.floating_items = []
+
+        # Determine page range
+        all_pages = sorted(set(c.get('page_num', 1) for c in agent.courses))
+        min_p, max_p = all_pages[0], all_pages[-1]
+        print(f"[*] Loaded {len(agent.courses)} courses spanning pages {min_p} – {max_p}.")
+
+        # Parse page range from remaining args or ask user
+        start_p_arg = args[1] if len(args) > 1 else ''
+        end_p_arg   = args[2] if len(args) > 2 else ''
+
+        if start_p_arg.isdigit():
+            start_p = int(start_p_arg)
+        else:
+            start_p_input = input(f"[?] Start page ({min_p}-{max_p}) [Enter = {min_p}]: ").strip()
+            start_p = int(start_p_input) if start_p_input.isdigit() else min_p
+
+        if end_p_arg.isdigit():
+            end_p = int(end_p_arg)
+        else:
+            end_p_input = input(f"[?] End page ({min_p}-{max_p}) [Enter = {max_p}]: ").strip()
+            end_p = int(end_p_input) if end_p_input.isdigit() else max_p
+
+        # Convert page range → index range
+        r_start_idx = next((i for i, c in enumerate(agent.courses) if c.get('page_num', 1) >= start_p), 0)
+        r_end_idx   = next((i for i, c in enumerate(agent.courses) if c.get('page_num', 1) > end_p), len(agent.courses))
+
+        print(f"[*] Generating PDF for pages {start_p}–{end_p} (courses {r_start_idx+1} to {r_end_idx})...")
+
+        pdf_name_input = input("[?] Output PDF name (without .pdf) [Enter = auto]: ").strip()
+        if not pdf_name_input:
+            pdf_name_input = f"autonomous_verified_{agent.base_name}_{start_p}_{end_p}"
+        
+        agent.generate_pdf_report(start_idx=r_start_idx, end_idx=r_end_idx, pdf_name=pdf_name_input)
+        print(f"\n[*] DONE! Report saved: {pdf_name_input}.pdf")
+        sys.exit(0)
+    # ── END REPORT-ONLY MODE ──────────────────────────────────────────────────
 
     if len(sys.argv) > 1:
         pdf_path = sys.argv[1].strip()
@@ -8189,6 +8273,7 @@ if __name__ == "__main__":
     if not os.path.exists(pdf_path):
         print(f"\nError: '{pdf_path}' not found.")
         sys.exit(1)
+
 
 
 
