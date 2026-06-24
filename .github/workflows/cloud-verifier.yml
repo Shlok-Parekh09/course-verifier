@@ -39,7 +39,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y tesseract-ocr libtesseract-dev xvfb x11-utils
-          # GitHub Actions Ubuntu-latest already has Google Chrome installed, 
+          # GitHub Actions Ubuntu-latest already has Google Chrome installed,
           # but we need to ensure xvfb can run headlessly.
 
       - name: Install Python Dependencies
@@ -60,17 +60,20 @@ jobs:
         run: |
           xvfb-run --auto-servernum python autonomous_course_verifier.py
 
+      - name: Remove input PDF before upload
+        if: always()
+        run: |
+          rm -f link_compile.pdf
+
       - name: Upload Results as Zip
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: verification-results
           path: |
-            autonomous_verified_*.pdf
+            *.pdf
             autonomous_verified_*.json
             master_dashboard_results.json
             CombinedWork.xlsx
             fees.xlsx
             rankings.db
-          exclude: |
-            link_compile.pdf
