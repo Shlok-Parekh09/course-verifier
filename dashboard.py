@@ -23,6 +23,13 @@ def _add_cors_headers(resp):
     resp.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
     resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, DELETE, OPTIONS'
     resp.headers['Access-Control-Allow-Private-Network'] = 'true'
+    # Never cache the HTML shell or the JSON API — the browser must always
+    # revalidate so a new deploy (or a new ?v= on app.js/style.css) is picked
+    # up immediately. Static assets (app.js, style.css) are cache-busted via
+    # the ?v= query string in index.html instead.
+    ctype = resp.headers.get('Content-Type', '')
+    if 'text/html' in ctype or 'application/json' in ctype:
+        resp.headers['Cache-Control'] = 'no-store, must-revalidate'
     return resp
 
 # Issue category constants (mirrored from verifier)
@@ -119,9 +126,22 @@ def _attr_is_match(c, key):
         return has_free == web_free
     return bool(c.get(key, False))
 
+# The user-solvable subset: the 7 basic attributes the modal shows Solve
+# buttons for and that disc_reason / the upload status check are built from.
+# QS Ranked / NIRF Ranked / Free Box are derived *display* flags (qs_match_expr
+# etc.), NOT rows the user can tick Solved on — so they must NOT block a course
+# from becoming Verified. Counting them here meant solving every visible issue
+# still left a hidden "NIRF Ranked" false attr, so the course stayed
+# Discrepancy and the Perfect Matches number never incremented.
+SOLVABLE_ATTRIBUTE_ROWS = ATTRIBUTE_ROWS[:7]
+
 def course_false_attrs(c):
-    """List of attribute names currently FALSE (i.e. open) for a course."""
-    return [name for name, key in ATTRIBUTE_ROWS if not _attr_is_match(c, key)]
+    """List of SOLVABLE attribute names currently FALSE (i.e. open) for a course.
+
+    Only the 7 basic attrs — the ones the modal can mark Solved and that
+    disc_reason lists. QS/NIRF/Free exprs are intentionally excluded so that
+    solving all visible issues flips the course to Verified."""
+    return [name for name, key in SOLVABLE_ATTRIBUTE_ROWS if not _attr_is_match(c, key)]
 
 def course_open_issues(c):
     """Number of unsolved issue-units a course contributes to the Open Issues KPI."""
@@ -145,12 +165,55 @@ def recompute_course_status(c):
     unsolved = [a for a in course_false_attrs(c) if a not in solved]
     if not unsolved:
         c['issue_category'] = ISSUE_CATEGORY_VERIFIED
-        c['issue_sub_type'] = ''
         c['status'] = 'Verified'
         c['disc_reason'] = ''
     else:
         c['issue_category'] = ISSUE_CATEGORY_COURSE
         c['status'] = 'Discrepancy'
+    c['issue_sub_type'] = derive_issue_sub_type(c)
+
+def _derived_classification(c):
+    """Return (issue_category, status) a course SHOULD have under the CORRECTED
+    rules — a website issue only when the site is genuinely broken (page-load
+    error / hard web FALSE); otherwise Verified (all basic matches solved) or
+    course_issue/Discrepancy. Pure: does not mutate c. Used for dry-run tallies
+    and by reclassify_course."""
+    desc = (str(c.get('cost_description', '')) + ' ' + str(c.get('duration_description', ''))
+            + ' ' + str(c.get('cost_verified', '')) + ' ' + str(c.get('duration_verified', ''))
+            + ' ' + str(c.get('reason', '')) + ' ' + str(c.get('disc_reason', ''))
+            + ' ' + _pdf_table_text(c)).lower()
+    has_page_error = ('page load error' in desc) or ('website unreachable' in desc) \
+        or ('llm fallback' in desc) or ('site down' in desc)
+    web_status = str(c.get('web_status', '')).upper()
+    if has_page_error or (web_status == 'FALSE' and c.get('is_hard_error')):
+        return (ISSUE_CATEGORY_WEBSITE, 'Error')
+    # "Not uploaded" / no live web page to match against: all 7 basic fields
+    # are False and there is no page error. Per the user's direction these stay
+    # as website-Error (they are not course discrepancies — there is no page to
+    # compare fields against), so do NOT reclassify them.
+    _basic_keys = ['cost_match', 'duration_match', 'mode_match', 'lang_match',
+                   'country_match', 'uni_match', 'sk_match']
+    if not any(bool(c.get(k, False)) for k in _basic_keys):
+        return (ISSUE_CATEGORY_WEBSITE, 'Error')
+    solved = set(c.get('solved_attrs', []) or [])
+    unsolved = [a for a in course_false_attrs(c) if a not in solved]
+    if not unsolved:
+        return (ISSUE_CATEGORY_VERIFIED, 'Verified')
+    return (ISSUE_CATEGORY_COURSE, 'Discrepancy')
+
+def reclassify_course(c):
+    """Apply the corrected classification to c in place (mutates). Used only by
+    the /api/reclassify endpoint when confirm=true is sent."""
+    cat, status = _derived_classification(c)
+    c['issue_category'] = cat
+    c['status'] = status
+    if status == 'Verified':
+        c['disc_reason'] = ''
+    elif cat == ISSUE_CATEGORY_COURSE:
+        unsolved = [a for a in course_false_attrs(c) if a not in set(c.get('solved_attrs', []) or [])]
+        c['disc_reason'] = 'Mismatch: ' + ', '.join(unsolved)
+    # website_issue: leave disc_reason as-is
+    c['issue_sub_type'] = derive_issue_sub_type(c)
 
 def compute_stats():
     """Shared stats block used by /api/data, save_courses data.json, and /solve."""
@@ -341,19 +404,87 @@ def _pdf_table_text(c):
             parts.extend(str(v) for v in row.values())
     return ' '.join(parts)
 
+def derive_issue_sub_type(c):
+    """Derive issue_sub_type from REAL signals only (disc_reason + pdf_table text).
+
+    Mirrors the vocabulary in autonomous_course_verifier.classify_issue but never
+    fabricates a value: returns '' when no signal matches. Used to backfill the
+    sub_type that older records never stored, so the dashboard's sub-type filters
+    are populated from real data instead of being empty.
+    """
+    cat = c.get('issue_category', '')
+    reason = str(c.get('disc_reason', '') or '').lower()
+    text = reason + " " + _pdf_table_text(c).lower()
+
+    if cat == ISSUE_CATEGORY_WEBSITE:
+        if '404' in text or 'not found' in text:
+            return '404_not_found'
+        if 'ssl' in text or 'certificate' in text:
+            return 'ssl_error'
+        if 'timeout' in text or 'timed out' in text:
+            return 'timeout'
+        if 'waf' in text or 'blocked' in text:
+            return 'blocked_by_waf'
+        if 'dns' in text:
+            return 'dns_fail'
+        if 'login' in text or 'authentication required' in text:
+            return 'login_required'
+        if 'redirect' in text:
+            return 'redirect_loop'
+        # Numeric HTTP codes: check the reason only (word-bounded) so a cost
+        # value like "500" inside pdf_table can't trigger a false server_error.
+        if 'server error' in text or any((' ' + code + ' ') in (' ' + reason + ' ') for code in ('500', '502', '503')):
+            return 'server_error'
+        if 'page load error' in text or 'website unreachable' in text or 'llm fallback' in text or 'site down' in text:
+            return 'site_down'
+        return ''
+
+    if cat == ISSUE_CATEGORY_COURSE:
+        if 'discontinued' in text:
+            return 'course_discontinued'
+        if 'replaced' in text:
+            return 'course_replaced'
+        if 'wrong url' in text:
+            return 'wrong_url'
+        # Uploads format this as "Mismatch: Cost, Duration, ..."
+        attrs = []
+        if reason.startswith('mismatch:'):
+            attrs = [a.strip() for a in reason[len('mismatch:'):].split(',') if a.strip()]
+        attr_map = {
+            'cost': 'cost_mismatch', 'duration': 'duration_mismatch',
+            'university': 'university_mismatch', 'country': 'country_mismatch',
+            'mode': 'mode_mismatch', 'language': 'language_mismatch',
+            'skills': 'skills_mismatch', 'name': 'name_mismatch',
+        }
+        if len(attrs) >= 2:
+            return 'multiple_mismatches'
+        if len(attrs) == 1:
+            return attr_map.get(attrs[0].lower(), '')
+        return ''
+
+    if cat == ISSUE_CATEGORY_VERIFIED:
+        return 'perfect_match'
+
+    return ''
+
 def load_courses():
     global global_courses
-    global_courses.clear()
-    
+    # Build into a local list and swap ONCE at the end. The old code did
+    # clear() then extend(), leaving a window where global_courses was empty —
+    # a concurrent /api/data.json poll (via _refresh_courses_if_stale) could
+    # then make a solve's compute_stats() return 0, so the frontend briefly
+    # showed "0" after solving instead of the incremented count.
+    loaded = []
+
     loaded_from_mongo = False
     if db is not None:
         try:
             print("Loading courses from MongoDB...")
             docs = list(db.courses.find({}, {'_id': 0}))
             if docs:
-                global_courses.extend(docs)
-                global_courses.sort(key=lambda x: int(x.get('id', 0)))
-                print(f"Loaded {len(global_courses)} courses from MongoDB.")
+                loaded.extend(docs)
+                loaded.sort(key=lambda x: int(x.get('id', 0)))
+                print(f"Loaded {len(loaded)} courses from MongoDB.")
                 loaded_from_mongo = True
         except Exception as e:
             print(f"Error loading from MongoDB, falling back to local files: {e}")
@@ -417,12 +548,19 @@ def load_courses():
                 has_name_match = False
                 
             web_status = str(d.get('web_status', '')).upper()
-            
-            if not has_uni_match or not has_name_match or has_page_error or (web_status == 'FALSE' and has_page_error):
+
+            # A website issue = a genuinely broken/inaccessible site: an explicit
+            # page-load / unreachable / LLM-fallback error, or a hard web FALSE.
+            # A university or name field MISMATCH is a COURSE issue (the page
+            # loaded fine, the field just doesn't match) — it must NOT trigger
+            # website_issue classification here. Treating uni_match=False as a
+            # broken site previously misclassified ~3700 courses as website
+            # errors and was persisted to MongoDB.
+            if has_page_error or (web_status == 'FALSE' and d.get('is_hard_error')):
                 issue_cat = ISSUE_CATEGORY_WEBSITE
                 # Make sure the status is mapped to Error
                 status = 'Error'
-            
+
             # Derive status from issue_category if present, else fall back to old logic
             if issue_cat == ISSUE_CATEGORY_VERIFIED:
                 status = 'Verified'
@@ -473,7 +611,7 @@ def load_courses():
                 "pdf_page": d.get('pdf_page'),
                 "pdf_table": d.get('pdf_table', [])
             }
-            global_courses.append(course)
+            loaded.append(course)
             
         print(f"Loaded {len(global_courses)} courses locally.")
 
@@ -516,6 +654,15 @@ def load_courses():
                 c['status'] = 'Error'
             elif issue_cat == ISSUE_CATEGORY_COURSE:
                 c['status'] = 'Discrepancy'
+
+        # Backfill issue_sub_type from real signals when missing. Never
+        # overwrites a value already persisted in Mongo / 1.json.
+        if not c.get('issue_sub_type'):
+            c['issue_sub_type'] = derive_issue_sub_type(c)
+
+    # Atomic swap: global_courses is never observed empty by a concurrent
+    # reader (solve's compute_stats, /api/data.json) mid-reload.
+    global_courses[:] = loaded
 
 # Load immediately
 load_courses()
@@ -727,9 +874,9 @@ def solve_course_issue(course_id):
             course['status'] = 'Error'
         else:
             course['issue_category'] = ISSUE_CATEGORY_VERIFIED
-            course['issue_sub_type'] = ''
             course['status'] = 'Verified'
             course['disc_reason'] = ''
+            course['issue_sub_type'] = derive_issue_sub_type(course)
     elif attr == '_all':
         false_attrs = course_false_attrs(course)
         solved = set(course.get('solved_attrs', []) or [])
@@ -766,6 +913,48 @@ def solve_course_issue(course_id):
             "solved_attrs": course.get('solved_attrs', []),
         },
         "stats": compute_stats()
+    })
+
+@app.route("/api/reclassify", methods=["GET", "POST", "OPTIONS"])
+def api_reclassify():
+    if request.method == "OPTIONS":
+        return "", 204
+    # DRY RUN by default (GET, or POST without confirm): tally the
+    # corrected classification WITHOUT mutating global_courses or saving.
+    before_status, before_cat = {}, {}
+    for c in global_courses:
+        s = c.get('status', ''); k = c.get('issue_category', '')
+        before_status[s] = before_status.get(s, 0) + 1
+        before_cat[k] = before_cat.get(k, 0) + 1
+    after_status, after_cat = {}, {}
+    for c in global_courses:
+        cat, status = _derived_classification(c)
+        after_status[status] = after_status.get(status, 0) + 1
+        after_cat[cat] = after_cat.get(cat, 0) + 1
+    saved = False
+    if request.method == "POST" and bool((request.get_json(silent=True) or {}).get('confirm')):
+        for c in global_courses:
+            reclassify_course(c)
+        try:
+            save_courses(None)
+            saved = True
+        except Exception as e:
+            print("[RECLASSIFY] save error:", e)
+        # recompute the after tally from the now-mutated global_courses
+        after_status, after_cat = {}, {}
+        for c in global_courses:
+            after_status[c.get('status', '')] = after_status.get(c.get('status', ''), 0) + 1
+            after_cat[c.get('issue_category', '')] = after_cat.get(c.get('issue_category', ''), 0) + 1
+    return jsonify({
+        "status": "success",
+        "saved": saved,
+        "note": "DRY RUN — nothing was written. POST with {\"confirm\":true} to apply."
+                if not saved else "Applied and saved to MongoDB.",
+        "before_status": before_status,
+        "after_status": after_status,
+        "before_category": before_cat,
+        "after_category": after_cat,
+        "stats": compute_stats(),
     })
 
 import pandas as pd
@@ -971,6 +1160,8 @@ def upload_data():
                                 if not c['sk_match']: fails.append('Skills')
                                 c['disc_reason'] = "Mismatch: " + ", ".join(fails)
                             
+                            c['issue_sub_type'] = derive_issue_sub_type(c)
+
                             updates += 1
                             verified_in_this_batch.append(c)
                             break
@@ -993,4 +1184,8 @@ def upload_data():
 
 if __name__ == "__main__":
     print("[*] Starting Live Verification Dashboard on http://localhost:5000")
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    # Single, stable process — no debug reloader. The watchdog reloader spawns
+    # a second process and restarts the child on file changes, which briefly
+    # empties global_courses mid-request (so /api/data.json and solve responses
+    # can return 0) and makes localhost appear to "sleep" during the restart.
+    app.run(debug=False, use_reloader=False, host="0.0.0.0", port=5000)

@@ -7,7 +7,7 @@
     <meta name="description" content="Live course verification and country-wise analysis platform by Khushboo Singh">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=5">
+    <link rel="stylesheet" href="/static/style.css?v=9">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://unpkg.com/chartjs-chart-geo@4.2.8/build/index.umd.min.js"></script>
     <script src="https://kit.fontawesome.com/997b419143.js" crossorigin="anonymous"></script>
@@ -62,10 +62,10 @@
                     <div class="kpi-value" id="discrepancy-count">0</div>
                     <span class="kpi-trend warn" id="kpi-disc-trend">⚠ Need review</span>
                 </div>
-                <div class="kpi-card" id="kpi-card-website-issues" style="cursor:pointer;" title="Click to view website issues">
-                    <div class="kpi-label">Website Issues</div>
-                    <div class="kpi-value" id="website-issue-count">0</div>
-                    <span class="kpi-trend down" id="kpi-webissue-trend">🔗 Broken</span>
+                <div class="kpi-card">
+                    <div class="kpi-label">Errors / Unverified</div>
+                    <div class="kpi-value" id="error-count">0</div>
+                    <span class="kpi-trend down" id="kpi-err-trend">✕ Failed</span>
                 </div>
             </div>
 
@@ -183,6 +183,27 @@
     <!-- ══════════ VERIFICATION TAB ══════════ -->
     <div id="tab-verification" class="tab-content">
         <div style="padding:24px 28px;">
+
+            <!-- Sticky headline KPI strip — the 4 parameters, always visible -->
+            <div class="kpi-strip" id="vf-kpi-strip">
+                <div class="kpi-strip-card" title="Reset filters">
+                    <div class="kpi-strip-val" id="vf-total">—</div>
+                    <div class="kpi-strip-label">Total</div>
+                </div>
+                <div class="kpi-strip-card" data-status="Verified" title="Filter: Verified">
+                    <div class="kpi-strip-val" id="vf-verified">—</div>
+                    <div class="kpi-strip-label">Verified</div>
+                </div>
+                <div class="kpi-strip-card" data-status="Discrepancy" title="Filter: Discrepancies">
+                    <div class="kpi-strip-val" id="vf-disc">—</div>
+                    <div class="kpi-strip-label">Discrepancies</div>
+                </div>
+                <div class="kpi-strip-card" data-status="Error" data-category="website_issue" title="Filter: Website issues">
+                    <div class="kpi-strip-val" id="vf-web">—</div>
+                    <div class="kpi-strip-label">Web Issues</div>
+                </div>
+            </div>
+
             <div class="panel">
                 <div class="panel-hdr">
                     <div class="panel-title">Recent Verifications</div>
@@ -192,6 +213,47 @@
                         <button id="recent-next-page" class="btn-pg">Next →</button>
                     </div>
                 </div>
+
+                <!-- Real working filters -->
+                <div class="filter-bar" id="verification-filters">
+                    <label for="vf-search" class="vh">Search by name or university</label>
+                    <input type="text" id="vf-search" class="filter-input" placeholder="🔍 Search name / university…">
+                    <label for="vf-status" class="vh">Status filter</label>
+                    <select id="vf-status" class="filter-select">
+                        <option value="all">All Status</option>
+                        <option value="Verified">Verified</option>
+                        <option value="Discrepancy">Discrepancy</option>
+                        <option value="Error">Error</option>
+                        <option value="Unverified">Unverified</option>
+                    </select>
+                    <label for="vf-category" class="vh">Issue category filter</label>
+                    <select id="vf-category" class="filter-select">
+                        <option value="all">All Categories</option>
+                        <option value="website_issue">Website Issue</option>
+                        <option value="course_issue">Course Issue</option>
+                        <option value="verified">Verified</option>
+                    </select>
+                    <label for="vf-subtype" class="vh">Issue sub-type filter</label>
+                    <select id="vf-subtype" class="filter-select" hidden><option value="all">All Sub-Types</option></select>
+                    <label for="vf-country" class="vh">Country filter</label>
+                    <select id="vf-country" class="filter-select"><option value="all">All Countries</option></select>
+                    <label for="vf-domain" class="vh">Domain filter</label>
+                    <select id="vf-domain" class="filter-select"><option value="all">All Domains</option></select>
+                    <label for="vf-attr" class="vh">Mismatched attribute filter</label>
+                    <select id="vf-attr" class="filter-select">
+                        <option value="all">All Attributes</option>
+                        <option value="Cost">Cost mismatch</option>
+                        <option value="Duration">Duration mismatch</option>
+                        <option value="Mode">Mode mismatch</option>
+                        <option value="Language">Language mismatch</option>
+                        <option value="Country">Country mismatch</option>
+                        <option value="University">University mismatch</option>
+                        <option value="Skills">Skills mismatch</option>
+                    </select>
+                    <button id="vf-reset" class="btn-pg">Reset</button>
+                    <span id="vf-count" class="filter-count">—</span>
+                </div>
+
                 <div class="tbl-wrap" style="max-height:72vh;">
                     <table class="data-table">
                         <thead><tr>
@@ -208,6 +270,27 @@
     <!-- ══════════ ALL COURSES TAB ══════════ -->
     <div id="tab-courses" class="tab-content">
         <div style="padding:24px 28px;">
+
+            <!-- Sticky headline KPI strip -->
+            <div class="kpi-strip" id="cf-kpi-strip">
+                <div class="kpi-strip-card" title="Reset filters">
+                    <div class="kpi-strip-val" id="cf-total">—</div>
+                    <div class="kpi-strip-label">Total</div>
+                </div>
+                <div class="kpi-strip-card" data-status="Verified" title="Filter: Verified">
+                    <div class="kpi-strip-val" id="cf-verified">—</div>
+                    <div class="kpi-strip-label">Verified</div>
+                </div>
+                <div class="kpi-strip-card" data-status="Discrepancy" title="Filter: Discrepancies">
+                    <div class="kpi-strip-val" id="cf-disc">—</div>
+                    <div class="kpi-strip-label">Discrepancies</div>
+                </div>
+                <div class="kpi-strip-card" data-status="Error" data-category="website_issue" title="Filter: Website issues">
+                    <div class="kpi-strip-val" id="cf-web">—</div>
+                    <div class="kpi-strip-label">Web Issues</div>
+                </div>
+            </div>
+
             <div class="panel">
                 <div class="panel-hdr">
                     <div class="panel-title">Master Course Database</div>
@@ -217,6 +300,48 @@
                         <button id="next-page" class="btn-pg">Next →</button>
                     </div>
                 </div>
+
+                <!-- Real working filters -->
+                <div class="filter-bar" id="course-filters">
+                    <label for="cf-search" class="vh">Search by name, university or domain</label>
+                    <input type="text" id="cf-search" class="filter-input" placeholder="🔍 Search name / university / domain…">
+                    <label for="cf-status" class="vh">Status filter</label>
+                    <select id="cf-status" class="filter-select">
+                        <option value="all">All Status</option>
+                        <option value="Verified">Verified</option>
+                        <option value="Discrepancy">Discrepancy</option>
+                        <option value="Error">Error</option>
+                        <option value="Unverified">Unverified</option>
+                    </select>
+                    <label for="cf-category" class="vh">Issue category filter</label>
+                    <select id="cf-category" class="filter-select">
+                        <option value="all">All Categories</option>
+                        <option value="website_issue">Website Issue</option>
+                        <option value="course_issue">Course Issue</option>
+                        <option value="verified">Verified</option>
+                    </select>
+                    <label for="cf-subtype" class="vh">Issue sub-type filter</label>
+                    <select id="cf-subtype" class="filter-select" hidden><option value="all">All Sub-Types</option></select>
+                    <label for="cf-country" class="vh">Country filter</label>
+                    <select id="cf-country" class="filter-select"><option value="all">All Countries</option></select>
+                    <label for="cf-domain" class="vh">Domain filter</label>
+                    <select id="cf-domain" class="filter-select"><option value="all">All Domains</option></select>
+                    <label for="cf-qs" class="vh">QS badge filter</label>
+                    <select id="cf-qs" class="filter-select">
+                        <option value="any">QS: Any</option>
+                        <option value="yes">QS: Yes</option>
+                        <option value="no">QS: No</option>
+                    </select>
+                    <label for="cf-nirf" class="vh">NIRF badge filter</label>
+                    <select id="cf-nirf" class="filter-select">
+                        <option value="any">NIRF: Any</option>
+                        <option value="yes">NIRF: Yes</option>
+                        <option value="no">NIRF: No</option>
+                    </select>
+                    <button id="cf-reset" class="btn-pg">Reset</button>
+                    <span id="cf-count" class="filter-count">—</span>
+                </div>
+
                 <div class="tbl-wrap" style="max-height:72vh;">
                     <table class="data-table">
                         <thead><tr>
@@ -526,6 +651,7 @@
                 <span id="modal-solve-progress" class="modal-progress" style="display:none;"></span>
                 <button id="solve-all-btn" class="modal-solve" style="display:none;">✓ Solve all</button>
                 <button id="solve-website-btn" class="modal-solve" style="display:none;">✓ Solved</button>
+                <button id="remove-from-verification-btn" class="modal-solve" style="display:none;" title="Solve all open issues on this course and remove it from the Verification tab">✓ Remove from Verification</button>
                 <button id="delete-course-btn" class="modal-del">Delete</button>
                 <button id="close-modal" class="modal-close">✕</button>
             </div>
@@ -545,6 +671,6 @@
     </div>
 </div>
 
-<script src="/static/app.js?v=6"></script>
+<script src="/static/app.js?v=9"></script>
 </body>
 </html>
