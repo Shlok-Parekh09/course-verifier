@@ -28,6 +28,31 @@ let lastDataHash = '';
 let verificationFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', attr: 'all' };
 let courseFilter       = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', qs: 'any', nirf: 'any' };
 
+// ── Domain category by course idx (ID number) ───────────────────
+// These ranges are fixed per the curriculum structure.
+const DOMAIN_RANGES = [
+    { label: 'Free',                  min: 1,    max: 25   },
+    { label: 'Free to Audit',         min: 26,   max: 48   },
+    { label: 'High Value Low Cost',   min: 49,   max: 100  },
+    { label: 'Foundational',          min: 101,  max: 601  },
+    { label: 'Network Infrastructure',min: 602,  max: 1585 },
+    { label: 'System & Endpoint',     min: 1586, max: 1890 },
+    { label: 'Cyber Forensics',       min: 1891, max: 2634 },
+    { label: 'Data & Application',    min: 2635, max: 2965 },
+    { label: 'Legal & Ethical',       min: 2966, max: 3727 },
+];
+
+function getDomainCategory(idxRaw) {
+    const idx = parseInt(idxRaw, 10);
+    if (isNaN(idx)) return 'Uncategorised';
+    for (const r of DOMAIN_RANGES) {
+        if (idx >= r.min && idx <= r.max) return r.label;
+    }
+    return 'Uncategorised';
+}
+
+const ALL_DOMAIN_LABELS = DOMAIN_RANGES.map(r => r.label);
+
 const ATTR_TO_MATCH = {
     Cost: 'cost_match', Duration: 'duration_match', Mode: 'mode_match',
     Language: 'lang_match', Country: 'country_match', University: 'uni_match', Skills: 'sk_match'
@@ -526,15 +551,18 @@ function populateSubtypeSelect(selectId) {
 }
 
 function refreshFilterOptions() {
-    const vCountries = new Set(), vDomains = new Set();
-    recentData.forEach(c => { if (c.country) vCountries.add(c.country); if (c.domain) vDomains.add(c.domain); });
+    // Countries: dynamic from data
+    const vCountries = new Set();
+    recentData.forEach(c => { if (c.country) vCountries.add(c.country); });
     populateSelect('vf-country', vCountries);
-    populateSelect('vf-domain', vDomains);
 
-    const cCountries = new Set(), cDomains = new Set();
-    allCoursesData.forEach(c => { if (c.country) cCountries.add(c.country); if (c.domain) cDomains.add(c.domain); });
+    const cCountries = new Set();
+    allCoursesData.forEach(c => { if (c.country) cCountries.add(c.country); });
     populateSelect('cf-country', cCountries);
-    populateSelect('cf-domain', cDomains);
+
+    // Domain: always the 9 fixed idx-based categories
+    populateSelect('vf-domain', ALL_DOMAIN_LABELS);
+    populateSelect('cf-domain', ALL_DOMAIN_LABELS);
 
     populateSubtypeSelect('vf-subtype');
     populateSubtypeSelect('cf-subtype');
@@ -548,7 +576,8 @@ function getFilteredVerificationData() {
         if (f.category !== 'all' && c.issue_category !== f.category) return false;
         if (f.subtype !== 'all' && (c.issue_sub_type || '') !== f.subtype) return false;
         if (f.country !== 'all' && c.country !== f.country) return false;
-        if (f.domain !== 'all' && c.domain !== f.domain) return false;
+        // Domain filter uses idx-based category
+        if (f.domain !== 'all' && getDomainCategory(c.id) !== f.domain) return false;
         if (f.attr !== 'all') { const key = ATTR_TO_MATCH[f.attr]; if (key && c[key] !== false) return false; }
         if (q && !(`${c.name} ${c.university || ''}`.toLowerCase().includes(q))) return false;
         return true;
@@ -563,12 +592,13 @@ function getFilteredCourseData() {
         if (f.category !== 'all' && c.issue_category !== f.category) return false;
         if (f.subtype !== 'all' && (c.issue_sub_type || '') !== f.subtype) return false;
         if (f.country !== 'all' && c.country !== f.country) return false;
-        if (f.domain !== 'all' && c.domain !== f.domain) return false;
+        // Domain filter uses idx-based category
+        if (f.domain !== 'all' && getDomainCategory(c.id) !== f.domain) return false;
         if (f.qs === 'yes' && !c.has_qs_badge) return false;
         if (f.qs === 'no' && c.has_qs_badge) return false;
         if (f.nirf === 'yes' && !c.has_nirf_badge) return false;
         if (f.nirf === 'no' && c.has_nirf_badge) return false;
-        if (q && !(`${c.name} ${c.university || ''} ${c.domain || ''}`.toLowerCase().includes(q))) return false;
+        if (q && !(`${c.name} ${c.university || ''} ${c.domain || ''} ${getDomainCategory(c.id)}`.toLowerCase().includes(q))) return false;
         return true;
     });
 }
@@ -686,18 +716,21 @@ function renderRecentPage() {
     const start = (currentRecentPage - 1) * RECENT_PAGE_SIZE;
     const slice = filteredData.slice(start, start + RECENT_PAGE_SIZE);
     tbody.innerHTML = slice.length === 0
-        ? '<tr><td colspan="5" class="empty-state">No courses match the current filters.</td></tr>'
+        ? '<tr><td colspan="6" class="empty-state">No courses match the current filters.</td></tr>'
         : slice.map(c => {
             const issueLabel = c.issue_category ? (c.issue_sub_type || c.issue_category).replace(/_/g, ' ') : c.status;
             const badgeCls = c.issue_category === 'website_issue' ? 'badge-error' :
                 c.issue_category === 'course_issue' ? 'badge-discrepancy' :
                     getBadgeClass(c.status);
+            const domainCat = getDomainCategory(c.id);
+            const domClick  = `event.stopPropagation();verificationFilter.domain='${escJs(domainCat)}';syncVerificationFilters();applyVerificationFilter();`;
             return `
             <tr onclick="showCourseModal('${c.id || ''}','${escJs(c.name)}','${escJs(c.university || '')}')">
                 <td><strong>${escHtml(c.name)}</strong></td>
                 <td>${escHtml(c.university || '—')}</td>
+                <td><span class="domain-pill cell-filter" title="Filter by domain" onclick="${domClick}">${escHtml(domainCat)}</span></td>
                 <td><span class="badge ${badgeCls}" title="${escHtml(c.issue_category || '')}">${issueLabel}</span></td>
-                <td style="max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(c.disc_reason || '—')}</td>
+                <td style="max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(c.disc_reason || '—')}</td>
                 <td>${c.pdf_page || '—'}</td>
             </tr>`;
         }).join('');
@@ -752,12 +785,16 @@ function renderCoursesPage() {
                 c.issue_category === 'course_issue' ? 'badge-discrepancy' :
                     getBadgeClass(c.status);
             const statusClick = `event.stopPropagation();courseFilter.status='${c.status}';syncCourseFilters();applyCourseFilter();`;
-            const domainClick = `event.stopPropagation();courseFilter.domain='${escJs(c.domain || '')}';syncCourseFilters();applyCourseFilter();`;
+            const domainCat   = getDomainCategory(c.id);
+            const domainClick = `event.stopPropagation();courseFilter.domain='${escJs(domainCat)}';syncCourseFilters();applyCourseFilter();`;
             return `<tr onclick="showCourseModal('${c.id}')">
             <td>${c.id}</td>
             <td><strong>${escHtml(c.name)}</strong></td>
             <td>${escHtml(c.university || '—')}</td>
-            <td><span class="cell-filter" title="Filter by domain" onclick="${domainClick}">${escHtml(c.domain || '—')}</span></td>
+            <td>
+                <span class="domain-pill cell-filter" title="Filter by domain category" onclick="${domainClick}">${escHtml(domainCat)}</span>
+                ${c.domain && c.domain !== domainCat ? `<div style="font-size:0.72rem;color:var(--text-3);margin-top:2px;">${escHtml(c.domain)}</div>` : ''}
+            </td>
             <td>${escHtml(c.country || '—')}</td>
             <td>${c.has_qs_badge ? '<span class="badge badge-verified">Yes</span>' : '<span class="badge badge-error">No</span>'}</td>
             <td>${c.has_nirf_badge ? '<span class="badge badge-verified">Yes</span>' : '<span class="badge badge-error">No</span>'}</td>
