@@ -605,6 +605,45 @@ body.light-mode .theme-toggle::after {
 .data-table tbody tr:hover { background: var(--bg-hover); }
 .data-table tbody tr:last-child td { border-bottom: none; }
 
+/* ── Verification / All-Courses table polish ───────────────── */
+/* Subtle zebra striping for scanability */
+.data-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.018); }
+.data-table tbody tr:nth-child(even):hover { background: var(--bg-hover); }
+
+/* Index column — compact, muted, right-aligned tabular figures */
+.data-table th.col-idx,
+.data-table td.col-idx {
+    width: 52px;
+    min-width: 52px;
+    max-width: 64px;
+    padding-left: 12px;
+    padding-right: 8px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+    font-weight: 600;
+    font-size: 0.78rem;
+    white-space: nowrap;
+}
+
+/* Truncated course-name cell — keeps rows on one line, full name on hover */
+.data-table td.course-name-cell {
+    max-width: 340px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.data-table td.course-name-cell strong { color: var(--text-1); font-weight: 600; }
+
+/* Slightly lifted hover + accent left-border cue for clickable rows */
+.data-table tbody tr {
+    transition: background 0.12s, transform 0.12s;
+}
+.data-table tbody tr:hover {
+    background: var(--bg-hover);
+    box-shadow: inset 3px 0 0 var(--accent);
+}
+
 /* ================================================================
    BADGES
    ================================================================ */

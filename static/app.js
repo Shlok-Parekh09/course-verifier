@@ -6,7 +6,15 @@
 
 // Production API is the hosted Vercel deployment; locally the Flask app
 // serves the API on the same origin, so no base URL is needed.
-const isLocalEnv = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+// Detect local robustly: the Flask dev server binds 0.0.0.0:5000, so accessing
+// it via 0.0.0.0, a LAN IP, or the machine name must still count as local —
+// otherwise the frontend silently pulls stale data from the Vercel deploy.
+const _h = window.location.hostname;
+const isLocalEnv =
+    _h === 'localhost' || _h === '127.0.0.1' || _h === '0.0.0.0' ||
+    _h.endsWith('.local') ||
+    /^(10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(_h) || // private/LAN IPv4
+    window.location.port === '5000';
 let API_BASE_URL = isLocalEnv ? '' : 'https://course-verifier.vercel.app';
 if (API_BASE_URL.endsWith('/')) {
     API_BASE_URL = API_BASE_URL.slice(0, -1);
