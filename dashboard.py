@@ -4,6 +4,8 @@ import re
 import fitz
 import pdfplumber
 import tempfile
+import time
+import threading
 import pymongo
 from pymongo import MongoClient, UpdateOne
 from flask import Flask, render_template, jsonify, request
@@ -482,7 +484,13 @@ def load_courses():
         # If it was natively flagged as Unverified in older runs, and has an error message, it's a website issue
         is_unverified = c.get('status') == 'Unverified'
         
-        if not has_uni_match or not has_name_match or has_page_error or (web_status == 'FALSE' and has_page_error) or (is_unverified and has_page_error):
+        # Web issues are detected from actual website error signals only — a
+        # page-load / unreachable / LLM-fallback error in the description, or an
+        # existing website_issue classification (preserved by the else-branch
+        # below). We intentionally do NOT use uni_match / name_match here: PDF
+        # uploads set uni_match=True when the University cell reads MATCH, which
+        # would mask genuine website issues and make the count drift down.
+        if has_page_error:
             c['issue_category'] = ISSUE_CATEGORY_WEBSITE
             c['status'] = 'Error'
         elif is_unverified and not c.get('issue_category'):
@@ -502,6 +510,33 @@ def load_courses():
 # Load immediately
 load_courses()
 
+# On Vercel, the serverless function instance is reused across requests, so
+# global_courses (loaded once above) goes stale and the hosted dashboard never
+# sees new uploads. Refresh from MongoDB on a short TTL so the live site stays
+# current. Local dev benefits too: it picks up writes from other clients.
+_LAST_LOAD_TS = time.time()
+_LOAD_TTL_SEC = 15
+_load_lock = threading.Lock()
+
+def _refresh_courses_if_stale():
+    """Reload global_courses from MongoDB if the in-memory cache is older than
+    _LOAD_TTL_SEC seconds. No-op when MongoDB is not connected."""
+    global _LAST_LOAD_TS
+    if db is None:
+        return
+    if (time.time() - _LAST_LOAD_TS) < _LOAD_TTL_SEC:
+        return
+    with _load_lock:
+        # Re-check inside the lock to avoid duplicate concurrent reloads.
+        if (time.time() - _LAST_LOAD_TS) < _LOAD_TTL_SEC:
+            return
+        try:
+            load_courses()
+            _LAST_LOAD_TS = time.time()
+            print("[REFRESH] reloaded global_courses from MongoDB")
+        except Exception as e:
+            print("[REFRESH] error reloading from MongoDB:", e)
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -509,6 +544,7 @@ def index():
 @app.route("/api/courses")
 @app.route("/api/courses.json")
 def api_courses():
+    _refresh_courses_if_stale()
     return jsonify({"status": "success", "courses": global_courses})
 
 @app.route("/api/debug")
@@ -529,6 +565,7 @@ def api_debug():
 @app.route("/api/data")
 @app.route("/api/data.json")
 def api_data():
+    _refresh_courses_if_stale()
     total_courses = len(global_courses)
     verified = sum(1 for c in global_courses if c['status'] == 'Verified')
     discrepancies = sum(1 for c in global_courses if c['status'] == 'Discrepancy')
@@ -727,6 +764,7 @@ import os
 @app.route("/api/analytics", methods=["GET"])
 @app.route("/api/analytics.json", methods=["GET"])
 def api_analytics():
+    _refresh_courses_if_stale()
     # Attempt to load and parse analytics data
     try:
         data = {
