@@ -67,7 +67,7 @@ class LLMManager:
                 for idx in self._get_key_sequence(worker_id, len(self.nvidia_keys)):
                     n_key = self.nvidia_keys[idx]
                     key_id = f"nvidia_{idx}"
-                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying NVIDIA Key {idx+1} (Nemotron Ultra)...")
+                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying NVIDIA Key {idx+1} (Nemotron Super)...")
                     self._rate_limit(key_id, min_interval=1.0)
                     res = self._call_nvidia(n_key, prompt, system, format, 0.0)
                     if res: return res
@@ -111,7 +111,7 @@ class LLMManager:
         # Provider 0: NVIDIA
         if provider in ["auto", "nvidia"]:
             for idx, key in enumerate(self.nvidia_keys):
-                print(f"      -> [LLM Manager] Trying NVIDIA Key {idx+1}/{len(self.nvidia_keys)} (Nemotron Ultra)...")
+                print(f"      -> [LLM Manager] Trying NVIDIA Key {idx+1}/{len(self.nvidia_keys)} (Nemotron Super)...")
                 self._rate_limit(f"nvidia_{idx}", min_interval=1.0)
                 result = self._call_nvidia(key, prompt, system, format, 0.0)
                 if result: return result
@@ -275,7 +275,7 @@ class LLMManager:
         if system: messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
         
-        payload = {"model": "nvidia/nemotron-3-ultra-550b-a55b", "messages": messages, "temperature": temperature, "max_tokens": 4096}
+        payload = {"model": "nvidia/nemotron-3-super-120b-a12b", "messages": messages, "temperature": temperature, "max_tokens": 4096}
         if format == "json": payload["response_format"] = {"type": "json_object"}
             
         try:
