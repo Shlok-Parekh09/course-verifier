@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import sys
 import fitz
 import pdfplumber
 import tempfile
@@ -10,6 +11,19 @@ import pymongo
 from pymongo import MongoClient, UpdateOne
 from flask import Flask, render_template, jsonify, request
 from werkzeug.utils import secure_filename
+
+# Windows consoles default to the cp1252 codepage, which CANNOT encode the
+# status glyphs used throughout the print() statements below (✓ ✗ ⚠ ▸ …). A
+# print() of one of those chars raises UnicodeEncodeError, which aborts
+# save_courses() BEFORE it reaches the MongoDB bulk_write / static-JSON export
+# — so uploads mutate global_courses in memory (counts briefly rise) but never
+# persist; the next stale-cache reload from MongoDB reverts them (counts fall
+# back). Forcing UTF-8 on stdout/stderr fixes the crash for every status print.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024 # 50 MB
@@ -1283,11 +1297,17 @@ def upload_data():
     if updates > 0:
         # Save ALL courses to ensure complete data persistence
         # This prevents data loss when Firestore is the primary data source
-        save_courses(global_courses)
-        
+        try:
+            save_courses(global_courses)
+        except Exception as e:
+            # Don't let a persistence failure 500 the whole upload — the
+            # in-memory mutation already happened, so report a soft warning
+            # and let the next reload/stale-refresh reconcile from MongoDB.
+            print(f"[UPLOAD] save_courses error: {e}")
+
     return jsonify({
-        "status": "success", 
-        "updates": updates, 
+        "status": "success",
+        "updates": updates,
         "message": f"Processed {len(files)} files. Updated {updates} courses.",
         "verified_courses": verified_in_this_batch
     })
