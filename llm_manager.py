@@ -57,11 +57,21 @@ class LLMManager:
         return [worker_id % num_keys]
 
     def generate(self, prompt: str, system: Optional[str] = None, format: str = "text", temperature: float = 0.0, provider: str = "auto", worker_id: int = None, model_name: str = None) -> Optional[str]:
-        # Text Generation: Mistral -> Gemini -> OpenRouter -> NVIDIA
+        # Text Generation: NVIDIA -> Mistral -> Gemini -> OpenRouter
 
         if worker_id is not None:
             # DEDICATED KEY LOGIC for Multithreading
-            # Chain: Mistral -> Gemini -> OpenRouter -> NVIDIA (with keys per provider)
+            # Chain: NVIDIA -> Mistral -> Gemini -> OpenRouter (with keys per provider)
+
+            if self.nvidia_keys and provider in ["auto", "nvidia"]:
+                for idx in self._get_key_sequence(worker_id, len(self.nvidia_keys)):
+                    n_key = self.nvidia_keys[idx]
+                    key_id = f"nvidia_{idx}"
+                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying NVIDIA Key {idx+1} (Nemotron Ultra)...")
+                    self._rate_limit(key_id, min_interval=1.0)
+                    res = self._call_nvidia(n_key, prompt, system, format, 0.0)
+                    if res: return res
+                print(f"      -> [LLM Manager] Worker {worker_id+1}'s NVIDIA keys failed. Failing over to Mistral...")
 
             if self.mistral_keys and provider in ["auto", "mistral"]:
                 for idx in self._get_key_sequence(worker_id, len(self.mistral_keys)):
@@ -91,24 +101,23 @@ class LLMManager:
                     self._rate_limit(key_id, min_interval=1.0)
                     res = self._call_openrouter(o_key, prompt, system, format, 0.0)
                     if res: return res
-                print(f"      -> [LLM Manager] Worker {worker_id+1}'s OpenRouter keys failed. Failing over to NVIDIA...")
-
-            if self.nvidia_keys and provider in ["auto", "nvidia"]:
-                for idx in self._get_key_sequence(worker_id, len(self.nvidia_keys)):
-                    n_key = self.nvidia_keys[idx]
-                    key_id = f"nvidia_{idx}"
-                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying NVIDIA Key {idx+1}...")
-                    self._rate_limit(key_id, min_interval=1.0)
-                    res = self._call_nvidia(n_key, prompt, system, format, 0.0)
-                    if res: return res
-                print(f"      -> [LLM Manager] Worker {worker_id+1}'s NVIDIA keys failed.")
+                print(f"      -> [LLM Manager] Worker {worker_id+1}'s OpenRouter keys failed.")
 
 
 
             return None
 
         # FALLBACK SEQUENTIAL LOGIC (If worker_id is not provided)
-        # Provider 0: MISTRAL
+        # Provider 0: NVIDIA
+        if provider in ["auto", "nvidia"]:
+            for idx, key in enumerate(self.nvidia_keys):
+                print(f"      -> [LLM Manager] Trying NVIDIA Key {idx+1}/{len(self.nvidia_keys)} (Nemotron Ultra)...")
+                self._rate_limit(f"nvidia_{idx}", min_interval=1.0)
+                result = self._call_nvidia(key, prompt, system, format, 0.0)
+                if result: return result
+                print(f"      -> [LLM Manager] NVIDIA Key {idx+1} failed. Failing over...")
+
+        # Provider 1: MISTRAL
         if provider in ["auto", "mistral"]:
             for idx, key in enumerate(self.mistral_keys):
                 print(f"      -> [LLM Manager] Trying Mistral Key {idx+1}/{len(self.mistral_keys)}...")
@@ -117,7 +126,7 @@ class LLMManager:
                 if result: return result
                 print(f"      -> [LLM Manager] Mistral Key {idx+1} failed. Failing over...")
 
-        # Provider 1: GEMINI
+        # Provider 2: GEMINI
         if provider in ["auto", "gemini"]:
             for idx, key in enumerate(self.gemini_keys):
                 print(f"      -> [LLM Manager] Trying Gemini Key {idx+1}/{len(self.gemini_keys)}...")
@@ -126,7 +135,7 @@ class LLMManager:
                 if result: return result
                 print(f"      -> [LLM Manager] Gemini Key {idx+1} failed. Failing over...")
 
-        # Provider 2: OPENROUTER
+        # Provider 3: OPENROUTER
         if provider in ["auto", "openrouter"]:
             for idx, key in enumerate(self.openrouter_keys):
                 print(f"      -> [LLM Manager] Trying OpenRouter Key {idx+1}/{len(self.openrouter_keys)}...")
@@ -135,18 +144,9 @@ class LLMManager:
                 if result: return result
                 print(f"      -> [LLM Manager] OpenRouter Key {idx+1} failed. Failing over...")
 
-        # Provider 3: NVIDIA
-        if provider in ["auto", "nvidia"]:
-            for idx, key in enumerate(self.nvidia_keys):
-                print(f"      -> [LLM Manager] Trying NVIDIA Key {idx+1}/{len(self.nvidia_keys)}...")
-                self._rate_limit(f"nvidia_{idx}", min_interval=1.0)
-                result = self._call_nvidia(key, prompt, system, format, 0.0)
-                if result: return result
-                print(f"      -> [LLM Manager] NVIDIA Key {idx+1} failed. Failing over...")
 
 
-
-        print("      -> [LLM Manager] CRITICAL ERROR: All API keys for Gemini, OpenRouter, NVIDIA, and Ollama failed!")
+        print("      -> [LLM Manager] CRITICAL ERROR: All API keys for NVIDIA, Mistral, Gemini, and OpenRouter failed!")
         return None
 
     def generate_with_image(self, prompt: str, base64_image: str, system: Optional[str] = None, worker_id: int = None) -> Optional[str]:
@@ -160,7 +160,7 @@ class LLMManager:
                 for idx in self._get_key_sequence(worker_id, len(self.groq_keys)):
                     g_key = self.groq_keys[idx]
                     key_id = f"groq_vision_{idx}"
-                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying Groq Vision Key {idx+1} (Llama 4 Scout)...")
+                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying Groq Vision Key {idx+1} (Qwen 3.6 27B)...")
                     self._rate_limit(key_id, min_interval=4.0) # 15 RPM
                     res = self._call_groq_vision(g_key, prompt, base64_image, system)
                     if res: return res
@@ -194,7 +194,7 @@ class LLMManager:
             # 1. Try Groq (Llama 4 Scout Vision)
             if idx < len(self.groq_keys):
                 key = self.groq_keys[idx]
-                print(f"      -> [LLM Manager] Trying Groq Vision Key {idx+1}/{len(self.groq_keys)} (Llama 4 Scout)...")
+                print(f"      -> [LLM Manager] Trying Groq Vision Key {idx+1}/{len(self.groq_keys)} (Qwen 3.6 27B)...")
                 self._rate_limit(f"groq_vision_{idx}", min_interval=4.0) # 15 RPM
                 result = self._call_groq_vision(key, prompt, base64_image, system)
                 if result: return result
@@ -275,7 +275,7 @@ class LLMManager:
         if system: messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
         
-        payload = {"model": "meta/llama-3.3-70b-instruct", "messages": messages, "temperature": temperature, "max_tokens": 4096}
+        payload = {"model": "nvidia/nemotron-3-ultra-550b-a55b", "messages": messages, "temperature": temperature, "max_tokens": 4096}
         if format == "json": payload["response_format"] = {"type": "json_object"}
             
         try:
@@ -417,7 +417,7 @@ class LLMManager:
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
         ]})
         payload = {
-            "model": "meta-llama/llama-4-scout-17b-16e-instruct",
+            "model": "qwen/qwen3.6-27b",
             "messages": messages,
             "temperature": 0.0
         }

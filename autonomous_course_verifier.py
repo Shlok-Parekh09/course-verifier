@@ -1815,43 +1815,56 @@ class AutonomousCourseVerifier:
 
         self._inject_beautiful_cursor(driver)
         
-        for _ in range(3):
+        # Cloudflare Turnstile / "just a moment" challenge bypass.
+        # Undetected-chromedriver usually solves the JS challenge automatically if given
+        # enough time; the mouse movement simulates human presence. We retry up to 5
+        # times with increasing waits, and attempt to click the Turnstile checkbox.
+        for attempt in range(5):
             try:
                 page_src = driver.page_source.lower()
-                if "verify you are human" in page_src or "just a moment" in page_src or "attention required" in page_src:
-                    print("    -> [!] Captcha or Bot Challenge detected. Attempting bypass...")
+                if "verify you are human" in page_src or "just a moment" in page_src or "attention required" in page_src or "checking your browser" in page_src:
+                    print(f"    -> [!] Captcha/Bot Challenge detected (attempt {attempt+1}/5). Attempting bypass...")
                     
+                    # Simulate human-like mouse movement across the page
                     try:
                         body = driver.find_element(By.TAG_NAME, 'body')
                         ac = ActionChains(driver)
-                        for _ in range(3):
-                            ac.move_to_element_with_offset(body, random.randint(10, 100), random.randint(10, 100)).perform()
-                            time.sleep(0.5)
+                        for _ in range(5):
+                            ac.move_to_element_with_offset(body, random.randint(10, 200), random.randint(10, 200)).perform()
+                            time.sleep(random.uniform(0.3, 0.8))
                     except: pass
                     
+                    # Find and click the Cloudflare Turnstile / hCaptcha checkbox iframe
                     iframes = driver.find_elements(By.TAG_NAME, "iframe")
+                    clicked_captcha = False
                     for iframe in iframes:
                         try:
                             src = iframe.get_attribute('src') or ""
                             title = iframe.get_attribute('title') or ""
                         except (StaleElementReferenceException, NoSuchElementException):
                             continue
-                        if 'challenges' in src or 'widget' in title.lower() or 'turnstile' in src:
-                            print("    -> [!] Found Captcha iframe, clicking center...")
+                        if 'challenges' in src or 'widget' in title.lower() or 'turnstile' in src or 'hcaptcha' in src:
+                            print(f"    -> [!] Found Captcha iframe ({title or 'untitled'}), clicking checkbox...")
                             try:
                                 driver.switch_to.frame(iframe)
                                 time.sleep(1)
                                 try:
+                                    # Click the checkbox area (Turnstile renders a clickable body/checkbox)
                                     box = driver.find_element(By.TAG_NAME, 'body')
                                     ActionChains(driver).move_to_element(box).click().perform()
+                                    clicked_captcha = True
                                 except: pass
                                 driver.switch_to.default_content()
                             except (StaleElementReferenceException, WebDriverException):
                                 try: driver.switch_to.default_content()
                                 except: pass
-                            time.sleep(4)
-                            break
-                    time.sleep(4)
+                            if clicked_captcha:
+                                break
+                    
+                    # Wait longer on later attempts to let the JS challenge self-resolve
+                    wait_time = 4 + attempt * 2  # 4, 6, 8, 10, 12s
+                    print(f"    -> Waiting {wait_time}s for challenge to resolve...")
+                    time.sleep(wait_time)
                 else:
                     break
             except Exception as e:
@@ -2902,11 +2915,8 @@ class AutonomousCourseVerifier:
                     print(f"    -> Headless country search failed: {e}")
                     
             print(f"    Checking rankings for: {uni}")
-            
-            g_text_cache = None
 
             def check_ranking_via_search(ranking_type):
-                nonlocal g_text_cache
                 pass # removed local import re
                 uni_lower = uni.lower()
                 is_college = any(word in uni_lower for word in ['college', 'institute', 'school', 'academy', 'technology', 'engineering'])
@@ -2926,6 +2936,8 @@ class AutonomousCourseVerifier:
                     bracket_unis.append(affiliated_match.group(1).strip())
                 college_only = re.sub(r'\(.*?\)', '', uni).strip()
                 
+                # ── DB-ONLY RANKING CHECK (no Google search) ──
+                # 1. For colleges: check each bracketed affiliated university against the DB.
                 if is_college:
                     for b_uni in bracket_unis:
                         b_lower = b_uni.lower()
@@ -2938,8 +2950,8 @@ class AutonomousCourseVerifier:
                             direct_local = self._offline_nirf_lookup(b_uni)
                             if direct_local == "Ranked":
                                 return f"The university to which college is affiliated ({b_uni.title()}) is ranked in NIRF hence matched"
-                
-                # Hardcoded Overrides for Universities
+
+                # 2. Hardcoded Overrides for Universities
                 if "aisect" in uni_lower:
                     return "Not Ranked"
                 if "uttarakhand open" in uni_lower:
@@ -2950,43 +2962,18 @@ class AutonomousCourseVerifier:
                     return "Not Ranked"
                 if "bhoj" in uni_lower:
                     return "Not Ranked"
-                                
-                    if g_text_cache is None:
-                        g_text_cache = ""
-                        try:
-                            pass # removed local import requests
-                            from bs4 import BeautifulSoup
-                            from googlesearch import search
-                            college_only_expanded = self._expand_abbreviations(college_only)
-                            g_query = f'"{college_only_expanded}" affiliated university'
-                            print(f"      -> Searching Google for Affiliation: {g_query}")
-                            for j, g_url in enumerate(search(g_query, num_results=2, sleep_interval=1)):
-                                try:
-                                    res = requests.get(g_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
-                                    soup = BeautifulSoup(res.text, 'html.parser')
-                                    g_text_cache += " " + soup.get_text(separator=' ', strip=True)[:2000]
-                                except: pass
-                        except Exception as e:
-                            print(f"      -> Google Search Affiliation failed: {e}")
-                            
-                    if ranking_type == "QS":
-                        for qs_name in self._qs_csv_names.split('\n'):
-                            if len(qs_name.strip()) > 5 and qs_name.strip() in g_text_cache.lower():
-                                return f"The university to which college is affiliated ({qs_name.strip().title()}) is ranked in QS hence matched"
-                    elif ranking_type == "NIRF":
-                        for nirf_name in self._nirf_csv_names.split('\n'):
-                            if len(nirf_name.strip()) > 5 and nirf_name.strip() in g_text_cache.lower():
-                                return f"The university to which college is affiliated ({nirf_name.strip().title()}) is ranked in NIRF hence matched"
-                                
+
+                # 3. For colleges: direct DB lookup on the college name itself.
+                if is_college:
                     if ranking_type == "QS":
                         if self._offline_qs_lookup(college_only) == "Ranked":
                             return "Ranked via Local Heuristics (Direct College Match)"
                     elif ranking_type == "NIRF":
                         if self._offline_nirf_lookup(college_only) == "Ranked":
                             return "Ranked via Local Heuristics (Direct College Match)"
-                    
                     return "Not Ranked"
-                    
+
+                # 4. For non-college universities: direct DB lookup on the full university name.
                 try:
                     if ranking_type == "QS":
                         direct = self._offline_qs_lookup(uni)
@@ -3000,7 +2987,7 @@ class AutonomousCourseVerifier:
                         return "Not Ranked"
 
                 except Exception as e:
-                    print(f"      Search check failed for {ranking_type}: {str(e)[:90]}")
+                    print(f"      DB check failed for {ranking_type}: {str(e)[:90]}")
                     return "Not Ranked"
 
             # ── QS World + Regional ──
@@ -3038,6 +3025,35 @@ class AutonomousCourseVerifier:
 
         print(f"    QS/NIRF verification complete for {len(uni_map)} universities.")
 
+
+    @staticmethod
+    def _extract_excel_link(cell_formula, cell_data):
+        """Robustly extract a URL from an Excel cell across all storage formats.
+        Order (most reliable first for fees.xlsx where 95% are hyperlink objects):
+          1. Hyperlink object on the data cell
+          2. =HYPERLINK(...) formula on the formula cell
+          3. Plain-text URL value on the data cell
+        Returns the URL string or None.
+        """
+        # 1. Hyperlink object (most common in fees.xlsx / CombinedWork.xlsx Link col)
+        if cell_data and cell_data.hyperlink and cell_data.hyperlink.target:
+            return cell_data.hyperlink.target
+
+        # 2. =HYPERLINK formula
+        if cell_formula and cell_formula.value and isinstance(cell_formula.value, str):
+            val = str(cell_formula.value)
+            if val.upper().startswith("=HYPERLINK"):
+                match = re.search(r'=HYPERLINK\(\s*"([^"]+)"', val, re.IGNORECASE)
+                if match:
+                    return match.group(1).strip()
+            if val.startswith("http"):
+                return val.strip()
+
+        # 3. Plain-text URL in the data cell
+        if cell_data and cell_data.value and isinstance(cell_data.value, str) and cell_data.value.strip().startswith("http"):
+            return cell_data.value.strip()
+
+        return None
 
     def _search_excel_for_links(self, uni_name, course_name):
         links = {}
@@ -3100,21 +3116,7 @@ class AutonomousCourseVerifier:
                                 cell_f = ws_f.cell(row=row, column=fee_link_col)
                                 cell_d = ws_d.cell(row=row, column=fee_link_col)
                                 
-                                extracted_link = None
-                                
-                                # Try regex on formula first
-                                if cell_f.value and isinstance(cell_f.value, str) and str(cell_f.value).upper().startswith("=HYPERLINK"):
-                                    match = re.search(r'=HYPERLINK\(\s*"([^"]+)"', str(cell_f.value), re.IGNORECASE)
-                                    if match:
-                                        extracted_link = match.group(1).strip()
-                                
-                                # Fallback to standard hyperlink object
-                                if not extracted_link and cell_d.hyperlink and cell_d.hyperlink.target:
-                                    extracted_link = cell_d.hyperlink.target
-                                    
-                                # Fallback to standard text
-                                if not extracted_link and cell_d.value and isinstance(cell_d.value, str) and cell_d.value.startswith('http'):
-                                    extracted_link = cell_d.value.strip()
+                                extracted_link = self._extract_excel_link(cell_f, cell_d)
                                 
                                 if extracted_link and score > best_score:
                                     best_score = score
@@ -3156,19 +3158,7 @@ class AutonomousCourseVerifier:
                     if 'course' in val and course_col is None: course_col = col_idx
             
             def extract_url(cell_formula, cell_data):
-                if cell_formula.hyperlink and cell_formula.hyperlink.target:
-                    return cell_formula.hyperlink.target
-                if cell_formula.value and isinstance(cell_formula.value, str):
-                    val = cell_formula.value.strip()
-                    if val.upper().startswith('=HYPERLINK'):
-                        match = re.search(r'HYPERLINK\("([^"]+)"', val, re.IGNORECASE)
-                        if match:
-                            return match.group(1)
-                    if val.startswith('http'):
-                        return val
-                if cell_data.value and isinstance(cell_data.value, str) and cell_data.value.strip().startswith('http'):
-                    return cell_data.value.strip()
-                return None
+                return self._extract_excel_link(cell_formula, cell_data)
             
             best_score = -1
             best_links = {}
@@ -6639,20 +6629,24 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                         let txt = (tab.innerText || tab.textContent || '').toLowerCase().trim();
                                         if (txt.includes('fee') || txt.includes('cost') || txt.includes('program') || 
                                             txt.includes('tuition') || txt.includes('diploma') || txt.includes('cyber') ||
-                                            txt.includes('security')) {{
+                                            txt.includes('security') || txt.includes('admission') || txt.includes('overview') ||
+                                            txt.includes('curriculum') || txt.includes('syllabus') || txt.includes('duration')) {{
                                             let navParent = tab.closest('nav, header, .main-nav, #header');
                                             if (!navParent) {{
                                                 try {{ tab.click(); await new Promise(r => setTimeout(r, 400)); }} catch(e) {{}}
                                             }}
                                         }}
                                     }}
-                                    // Try all <select> dropdowns - iterate ALL options
+                                    // Try all <select> dropdowns - iterate only verification-relevant options
                                     let selects = document.querySelectorAll('select');
                                     for (let s of selects) {{
                                         let options = Array.from(s.options);
                                         for (let opt of options) {{
                                             let optTxt = (opt.innerText || opt.text || '').toLowerCase();
-                                            if (optTxt.includes('fee') || optTxt.includes('diploma') || optTxt.includes('cyber')) {{
+                                            if (optTxt.includes('fee') || optTxt.includes('tuition') || optTxt.includes('cost') ||
+                                                optTxt.includes('diploma') || optTxt.includes('cyber') || optTxt.includes('security') ||
+                                                optTxt.includes('program') || optTxt.includes('syllabus') || optTxt.includes('curriculum') ||
+                                                optTxt.includes('admission') || optTxt.includes('duration')) {{
                                                 try {{
                                                     s.value = opt.value;
                                                     s.dispatchEvent(new Event('change', {{ bubbles: true }}));
@@ -6721,7 +6715,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         try:
                             js_accordions = f"""
                                 let callback = arguments[arguments.length - 1];
-                                let buttons = document.querySelectorAll('button, select, div[role="tab"], span[role="tab"], a[data-toggle], a[data-bs-toggle], summary, .accordion-button, .accordion-header, [aria-expanded], [class*="dropdown"], [class*="collapse"], [class*="toggle"], [class*="accordion"]');
+                                let buttons = document.querySelectorAll('button, select, div[role="tab"], span[role="tab"], a[data-toggle], a[data-bs-toggle], summary, details, .accordion-button, .accordion-header, [aria-expanded], [class*="dropdown"], [class*="collapse"], [class*="toggle"], [class*="accordion"]');
                                 let keywords = {accordion_keywords};
                                 let clicked = 0;
                                 let extractedContent = [];
@@ -6738,32 +6732,40 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                         if (navParent) continue;
                                         
                                         let txt = (b.innerText || '').toLowerCase().trim();
-                                        if (txt.length < 2 || txt.length > 120) continue;
+                                        if (txt.length < 2 || txt.length > 160) continue;
+                                        if (txt.includes('login') || txt.includes('sign in') || txt.includes('apply now')) continue;
                                         
-                                        if (keywords.some(k => txt.includes(k))) {{
-                                            if (clicked >= 15) {{
-                                                console.log("Max accordion clicks (15) reached. Stopping to prevent memory leak.");
-                                                break;
-                                            }}
-                                            if (window.moveBeautifulCursorToElement) window.moveBeautifulCursorToElement(b);
-                                            await new Promise(r => setTimeout(r, 400));
-                                            if (window.aiClickAnimation) {{
-                                                let rect = b.getBoundingClientRect();
-                                                window.aiClickAnimation(rect.left + rect.width/2, rect.top + rect.height/2);
-                                            }}
-                                            try {{ b.click(); clicked++; }} catch(e) {{}}
-                                            await new Promise(r => setTimeout(r, 400));
-                                            
-                                            try {{
-                                                let targetId = b.getAttribute('aria-controls') || b.getAttribute('data-bs-target') || b.getAttribute('data-target') || b.getAttribute('href');
-                                                if (targetId && targetId.startsWith('#')) {{
-                                                    let targetEl = document.getElementById(targetId.substring(1)) || document.querySelector(targetId);
-                                                    if (targetEl && targetEl.innerText) extractedContent.push(targetEl.innerText);
-                                                }} else if (b.nextElementSibling && b.nextElementSibling.innerText) {{
-                                                    extractedContent.push(b.nextElementSibling.innerText);
-                                                }}
-                                            }} catch(e) {{}}
+                                        // Click keyword-matched toggles OR generic accordion/collapse/details toggles
+                                        let isKeyword = keywords.some(k => txt.includes(k));
+                                        let isAccordionToggle = b.matches('summary, details, .accordion-button, .accordion-header, [aria-expanded], [data-toggle], [data-bs-toggle], [class*="collapse"], [class*="accordion"]');
+                                        if (!(isKeyword || isAccordionToggle)) continue;
+                                        
+                                        if (clicked >= 30) {{
+                                            console.log("Max accordion clicks (30) reached. Stopping to prevent memory leak.");
+                                            break;
                                         }}
+                                        if (window.moveBeautifulCursorToElement) window.moveBeautifulCursorToElement(b);
+                                        await new Promise(r => setTimeout(r, 300));
+                                        if (window.aiClickAnimation) {{
+                                            let rect = b.getBoundingClientRect();
+                                            window.aiClickAnimation(rect.left + rect.width/2, rect.top + rect.height/2);
+                                        }}
+                                        try {{ b.click(); clicked++; }} catch(e) {{}}
+                                        // Force open <details> if click didn't open it
+                                        if (b.tagName === 'DETAILS' && !b.open) {{ try {{ b.open = true; }} catch(e) {{}} }}
+                                        await new Promise(r => setTimeout(r, 350));
+                                        
+                                        try {{
+                                            let targetId = b.getAttribute('aria-controls') || b.getAttribute('data-bs-target') || b.getAttribute('data-target') || b.getAttribute('href');
+                                            if (targetId && targetId.startsWith('#')) {{
+                                                let targetEl = document.getElementById(targetId.substring(1)) || document.querySelector(targetId);
+                                                if (targetEl && targetEl.innerText) extractedContent.push(targetEl.innerText);
+                                            }} else if (b.nextElementSibling && b.nextElementSibling.innerText) {{
+                                                extractedContent.push(b.nextElementSibling.innerText);
+                                            }} else if (b.parentElement && b.parentElement.innerText) {{
+                                                extractedContent.push(b.parentElement.innerText);
+                                            }}
+                                        }} catch(e) {{}}
                                     }}
                                     
                                     if (extractedContent.length > 0) {{
@@ -7502,6 +7504,30 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             trunc_sk = pdf_sk[:120] + "..." if len(pdf_sk) > 120 else pdf_sk
                             sk_detail = f"General {course.get('name')} syllabus typically includes: {trunc_sk}"
 
+                    # --- QS / NIRF RANK DETECTION FROM SCRAPED PAGE TEXT ---
+                    # The DB-based check in verify_rankings() only matches university names.
+                    # Many course pages mention the rank explicitly (e.g. "QS World Rank #45" or
+                    # "NIRF Ranking 2024: 12th in Engineering"). Use _extract_rank_from_text
+                    # to read those claims directly from the scraped page_text and upgrade the
+                    # ranking detail when the DB-only check returned "Not Ranked".
+                    try:
+                        if page_text and len(page_text) > 100:
+                            uni_for_rank = course.get('uni', '')
+                            if not course.get('qs_ranked') or course.get('qs_detail') in (None, '', 'Not Ranked'):
+                                handled, qs_rank_text = self._extract_rank_from_text(page_text, uni_for_rank, "QS")
+                                if handled and qs_rank_text and qs_rank_text != "Not Ranked":
+                                    course['qs_detail'] = qs_rank_text
+                                    course['qs_ranked'] = True
+                                    print(f"    -> [Ranking] QS rank detected from page text: {qs_rank_text}")
+                            if not course.get('nirf_ranked') or course.get('nirf_detail') in (None, '', 'Not Ranked'):
+                                handled, nirf_rank_text = self._extract_rank_from_text(page_text, uni_for_rank, "NIRF")
+                                if handled and nirf_rank_text and nirf_rank_text != "Not Ranked":
+                                    course['nirf_detail'] = nirf_rank_text
+                                    course['nirf_ranked'] = True
+                                    print(f"    -> [Ranking] NIRF rank detected from page text: {nirf_rank_text}")
+                    except Exception as _rank_e:
+                        print(f"    -> [Ranking] Page-text rank detection failed: {_rank_e}")
+
                     # New fields for duration, mode, lang
                     course['country_verified'] = web_country
                     course['country_match'] = country_match
@@ -7558,6 +7584,21 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             except Exception as fallback_e:
                                 print(f"    -> [!] Cloudscraper fallback also failed: {fallback_e}")
                         
+                        # Also try to fetch the fee document from fees.xlsx via HTTP (no browser needed)
+                        # so the cost can still be verified even when the browser crashed.
+                        try:
+                            fee_links = self._search_excel_for_links(course.get('uni', ''), course.get('name', ''))
+                            if fee_links.get('fees'):
+                                print(f"    -> [!] Browser died: fetching fee document from fees.xlsx via HTTP: {fee_links['fees']}")
+                                fee_doc_text = self._fetch_url_robust(fee_links['fees'])
+                                if fee_doc_text:
+                                    if 'page_text' not in locals() or not isinstance(page_text, str):
+                                        page_text = ""
+                                    page_text += "\n\n--- EXCEL FEES DATA ---\n" + fee_doc_text[:25000]
+                                    print(f"    -> [!] Successfully recovered {len(fee_doc_text)} chars of fee data via HTTP!")
+                        except Exception as fee_e:
+                            print(f"    -> [!] fees.xlsx HTTP fetch during crash recovery failed: {fee_e}")
+
                         if 'page_text' not in locals() or len(page_text) < 500:
                             raise BrowserCrashRetryException(clean_err)
                     
