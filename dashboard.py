@@ -411,7 +411,18 @@ def save_courses(updated_courses=None):
             }
             with open(os.path.join("public", "api", "data.json"), "w", encoding="utf-8") as f:
                 json.dump(data_json, f, indent=2)
-            
+
+            # Export analytics.json so the hosted Analytics tab (which reads the
+            # static file) stays in sync with the normalized credential mix +
+            # tiered pricing. Without this, analytics.json drifts stale because
+            # it is only ever written here, never on demand by the live route.
+            try:
+                analytics_payload = {"status": "success", "data": build_analytics_data()}
+                with open(os.path.join("public", "api", "analytics.json"), "w", encoding="utf-8") as f:
+                    json.dump(analytics_payload, f, indent=2)
+            except Exception as ae:
+                print(f"[SAVE] ⚠ Could not export analytics.json: {ae}")
+
             print("[SAVE] ✓ Exported static JSON files for hosting")
         except Exception as e:
             print(f"[SAVE] ✗ Error exporting static JSON: {e}")
@@ -1019,114 +1030,124 @@ def api_reclassify():
 import pandas as pd
 import os
 
+def build_analytics_data():
+    """Build the analytics payload dict (course_category, pricing_category,
+    variant_category, domain_pivot, country_pivot). Pure data build — used by
+    /api/analytics and by save_courses() so public/api/analytics.json stays in
+    sync with the static data/courses exports instead of drifting stale."""
+    data = {
+        "course_category": {},
+        "variant_category": {},
+        "pricing_category": {},
+        "domain_pivot": {},
+        "country_pivot": {}
+    }
+
+    # 1. Parse CombinedWork.xlsx
+    if os.path.exists('CombinedWork.xlsx'):
+        xl = pd.ExcelFile('CombinedWork.xlsx')
+        dfs = [xl.parse(s).assign(Country=s) for s in xl.sheet_names]
+        df = pd.concat(dfs)
+        df = df.dropna(subset=['Course name'])
+
+        # Country Count
+        country_counts = df['Country'].value_counts().to_dict()
+        data['country_pivot'] = country_counts
+
+        # Academic credential mix — DEGREE LEVELS ONLY.
+        # Geography (Indian vs International) is shown elsewhere (split
+        # visual + Geography sub-tab); it must not pollute the credential
+        # doughnut. Labels are canonical and agree with normalize_domain()
+        # so the Analytics credential chart and the Dashboard breakdown match.
+        # Genuinely different degrees (Bachelor's vs Master's vs Diploma, etc.)
+        # are kept as separate segments — only case/spelling variants of the
+        # SAME degree are collapsed.
+        def get_level(ctype):
+            c = str(ctype).lower().replace('gradiuate', 'graduate').strip()
+            if 'post graduate diploma' in c or 'post grad diploma' in c or 'graduate diploma' in c:
+                return "Post Graduate Diploma"
+            if 'post graduate certificate' in c or 'post grad certificate' in c or 'post grad cert' in c:
+                return "Post Graduate Certificate"
+            if 'bachelor' in c or c == 'ug' or 'undergrad' in c:
+                return "Bachelor's Degree"
+            if 'master' in c or 'pg' in c:
+                return "Master's Degree"
+            if 'diploma' in c:
+                return "Diploma"
+            if 'cert' in c:
+                return "Certificate"
+            return "Other"
+
+        levels = df['Course Type'].apply(get_level).value_counts().to_dict()
+        for k, v in levels.items():
+            if k != 'Other':
+                data['course_category'][k] = int(v)
+
+        # Pricing — calibrated cost-access intelligence (INR).
+        # Old code matched any fee containing the digit "0" → ~everything.
+        # Now: parse the numeric fee (strip ₹/commas), bucket into 4 tiers.
+        import re as _re
+        def parse_fee_tier(fee):
+            s = str(fee).lower()
+            if 'free' in s:
+                return 'Free'
+            m = _re.search(r'[\d][\d,]*(?:\.\d+)?', str(fee))
+            if not m:
+                return None
+            try:
+                val = float(m.group(0).replace(',', ''))
+            except ValueError:
+                return None
+            if val <= 0:
+                return 'Free'
+            if val <= 50000:
+                return 'Affordable'
+            if val <= 200000:
+                return 'Mid'
+            return 'Premium'
+
+        pricing = {'Free': 0, 'Affordable': 0, 'Mid': 0, 'Premium': 0}
+        for fee in df['Fees'].tolist():
+            tier = parse_fee_tier(fee)
+            if tier:
+                pricing[tier] = pricing.get(tier, 0) + 1
+        data['pricing_category'] = pricing
+
+    # 2. Parse Variants (link_compile.pdf.json)
+    json_file = 'autonomous_verified_link_compile.pdf.json'
+    if os.path.exists(json_file):
+        with open(json_file, 'r', encoding='utf-8') as f:
+            variants = json.load(f)
+
+        ind_var = len([v for v in variants if v.get('country') == 'India'])
+        int_var = len(variants) - ind_var
+
+        data['variant_category']['Indian Variants'] = ind_var
+        data['variant_category']['International Variants'] = int_var
+        data['variant_category']['Total Variants'] = len(variants)
+
+        # Pivot by domain
+        domains = {}
+        for v in variants:
+            d = v.get('domain', 'Unknown')
+            if d not in domains:
+                domains[d] = {'Total': 0, 'Indian': 0, 'International': 0}
+            domains[d]['Total'] += 1
+            if v.get('country') == 'India':
+                domains[d]['Indian'] += 1
+            else:
+                domains[d]['International'] += 1
+        data['domain_pivot'] = domains
+
+    return data
+
+
 @app.route("/api/analytics", methods=["GET"])
 @app.route("/api/analytics.json", methods=["GET"])
 def api_analytics():
     _refresh_courses_if_stale()
-    # Attempt to load and parse analytics data
     try:
-        data = {
-            "course_category": {},
-            "variant_category": {},
-            "pricing_category": {},
-            "domain_pivot": {},
-            "country_pivot": {}
-        }
-        
-        # 1. Parse CombinedWork.xlsx
-        if os.path.exists('CombinedWork.xlsx'):
-            xl = pd.ExcelFile('CombinedWork.xlsx')
-            dfs = [xl.parse(s).assign(Country=s) for s in xl.sheet_names]
-            df = pd.concat(dfs)
-            df = df.dropna(subset=['Course name'])
-            
-            # Country Count
-            country_counts = df['Country'].value_counts().to_dict()
-            data['country_pivot'] = country_counts
-
-            # Academic credential mix — DEGREE LEVELS ONLY.
-            # Geography (Indian vs International) is shown elsewhere (split
-            # visual + Geography sub-tab); it must not pollute the credential
-            # doughnut. Labels are canonical and agree with normalize_domain()
-            # so the Analytics credential chart and the Dashboard breakdown match.
-            def get_level(ctype):
-                c = str(ctype).lower().replace('gradiuate', 'graduate').strip()
-                if 'post graduate diploma' in c or 'post grad diploma' in c or 'graduate diploma' in c:
-                    return "Post Graduate Diploma"
-                if 'post graduate certificate' in c or 'post grad certificate' in c or 'post grad cert' in c:
-                    return "Post Graduate Certificate"
-                if 'bachelor' in c or c == 'ug' or 'undergrad' in c:
-                    return "Bachelor's Degree"
-                if 'master' in c or 'pg' in c:
-                    return "Master's Degree"
-                if 'diploma' in c:
-                    return "Diploma"
-                if 'cert' in c:
-                    return "Certificate"
-                return "Other"
-
-            levels = df['Course Type'].apply(get_level).value_counts().to_dict()
-            for k, v in levels.items():
-                if k != 'Other':
-                    data['course_category'][k] = int(v)
-
-            # Pricing — calibrated cost-access intelligence (INR).
-            # Old code matched any fee containing the digit "0" → ~everything.
-            # Now: parse the numeric fee (strip ₹/commas), bucket into 4 tiers.
-            import re as _re
-            def parse_fee_tier(fee):
-                s = str(fee).lower()
-                if 'free' in s:
-                    return 'Free'
-                m = _re.search(r'[\d][\d,]*(?:\.\d+)?', str(fee))
-                if not m:
-                    return None
-                try:
-                    val = float(m.group(0).replace(',', ''))
-                except ValueError:
-                    return None
-                if val <= 0:
-                    return 'Free'
-                if val <= 50000:
-                    return 'Affordable'
-                if val <= 200000:
-                    return 'Mid'
-                return 'Premium'
-
-            pricing = {'Free': 0, 'Affordable': 0, 'Mid': 0, 'Premium': 0}
-            for fee in df['Fees'].tolist():
-                tier = parse_fee_tier(fee)
-                if tier:
-                    pricing[tier] = pricing.get(tier, 0) + 1
-            data['pricing_category'] = pricing
-
-        # 2. Parse Variants (link_compile.pdf.json)
-        json_file = 'autonomous_verified_link_compile.pdf.json'
-        if os.path.exists(json_file):
-            with open(json_file, 'r', encoding='utf-8') as f:
-                variants = json.load(f)
-            
-            ind_var = len([v for v in variants if v.get('country') == 'India'])
-            int_var = len(variants) - ind_var
-            
-            data['variant_category']['Indian Variants'] = ind_var
-            data['variant_category']['International Variants'] = int_var
-            data['variant_category']['Total Variants'] = len(variants)
-            
-            # Pivot by domain
-            domains = {}
-            for v in variants:
-                d = v.get('domain', 'Unknown')
-                if d not in domains:
-                    domains[d] = {'Total': 0, 'Indian': 0, 'International': 0}
-                domains[d]['Total'] += 1
-                if v.get('country') == 'India':
-                    domains[d]['Indian'] += 1
-                else:
-                    domains[d]['International'] += 1
-            data['domain_pivot'] = domains
-
-        return jsonify({"status": "success", "data": data})
+        return jsonify({"status": "success", "data": build_analytics_data()})
     except Exception as e:
         import traceback
         return jsonify({"status": "error", "message": str(e), "trace": traceback.format_exc()})
