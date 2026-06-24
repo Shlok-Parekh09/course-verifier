@@ -65,7 +65,7 @@ jobs:
         with:
           name: verification-results
           path: |
-            *.pdf
+            autonomous_verified_*.pdf
             autonomous_verified_*.json
             master_dashboard_results.json
             CombinedWork.xlsx
