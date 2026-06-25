@@ -262,7 +262,6 @@ COURSE_SUB_TYPES = {
     "mode_mismatch": "Mode Mismatch",
     "language_mismatch": "Language Mismatch",
     "skills_mismatch": "Skills Mismatch",
-    "course_discontinued": "Course Discontinued",
     "course_replaced": "Course Replaced / Redirected",
     "wrong_url": "Wrong URL (Homepage/Unrelated)",
     "multiple_mismatches": "Multiple Attribute Mismatches",
@@ -323,8 +322,6 @@ def classify_issue(course, reason="", is_hard_error=False, web_status="FALSE", m
             for key, sub in field_map.items():
                 if key in first_fail:
                     return ISSUE_CATEGORY_COURSE, sub, ""
-        if "discontinued" in reason_l or "no longer" in reason_l:
-            return ISSUE_CATEGORY_COURSE, "course_discontinued", ""
         if "replaced" in reason_l or "redirected" in reason_l:
             return ISSUE_CATEGORY_COURSE, "course_replaced", ""
         if "wrong url" in reason_l or "homepage" in reason_l or "unrelated" in reason_l:
@@ -7316,7 +7313,78 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
 
                     course['country_verified'] = web_country
                     course['country_match'] = country_match
-                    
+
+                    # ── Indian College University Background Search ──
+                    # If the course is from an Indian college (not a university),
+                    # search Google to find which university that college is
+                    # affiliated to for this specific course. If the PDF's
+                    # university does NOT match the found university, set
+                    # uni_match = False and state that the college is not
+                    # affiliated to the claimed university.
+                    pdf_country_lower = str(course.get('country', '')).lower()
+                    course_uni_lower = str(course_uni_check or '').lower()
+                    is_indian_college_bg = (
+                        'india' in pdf_country_lower and
+                        any(w in course_uni_lower for w in ['college', 'institute', 'school', 'academy']) and
+                        not any(w in course_uni_lower for w in ['university', 'iit ', 'iim ', 'nit ', 'iiit '])
+                    )
+                    if is_indian_college_bg:
+                        course_name_short = str(course.get('name', ''))[:80]
+                        print(f"    -> [Indian College Check] Searching affiliation for '{course_uni_check}' (course: {course_name_short})...")
+                        try:
+                            from googlesearch import search as g_search
+                            g_query = f'"{course_uni_check}" is affiliated to which university for the course "{course_name_short}"'
+                            g_results_bg = []
+                            for j, g_url in enumerate(g_search(g_query, num_results=3, sleep_interval=1, advanced=True)):
+                                if hasattr(g_url, 'description'):
+                                    g_results_bg.append(str(g_url.title) + " " + str(g_url.description))
+                                else:
+                                    g_results_bg.append(str(g_url))
+                            g_text_bg = " ".join(g_results_bg)[:2500]
+
+                            if g_text_bg.strip():
+                                llm = get_llm_manager()
+                                prompt = (
+                                    f"A Google search was done for: \"{course_uni_check}\" is affiliated to which university for the course \"{course_name_short}\".\n\n"
+                                    f"Search snippets:\n{g_text_bg}\n\n"
+                                    f"Based on these snippets, what is the actual university that '{course_uni_check}' is affiliated to or part of, for this specific course?\n"
+                                    f"Respond in EXACTLY this format:\n"
+                                    f"ACTUAL_UNIVERSITY: <university name or UNKNOWN>\n"
+                                    f"CONFIDENCE: <HIGH/MEDIUM/LOW>"
+                                )
+                                res_bg = llm.generate(prompt, temperature=0.0)
+                                actual_uni = "UNKNOWN"
+                                confidence = "LOW"
+                                for line in str(res_bg).split('\n'):
+                                    if 'ACTUAL_UNIVERSITY:' in line.upper():
+                                        actual_uni = line.split(':', 1)[-1].strip()
+                                    if 'CONFIDENCE:' in line.upper():
+                                        confidence = line.split(':', 1)[-1].strip().upper()
+
+                                if actual_uni and actual_uni.upper() != 'UNKNOWN' and confidence in ('HIGH', 'MEDIUM'):
+                                    print(f"    -> [Indian College Check] Found affiliation: {actual_uni} (confidence: {confidence})")
+                                    # Check if the PDF's university matches the found university
+                                    from difflib import SequenceMatcher
+                                    sim = SequenceMatcher(None, course_uni_lower, actual_uni.lower()).ratio()
+                                    if sim < 0.45 and actual_uni.lower() not in course_uni_lower and course_uni_lower not in actual_uni.lower():
+                                        # Mismatch: college is NOT affiliated to the PDF's university
+                                        uni_match = False
+                                        uni_detail_msg = (
+                                            f"The college '{course_uni_check}' is not affiliated to the stated university for this course. "
+                                            f"It is affiliated to '{actual_uni}'."
+                                        )
+                                        llm_unid = uni_detail_msg
+                                        if not uni_match:
+                                            course['disc_reason'] = (course.get('disc_reason', '') or '').strip()
+                                            if 'University' not in course['disc_reason']:
+                                                course['disc_reason'] = (course['disc_reason'] + ' | University mismatch: ' + uni_detail_msg).strip(' |')
+                                        print(f"    -> [Indian College Check] MISMATCH! PDF says '{course_uni_check}' but actual is '{actual_uni}'. Setting uni_match=False.")
+                                    else:
+                                        print(f"    -> [Indian College Check] Affiliation matches PDF university (sim={sim:.2f}).")
+                                else:
+                                    print(f"    -> [Indian College Check] Could not determine affiliation (actual={actual_uni}, conf={confidence}).")
+                        except Exception as e:
+                            print(f"    -> [Indian College Check] Background search failed: {e}")
 
                     # Swayam/NPTEL cost override
                     is_nptel_swayam = "nptel.ac.in" in driver.current_url.lower() or "swayam.gov.in" in driver.current_url.lower()
@@ -7354,11 +7422,13 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         mode_match = mode_equiv if mode_equiv is not None else False
                         print(f"    -> [Heuristic] Platform '{clean_url.split('/')[0]}' automatically confirmed as Online Mode. Match is now {mode_match}")
                         
-                    if 'edx.org' in clean_url and 'audit course' in page_text.lower():
+                    if 'edx.org' in clean_url and 'audit' in page_text.lower():
                         web_cost = "Free to Audit"
+                        # edX audit detected: Free Box should be True
+                        course['has_free_box'] = True
                         cost_match = 'free' in str(course.get('cost', '')).lower() or course.get('has_free_box', False)
-                        l_costd = web_cost
-                        print(f"    -> [Heuristic] edX course with 'Audit Course' detected on page. Forcing cost to Free to Audit.")
+                        l_costd = "The course is free to audit."
+                        print(f"    -> [Heuristic] edX course with 'Audit' detected on page. Setting Free Box=True and cost to Free to Audit.")
                         
                     if course_uni_check:
                         words = [w for w in re.split(r'\W+', course_uni_check.lower()) if len(w) > 4 and w not in ['university', 'institute', 'technology', 'science', 'national', 'state', 'college', 'open']]

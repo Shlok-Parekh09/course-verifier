@@ -40,8 +40,8 @@ let lastBarHash = '';
 let firstDataFetch = true;
 
 // ── Tab filter state (real, client-side, never fabricated) ───────
-let verificationFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', attr: 'all' };
-let courseFilter       = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', qs: 'any', nirf: 'any' };
+let verificationFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', attr: 'all', courseType: 'all' };
+let courseFilter       = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', qs: 'any', nirf: 'any', courseType: 'all' };
 
 // ── Domain category by course idx (ID number) ───────────────────
 // These ranges are fixed per the curriculum structure.
@@ -112,7 +112,9 @@ const SUBTYPE_LABELS = {
     'duration_mismatch': 'Duration Mismatch', 'university_mismatch': 'University Mismatch',
     'country_mismatch': 'Country Mismatch', 'mode_mismatch': 'Mode Mismatch',
     'language_mismatch': 'Language Mismatch', 'skills_mismatch': 'Skills Mismatch',
-    'name_mismatch': 'Name Mismatch', 'course_discontinued': 'Discontinued',
+    'name_mismatch': 'Name Mismatch', 'qs_mismatch': 'QS Ranking Mismatch',
+    'nirf_mismatch': 'NIRF Ranking Mismatch', 'free_box_mismatch': 'Free Box Mismatch',
+    'scholarship_box_mismatch': 'Scholarship Box Mismatch',
     'course_replaced': 'Replaced', 'wrong_url': 'Wrong URL', 'perfect_match': 'Perfect Match'
 };
 let barChart, mapChart, lineChart;
@@ -175,8 +177,12 @@ function switchTab(targetId) {
     const link = document.querySelector(`#nav-tabs a[data-target="${targetId}"]`);
     if (link) link.classList.add('active');
     if (targetId === 'tab-courses') loadAllCourses();
-    // Re-fetch analytics every time the tab is opened so data is always fresh
-    if (targetId === 'tab-analytics') fetchAnalytics();
+    // Re-fetch analytics every time the tab is opened so data is always fresh.
+    // Also ensure allCoursesData is loaded for drilldown accuracy.
+    if (targetId === 'tab-analytics') {
+        if (allCoursesData.length === 0) loadAllCourses(true);
+        fetchAnalytics();
+    }
 }
 
 function initTabs() {
@@ -591,7 +597,24 @@ function getFilteredVerificationData() {
         if (f.country !== 'all' && c.country !== f.country) return false;
         // Domain filter uses idx-based category
         if (f.domain !== 'all' && getDomainCategory(c.id) !== f.domain) return false;
-        if (f.attr !== 'all') { const key = ATTR_TO_MATCH[f.attr]; if (key && c[key] !== false) return false; }
+        // Course type filter (Bachelors, Masters, Diploma, etc.)
+        if (f.courseType !== 'all' && normalizeDomain(c.domain) !== f.courseType) return false;
+        if (f.attr !== 'all') {
+            // Check both basic attributes and QS/NIRF from pdf_table
+            if (ATTR_TO_MATCH[f.attr]) {
+                const key = ATTR_TO_MATCH[f.attr];
+                if (key && c[key] !== false) return false;
+            } else {
+                // QS/NIRF/Free Box — check pdf_table rows
+                const pdfTable = c.pdf_table || [];
+                const attrLower = f.attr.toLowerCase();
+                const hasMismatch = pdfTable.some(r => {
+                    const rowAttr = (r.attribute || '').toLowerCase();
+                    return rowAttr.includes(attrLower.replace(' ranked', '').replace(' box', '')) && r.status === 'FALSE';
+                });
+                if (!hasMismatch) return false;
+            }
+        }
         if (q && !`${c.name} ${c.university || ''} ${c.country || ''} ${c.status || ''} ${c.disc_reason || ''} ${getDomainCategory(c.id)} ${normalizeDomain(c.domain)}`.toLowerCase().includes(q)) return false;
         return true;
     });
@@ -607,6 +630,8 @@ function getFilteredCourseData() {
         if (f.country !== 'all' && c.country !== f.country) return false;
         // Domain filter uses idx-based category
         if (f.domain !== 'all' && getDomainCategory(c.id) !== f.domain) return false;
+        // Course type filter (Bachelors, Masters, Diploma, etc.)
+        if (f.courseType !== 'all' && normalizeDomain(c.domain) !== f.courseType) return false;
         if (f.qs === 'yes' && !c.has_qs_badge) return false;
         if (f.qs === 'no' && c.has_qs_badge) return false;
         if (f.nirf === 'yes' && !c.has_nirf_badge) return false;
@@ -619,14 +644,14 @@ function getFilteredCourseData() {
 function syncVerificationFilters() {
     const f = verificationFilter;
     const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
-    set('vf-search', f.search); set('vf-status', f.status); set('vf-category', f.category);
+    set('vf-search', f.search); set('vf-course-type', f.courseType); set('vf-status', f.status); set('vf-category', f.category);
     set('vf-subtype', f.subtype); set('vf-country', f.country); set('vf-domain', f.domain); set('vf-attr', f.attr);
 }
 
 function syncCourseFilters() {
     const f = courseFilter;
     const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
-    set('cf-search', f.search); set('cf-status', f.status); set('cf-category', f.category);
+    set('cf-search', f.search); set('cf-course-type', f.courseType); set('cf-status', f.status); set('cf-category', f.category);
     set('cf-subtype', f.subtype); set('cf-country', f.country); set('cf-domain', f.domain);
     set('cf-qs', f.qs); set('cf-nirf', f.nirf);
 }
@@ -635,14 +660,14 @@ function applyVerificationFilter() { currentRecentPage = 1; renderRecentPage(); 
 function applyCourseFilter() { currentPage = 1; renderCoursesPage(); }
 
 function jumpToVerification(partial) {
-    verificationFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', attr: 'all', ...partial };
+    verificationFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', attr: 'all', courseType: 'all', ...partial };
     syncVerificationFilters();
     switchTab('tab-verification');
     applyVerificationFilter();
 }
 
 function jumpToCourses(partial) {
-    courseFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', qs: 'any', nirf: 'any', ...partial };
+    courseFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', qs: 'any', nirf: 'any', courseType: 'all', ...partial };
     syncCourseFilters();
     switchTab('tab-courses');
     applyCourseFilter();
@@ -664,6 +689,7 @@ function initFilters() {
         el.addEventListener('change', handler);
     };
     wire('vf-search', 'search', verificationFilter, applyVerificationFilter, true);
+    wire('vf-course-type', 'courseType', verificationFilter, applyVerificationFilter, false);
     wire('vf-status', 'status', verificationFilter, applyVerificationFilter, false);
     wire('vf-category', 'category', verificationFilter, applyVerificationFilter, false);
     wire('vf-subtype', 'subtype', verificationFilter, applyVerificationFilter, false);
@@ -672,6 +698,7 @@ function initFilters() {
     wire('vf-attr', 'attr', verificationFilter, applyVerificationFilter, false);
 
     wire('cf-search', 'search', courseFilter, applyCourseFilter, true);
+    wire('cf-course-type', 'courseType', courseFilter, applyCourseFilter, false);
     wire('cf-status', 'status', courseFilter, applyCourseFilter, false);
     wire('cf-category', 'category', courseFilter, applyCourseFilter, false);
     wire('cf-subtype', 'subtype', courseFilter, applyCourseFilter, false);
@@ -681,11 +708,11 @@ function initFilters() {
     wire('cf-nirf', 'nirf', courseFilter, applyCourseFilter, false);
 
     document.getElementById('vf-reset')?.addEventListener('click', () => {
-        verificationFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', attr: 'all' };
+        verificationFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', attr: 'all', courseType: 'all' };
         syncVerificationFilters(); applyVerificationFilter();
     });
     document.getElementById('cf-reset')?.addEventListener('click', () => {
-        courseFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', qs: 'any', nirf: 'any' };
+        courseFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', qs: 'any', nirf: 'any', courseType: 'all' };
         syncCourseFilters(); applyCourseFilter();
     });
 
@@ -695,7 +722,7 @@ function initFilters() {
             const partial = {};
             if (card.dataset.status) partial.status = card.dataset.status;
             if (card.dataset.category) partial.category = card.dataset.category;
-            verificationFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', attr: 'all', ...partial };
+            verificationFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', attr: 'all', courseType: 'all', ...partial };
             syncVerificationFilters(); applyVerificationFilter();
         });
     });
@@ -704,7 +731,7 @@ function initFilters() {
             const partial = {};
             if (card.dataset.status) partial.status = card.dataset.status;
             if (card.dataset.category) partial.category = card.dataset.category;
-            courseFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', qs: 'any', nirf: 'any', ...partial };
+            courseFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', qs: 'any', nirf: 'any', courseType: 'all', ...partial };
             syncCourseFilters(); applyCourseFilter();
         });
     });
@@ -771,10 +798,10 @@ document.getElementById('recent-next-page')?.addEventListener('click', () => {
 // ================================================================
 //  ALL COURSES
 // ================================================================
-async function loadAllCourses() {
+async function loadAllCourses(force = false) {
     const tbody = document.getElementById('all-courses-body');
-    if (allCoursesData.length > 0) { renderCoursesPage(); return; }
-    if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="empty-state">Loading…</td></tr>';
+    if (allCoursesData.length > 0 && !force) { renderCoursesPage(); return; }
+    if (tbody && (force || allCoursesData.length === 0)) tbody.innerHTML = '<tr><td colspan="8" class="empty-state">Loading…</td></tr>';
     try {
         const res = await fetch(API_BASE_URL + '/api/courses.json');
         const data = await res.json();
@@ -953,8 +980,10 @@ async function solveCourse(courseId, attr, unsolve) {
             } else {
                 for (const a of falseRows) if (!c.solved_attrs.includes(a)) c.solved_attrs.push(a);
             }
-            c.issue_category = unsolve ? 'course_issue' : 'verified';
-            c.status = unsolve ? 'Discrepancy' : 'Verified';
+            const allFalseCount = falseRows.length;
+            const unsolvedCount = falseRows.filter(a => !c.solved_attrs.includes(a)).length;
+            c.issue_category = unsolvedCount === 0 ? 'verified' : 'course_issue';
+            c.status = unsolvedCount === 0 ? 'Verified' : 'Discrepancy';
         } else {
             if (unsolve) {
                 c.solved_attrs = c.solved_attrs.filter(a => a !== attr);
@@ -1422,8 +1451,8 @@ function renderGeoTable(search = '') {
 }
 
 function geoRowDrilldown(countryName, cnt) {
-    const recent = globalData?.recent || [];
-    const matches = recent.filter(r =>
+    const sourceData = allCoursesData.length > 0 ? allCoursesData : (globalData?.recent || []);
+    const matches = sourceData.filter(r =>
         (r.country || '').toLowerCase().includes(countryName.toLowerCase()) ||
         countryName.toLowerCase().includes((r.country || '').toLowerCase())
     );
@@ -1478,10 +1507,10 @@ function populateDomainTab(domainPivot) {
     if (tbody) tbody.innerHTML = entries.map(([name, v]) => {
         const total = v.Total || 0, indian = v.Indian || 0, intl = v.International || 0;
         const ip = total ? Math.round(indian / total * 100) : 50;
-        // Compute from recent
-        const domRecent = recent.filter(r => (r.domain || '').toLowerCase().includes(name.toLowerCase()));
-        const domVerif = domRecent.filter(r => (r.status || '').toLowerCase() === 'verified').length;
-        const domIssues = domRecent.filter(r => (r.status || '').toLowerCase() === 'discrepancy').length;
+        // Compute verified/issues from ALL courses (not just recent subset)
+        const domAll = allCoursesData.filter(r => normalizeDomain(r.domain || '') === name);
+        const domVerif = domAll.filter(r => (r.status || '').toLowerCase() === 'verified').length;
+        const domIssues = domAll.filter(r => (r.status || '').toLowerCase() === 'discrepancy').length;
         return `<tr class="clickable-row" onclick="domainRowDrilldown('${name.replace(/'/g, "\\'")}')">
             <td><div style="font-weight:800;color:var(--text-1);">${escHtml(name)}</div>
                 <div style="font-size:0.68rem;color:var(--text-3);text-transform:uppercase;letter-spacing:0.06em;margin-top:2px;">Click to explore</div></td>
@@ -1496,9 +1525,9 @@ function populateDomainTab(domainPivot) {
 }
 
 function domainRowDrilldown(domainName) {
-    const recent = globalData?.recent || [];
-    const matches = recent.filter(r =>
-        (r.domain || '').toLowerCase().includes(domainName.toLowerCase()));
+    const sourceData = allCoursesData.length > 0 ? allCoursesData : (globalData?.recent || []);
+    const matches = sourceData.filter(r =>
+        normalizeDomain(r.domain || '') === domainName);
     const rows = matches.length ? matches.map((r, i) => `<tr>
         <td style="color:var(--text-3);">${i + 1}</td>
         <td class="course-name-cell" style="font-weight:600;" title="${escHtml(r.name || r.course_name || '')}">${escHtml(r.name || r.course_name || '—')}</td>
@@ -1562,9 +1591,12 @@ function populateVerificationTab(stats, recent) {
         });
     }
 
-    // Discrepancy reasons
+    // Discrepancy reasons — use course_issue_list from /api/data.json when
+    // available (computed over ALL course_issue courses, not just the recent
+    // page subset), falling back to the recent list.
+    const courseIssues = globalData?.course_issue_list || recent;
     const reasons = {};
-    recent.forEach(r => {
+    courseIssues.forEach(r => {
         if (r.disc_reason || r.reason) {
             const key = (r.disc_reason || r.reason || '').trim();
             if (key) reasons[key] = (reasons[key] || 0) + 1;
@@ -1626,30 +1658,44 @@ function populateVerificationTab(stats, recent) {
 // merging it with the live globalData. Pure/synchronous so the cached path
 // can paint instantly on tab re-open. Extracted from the old fetchAnalytics.
 function renderAnalytics(d) {
-    // Always-available data from the dashboard
+    // Always-available data from the dashboard (live /api/data.json)
     const recent = globalData?.recent || [];
     const stats = globalData?.stats || {};
     const countryCounts = globalData?.country_counts || {};
     const domainCounts = globalData?.domain_counts || {};
 
-    // Merge: prefer analytics data; fall back to globalData equivalents
+    // Analytics data (from /api/analytics.json) is now built from the same
+    // global_courses as /api/data.json, so they should always agree.
+    // Fall back to globalData equivalents ONLY if analytics is missing a section.
     const effectiveCountryPivot = Object.keys(d.country_pivot || {}).length > 0
         ? d.country_pivot
         : Object.fromEntries(Object.entries(countryCounts).filter(([k]) => isValidCountry(k)));
 
     let effectiveDomainPivot = d.domain_pivot || {};
-    if (Object.keys(effectiveDomainPivot).length === 0 && Object.keys(domainCounts).length > 0) {
+    if (Object.keys(effectiveDomainPivot).length === 0) {
+        // Build from ALL courses data (not just recent) for accurate counts
         effectiveDomainPivot = {};
-        Object.entries(domainCounts).forEach(([dom, total]) => {
-            const dr = recent.filter(r => (r.domain || '').toLowerCase().includes(dom.toLowerCase()));
-            // Real Indian count from the data only — never an assumed percentage.
-            const ind = dr.filter(r => (r.country || '').toLowerCase().includes('india')).length;
-            effectiveDomainPivot[dom] = { Total: total, Indian: ind, International: total - ind };
+        allCoursesData.forEach(c => {
+            const dom = normalizeDomain(c.domain || '');
+            if (!dom || dom === 'Other') return;
+            if (!effectiveDomainPivot[dom]) effectiveDomainPivot[dom] = { Total: 0, Indian: 0, International: 0 };
+            effectiveDomainPivot[dom].Total++;
+            if ((c.country || '').toLowerCase().includes('india')) effectiveDomainPivot[dom].Indian++;
+            else effectiveDomainPivot[dom].International++;
         });
     }
 
+    // Course category: prefer analytics payload; fall back to allCoursesData
     const effectiveCourseCategory = Object.keys(d.course_category || {}).length > 0
-        ? d.course_category : domainCounts;
+        ? d.course_category
+        : (() => {
+            const cc = {};
+            allCoursesData.forEach(c => {
+                const lvl = normalizeDomain(c.domain || '');
+                if (lvl && lvl !== 'Other') cc[lvl] = (cc[lvl] || 0) + 1;
+            });
+            return cc;
+        })();
 
     // Populate all sections
     populateAnalyticsKPIs(d, stats, countryCounts);
@@ -1657,7 +1703,7 @@ function renderAnalytics(d) {
     populateCredentialChart(effectiveCourseCategory);
     populatePricingChart(d.pricing_category);
 
-    // India vs World - always from country_counts (truth)
+    // India vs World - always from country_counts (truth from /api/data.json)
     const realTotal = stats.total || Object.values(countryCounts).reduce((s, v) => s + v, 0) || 1;
     const indiaTotal = Object.entries(countryCounts)
         .filter(([k]) => k.toLowerCase().includes('india'))
@@ -1752,15 +1798,38 @@ function initUpload() {
     input.addEventListener('change', async () => {
         if (!input.files.length) return;
         if (!isLocalEnv) { alert('Upload is only available on the local dashboard.'); input.value = ''; return; }
+        // Prompt for password before uploading
+        const password = prompt('Enter password to upload PDFs:');
+        if (!password) { input.value = ''; return; }
         const orig = label.textContent;
         label.textContent = 'Uploading…';
         const fd = new FormData();
+        fd.append('password', password);
         for (const f of input.files) fd.append('files[]', f);
         try {
             const res = await fetch(API_BASE_URL + '/api/upload', { method: 'POST', body: fd });
+            if (res.status === 403) {
+                alert('Incorrect password. Upload denied.');
+                input.value = '';
+                label.textContent = orig;
+                return;
+            }
             const result = await res.json();
-            alert(result.status === 'success' ? `✓ ${result.message}` : `✗ ${result.message}`);
-            if (result.status === 'success') { allCoursesData = []; fetchData(); }
+            if (result.status === 'success') {
+                alert(`✓ ${result.message}`);
+                // Merge updated courses directly into allCoursesData for instant
+                // visibility, then force a full data refresh.
+                const updatedIds = new Set((result.verified_courses || []).map(c => c.id));
+                allCoursesData = allCoursesData.map(c =>
+                    updatedIds.has(c.id) ? result.verified_courses.find(u => u.id === c.id) : c
+                );
+                fetchData();
+                // Also reload the full courses list from the server so the
+                // All Courses tab reflects the new data immediately.
+                loadAllCourses();
+            } else {
+                alert(`✗ ${result.message}`);
+            }
         } catch (e) { alert('Upload failed.'); }
         finally { label.textContent = orig; input.value = ''; }
     });
@@ -1806,7 +1875,8 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchData().then(() => fetchAnalytics());
 
     // Periodic refresh for dashboard data; analytics refreshes on tab click.
-    // 5s poll keeps every viewer (multiple users) in sync in near-real time —
-    // any Solved action is persisted server-side and shows up here within 5s.
-    setInterval(fetchData, 5000);
+    // 10s poll (down from 5s) — solves are instant via optimistic UI, and the
+    // backend now caches the payload so each poll is a cheap cache hit.
+    // The poll's only job is multi-user sync (picking up changes from others).
+    setInterval(fetchData, 10000);
 });

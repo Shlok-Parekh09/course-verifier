@@ -1,0 +1,17 @@
+import sqlite3
+conn = sqlite3.connect('rankings.db')
+c = conn.cursor()
+c.execute('SELECT COUNT(*) FROM qs_ranking')
+print('QS count:', c.fetchone()[0])
+c.execute('SELECT COUNT(*) FROM nirf_ranking')
+print('NIRF count:', c.fetchone()[0])
+c.execute("SELECT university FROM qs_ranking WHERE LOWER(university) LIKE '%anna%'")
+print('QS Anna:', [r[0] for r in c.fetchall()])
+c.execute("SELECT university FROM nirf_ranking WHERE LOWER(university) LIKE '%anna%'")
+print('NIRF Anna:', [r[0] for r in c.fetchall()])
+# Check SVCET / Sri Venkateswara
+c.execute("SELECT university FROM qs_ranking WHERE LOWER(university) LIKE '%venkate%'")
+print('QS Venkate:', [r[0] for r in c.fetchall()])
+c.execute("SELECT university FROM nirf_ranking WHERE LOWER(university) LIKE '%venkate%'")
+print('NIRF Venkate:', [r[0] for r in c.fetchall()])
+conn.close()

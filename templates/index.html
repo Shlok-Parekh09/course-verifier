@@ -207,6 +207,19 @@
                 <div class="filter-bar" id="verification-filters">
                     <label for="vf-search" class="vh">Search by name or university</label>
                     <input type="text" id="vf-search" class="filter-input" placeholder="🔍 Search name / university…">
+                    <label for="vf-course-type" class="vh">Course type filter</label>
+                    <select id="vf-course-type" class="filter-select">
+                        <option value="all">All Course Types</option>
+                        <option value="Bachelor's Degree">Bachelor's Degree</option>
+                        <option value="Master's Degree">Master's Degree</option>
+                        <option value="Post Graduate Diploma">Post Graduate Diploma</option>
+                        <option value="Post Graduate Certificate">Post Graduate Certificate</option>
+                        <option value="Diploma">Diploma</option>
+                        <option value="Certificate">Certificate</option>
+                        <option value="Free to Audit">Free to Audit</option>
+                        <option value="High Value Low Cost">High Value Low Cost</option>
+                        <option value="Free">Free</option>
+                    </select>
                     <label for="vf-status" class="vh">Status filter</label>
                     <select id="vf-status" class="filter-select">
                         <option value="all">All Status</option>
@@ -240,6 +253,10 @@
                         <option value="Country">Country mismatch</option>
                         <option value="University">University mismatch</option>
                         <option value="Skills">Skills mismatch</option>
+                        <option value="QS Ranked">QS mismatch</option>
+                        <option value="NIRF Ranked">NIRF mismatch</option>
+                        <option value="Free Box">Free Box mismatch</option>
+                        <option value="Scholarship Box">Scholarship Box mismatch</option>
                     </select>
                     <button id="vf-reset" class="btn-pg">Reset</button>
                     <span id="vf-count" class="filter-count">—</span>
@@ -297,6 +314,19 @@
                 <div class="filter-bar" id="course-filters">
                     <label for="cf-search" class="vh">Search by name, university or domain</label>
                     <input type="text" id="cf-search" class="filter-input" placeholder="🔍 Search name / university / domain…">
+                    <label for="cf-course-type" class="vh">Course type filter</label>
+                    <select id="cf-course-type" class="filter-select">
+                        <option value="all">All Course Types</option>
+                        <option value="Bachelor's Degree">Bachelor's Degree</option>
+                        <option value="Master's Degree">Master's Degree</option>
+                        <option value="Post Graduate Diploma">Post Graduate Diploma</option>
+                        <option value="Post Graduate Certificate">Post Graduate Certificate</option>
+                        <option value="Diploma">Diploma</option>
+                        <option value="Certificate">Certificate</option>
+                        <option value="Free to Audit">Free to Audit</option>
+                        <option value="High Value Low Cost">High Value Low Cost</option>
+                        <option value="Free">Free</option>
+                    </select>
                     <label for="cf-status" class="vh">Status filter</label>
                     <select id="cf-status" class="filter-select">
                         <option value="all">All Status</option>
@@ -665,6 +695,6 @@
     </div>
 </div>
 
-<script src="/static/app.js?v=12"></script>
+<script src="/static/app.js?v=13"></script>
 </body>
 </html>
