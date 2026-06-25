@@ -1798,30 +1798,12 @@ function initUpload() {
     input.addEventListener('change', async () => {
         if (!input.files.length) return;
         if (!isLocalEnv) { alert('Upload is only available on the local dashboard.'); input.value = ''; return; }
-        // Only prompt for password if we haven't saved it this session
-        let password = sessionStorage.getItem('upload_password');
-        if (!password) {
-            password = prompt('Enter password to upload PDFs:');
-            if (!password) { input.value = ''; return; }
-        }
-        
         const orig = label.textContent;
         label.textContent = 'Uploading…';
         const fd = new FormData();
-        fd.append('password', password);
         for (const f of input.files) fd.append('files[]', f);
         try {
             const res = await fetch(API_BASE_URL + '/api/upload', { method: 'POST', body: fd });
-            if (res.status === 403) {
-                alert('Incorrect password. Upload denied.');
-                sessionStorage.removeItem('upload_password');
-                input.value = '';
-                label.textContent = orig;
-                return;
-            }
-            
-            // Password was correct, remember it for the session
-            sessionStorage.setItem('upload_password', password);
             const result = await res.json();
             if (result.status === 'success') {
                 // ── Instant KPI update from the response (no second fetch needed) ──

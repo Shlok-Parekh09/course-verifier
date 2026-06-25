@@ -1798,22 +1798,12 @@ function initUpload() {
     input.addEventListener('change', async () => {
         if (!input.files.length) return;
         if (!isLocalEnv) { alert('Upload is only available on the local dashboard.'); input.value = ''; return; }
-        // Prompt for password before uploading
-        const password = prompt('Enter password to upload PDFs:');
-        if (!password) { input.value = ''; return; }
         const orig = label.textContent;
         label.textContent = 'Uploading…';
         const fd = new FormData();
-        fd.append('password', password);
         for (const f of input.files) fd.append('files[]', f);
         try {
             const res = await fetch(API_BASE_URL + '/api/upload', { method: 'POST', body: fd });
-            if (res.status === 403) {
-                alert('Incorrect password. Upload denied.');
-                input.value = '';
-                label.textContent = orig;
-                return;
-            }
             const result = await res.json();
             if (result.status === 'success') {
                 alert(`✓ ${result.message}`);

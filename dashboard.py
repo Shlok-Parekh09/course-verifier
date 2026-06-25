@@ -1330,13 +1330,6 @@ def api_analytics():
 @app.route("/api/upload", methods=["POST", "OPTIONS"])
 def upload_data():
     if request.method == "OPTIONS": return "", 204
-    # Password protection — compare SHA-256 hash so the plaintext is never in code.
-    # Nobody can override this via .env or any other file.
-    _UPLOAD_PW_HASH = '8e9d8af1336cfc6a67b5ad47703e6d53c5506efa845c4f58abbad984a358a489'
-    password = request.form.get('password', '')
-    pw_hash = hashlib.sha256(password.encode()).hexdigest()
-    if pw_hash != _UPLOAD_PW_HASH:
-        return jsonify({"status": "error", "message": "Incorrect password. Upload requires authorization."}), 403
     if 'files[]' not in request.files:
         return jsonify({"status": "error", "message": "No files uploaded"})
         
