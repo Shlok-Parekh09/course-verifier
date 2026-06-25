@@ -54,23 +54,42 @@ ISSUE_CATEGORY_VERIFIED = "verified"
 # Initialize MongoDB
 import os
 
+# Load .env file if present (works locally and in CI; production servers
+# inject env vars directly so this is a no-op when dotenv isn't installed).
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv not installed — rely on env vars being set externally
+
 db_client = None
 db = None
 try:
     mongo_uri = os.environ.get('MONGO_URI')
+    # Fallback: read from mongo_uri.txt for local dev convenience
     if not mongo_uri and os.path.exists('mongo_uri.txt'):
         with open('mongo_uri.txt', 'r') as f:
             mongo_uri = f.read().strip()
-            
+
     if mongo_uri:
-        db_client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
+        db_client = MongoClient(
+            mongo_uri,
+            serverSelectionTimeoutMS=10000,
+            connectTimeoutMS=10000,
+            # Raised from 10s → 90s: loading 3,727 large documents over an
+            # Atlas free-tier connection routinely takes 20-40s; the old 10s
+            # limit caused every cold startup to fall back to the stale 1.json.
+            socketTimeoutMS=90000,
+            retryWrites=True,
+            w='majority',
+        )
         db_client.admin.command('ping')
         db = db_client['course_verifier']
         print("Connected to MongoDB Atlas")
     else:
-        print("No MONGO_URI found. Create 'mongo_uri.txt' with your connection string.")
+        print("WARNING: No MONGO_URI found. Set MONGO_URI env var or create 'mongo_uri.txt'.")
 except Exception as e:
-    print("MongoDB initialization failed:", e)
+    print(f"MongoDB initialization failed: {e}")
     db = None
 JSON_FILES = ["autonomous_verified_link_compile.pdf.json", "autonomous_verified_link_compile.pdf..json"]
 PERSISTENT_FILE = "1.json"
@@ -553,16 +572,18 @@ def load_courses():
         print(f"Loaded {len(global_courses)} courses locally.")
 
     # APPLY HEURISTIC TO ALL LOADED COURSES (From Mongo or Local)
-    for c in global_courses:
+    # BUG FIX: iterate over `loaded` (the freshly-fetched list) — NOT
+    # `global_courses` (the OLD in-memory list).  The atomic swap below
+    # overwrites global_courses with `loaded`, so any mutations applied to
+    # global_courses here were thrown away immediately after, meaning MongoDB
+    # courses never had their status corrected before being served.
+    _basic_match_keys = ['cost_match', 'duration_match', 'mode_match',
+                         'lang_match', 'country_match', 'uni_match', 'sk_match']
+    for c in loaded:
         # Check both disc_reason and reason since they might be labeled differently depending on the source
         desc_text = str(c.get('cost_description', '')) + " " + str(c.get('duration_description', '')) + " " + str(c.get('cost_verified', '')) + " " + str(c.get('duration_verified', '')) + " " + str(c.get('disc_reason', '')) + " " + str(c.get('reason', '')) + " " + _pdf_table_text(c)
         
         has_page_error = 'page load error' in desc_text.lower() or 'website unreachable' in desc_text.lower() or 'llm fallback' in desc_text.lower()
-        has_uni_match = c.get('uni_match') is not False
-        matched_fields_str = str(c.get('matched_fields', '[]'))
-        has_name_match = True
-        if 'matched_fields' in c and 'Name' not in matched_fields_str:
-            has_name_match = False
             
         web_status = str(c.get('web_status', '')).upper()
         
@@ -578,8 +599,11 @@ def load_courses():
         if has_page_error:
             c['issue_category'] = ISSUE_CATEGORY_WEBSITE
             c['status'] = 'Error'
-        elif is_unverified and not c.get('issue_category'):
-            # Any remaining unverified that didn't explicitly match a page error but failed to load
+        elif is_unverified and not c.get('issue_category') and not any(bool(c.get(k, False)) for k in _basic_match_keys):
+            # Only reclassify as website_issue when ALL 7 basic match flags are
+            # False (i.e. the page never loaded at all). Courses that simply
+            # haven't been categorised yet but DO have some matching fields are
+            # left as Unverified so they don't silently disappear from the count.
             c['issue_category'] = ISSUE_CATEGORY_WEBSITE
             c['status'] = 'Error'
         else:
@@ -613,6 +637,27 @@ _LOAD_TTL_SEC = 15
 _load_lock = threading.Lock()
 _refresh_in_progress = False
 analytics_thread = None
+
+def _build_analytics_in_background():
+    """Module-level builder thread loop: rebuild analytics cache in the background.
+    Must be at module level (not nested) so it can be referenced by
+    _refresh_courses_if_stale before that function has been called."""
+    while True:
+        try:
+            print("[ANABUILD] rebuilding analytics data (background)...")
+            data = build_analytics_data()
+            with _load_lock:
+                _ANALYTICS_CACHE["data"] = data
+                _ANALYTICS_CACHE["ts"] = time.time()
+                _ANALYTICS_CACHE["dirty"] = False
+                _ANALYTICS_CACHE["mtimes"] = _analytics_mtimes()
+            print("[ANABUILD] \u2713 rebuild complete.")
+        except Exception as e:
+            print(f"[ANABUILD] \u2717 error: {e}")
+            import traceback
+            traceback.print_exc()
+        time.sleep(_ANALYTICS_TTL_SEC)
+
 def _refresh_courses_if_stale():
     """Stale-while-revalidate: serve the current in-memory global_courses and
     trigger a background MongoDB reload when the cache is older than
@@ -643,25 +688,6 @@ def _refresh_courses_if_stale():
             return
         _refresh_in_progress = True
 
-    
-    def _build_analytics_in_background():
-        """Builder thread main loop: rebuild analytics data in the background."""
-        while True:
-            try:
-                print("[ANABUILD] rebuilding analytics data (background)...")
-                data = build_analytics_data()
-                with _load_lock:
-                    _ANALYTICS_CACHE["data"] = data
-                    _ANALYTICS_CACHE["ts"] = time.time()
-                    _ANALYTICS_CACHE["dirty"] = False
-                    _ANALYTICS_CACHE["mtimes"] = _analytics_mtimes()
-                print("[ANABUILD] ✓ rebuild complete.")
-            except Exception as e:
-                print(f"[ANABUILD] ✗ error: {e}")
-                import traceback
-                traceback.print_exc()
-            time.sleep(_ANALYTICS_TTL_SEC)
-    
     def _bg_reload():
         global _LAST_LOAD_TS, _refresh_in_progress
         try:
@@ -706,10 +732,10 @@ def api_debug():
 def api_data():
     _refresh_courses_if_stale()
     total_courses = len(global_courses)
-    verified = sum(1 for c in global_courses if c['status'] == 'Verified')
-    discrepancies = sum(1 for c in global_courses if c['status'] == 'Discrepancy')
-    errors = sum(1 for c in global_courses if c['status'] == 'Error')
-    unverified = sum(1 for c in global_courses if c['status'] == 'Unverified')
+    verified = sum(1 for c in global_courses if c.get('status') == 'Verified')
+    discrepancies = sum(1 for c in global_courses if c.get('status') == 'Discrepancy')
+    errors = sum(1 for c in global_courses if c.get('status') == 'Error')
+    unverified = sum(1 for c in global_courses if c.get('status') == 'Unverified')
 
     # Issue category breakdown
     website_issues = sum(1 for c in global_courses if c.get('issue_category') == ISSUE_CATEGORY_WEBSITE)
@@ -761,28 +787,28 @@ def api_data():
             elif s == 'Error':
                 st["errors"] += 1
 
-        if c['status'] == 'Discrepancy':
+        if c.get('status') == 'Discrepancy':
             discrepancy_list.append({
-                "name": c['name'],
-                "university": c['university'],
-                "reason": c['disc_reason'],
-                "domain": c['domain']
+                "name": c.get('name', ''),
+                "university": c.get('university', ''),
+                "reason": c.get('disc_reason', ''),
+                "domain": c.get('domain', '')
             })
         if c.get('issue_category') == ISSUE_CATEGORY_WEBSITE:
             website_issue_list.append({
-                "name": c['name'],
-                "university": c['university'],
+                "name": c.get('name', ''),
+                "university": c.get('university', ''),
                 "sub_type": c.get('issue_sub_type', ''),
-                "reason": c['disc_reason'],
-                "domain": c['domain']
+                "reason": c.get('disc_reason', ''),
+                "domain": c.get('domain', '')
             })
         elif c.get('issue_category') == ISSUE_CATEGORY_COURSE:
             course_issue_list.append({
-                "name": c['name'],
-                "university": c['university'],
+                "name": c.get('name', ''),
+                "university": c.get('university', ''),
                 "sub_type": c.get('issue_sub_type', ''),
-                "reason": c['disc_reason'],
-                "domain": c['domain']
+                "reason": c.get('disc_reason', ''),
+                "domain": c.get('domain', '')
             })
 
     return jsonify({
@@ -806,7 +832,7 @@ def api_data():
         "discrepancy_list": discrepancy_list,
         "website_issue_list": website_issue_list,
         "course_issue_list": course_issue_list,
-        "recent": [c for c in global_courses if c['status'] in ['Discrepancy', 'Error'] and 'pdf_page' in c]
+        "recent": [c for c in global_courses if c.get('status') in ['Discrepancy', 'Error'] and 'pdf_page' in c]
     })
 
 @app.route("/api/course/<int:course_id>", methods=["DELETE", "OPTIONS"])
