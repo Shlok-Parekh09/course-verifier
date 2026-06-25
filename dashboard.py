@@ -303,6 +303,7 @@ def compute_stats():
     }
 
 def save_courses(updated_courses=None):
+    global _LAST_SAVE_TS, _LAST_LOAD_TS
     """
     Save courses to all persistence layers
     Args:
@@ -344,6 +345,10 @@ def save_courses(updated_courses=None):
             _invalidate_analytics()
         except Exception:
             pass
+
+        with _load_lock:
+            _LAST_SAVE_TS = time.time()
+            _LAST_LOAD_TS = time.time()  # Prevent immediate redundant reload
 
     except Exception as e:
         print(f"[SAVE] ✗ Critical error in save_courses: {e}")
@@ -425,6 +430,7 @@ def derive_issue_sub_type(c):
 
 def load_courses():
     global global_courses
+    fetch_start_time = time.time()
     # Build into a local list and swap ONCE at the end. The old code did
     # clear() then extend(), leaving a window where global_courses was empty —
     # a concurrent /api/data.json poll (via _refresh_courses_if_stale) could
@@ -590,53 +596,52 @@ def load_courses():
         # If it was natively flagged as Unverified in older runs, and has an error message, it's a website issue
         is_unverified = c.get('status') == 'Unverified'
         
-        # Web issues are detected from actual website error signals only — a
-        # page-load / unreachable / LLM-fallback error in the description, or an
-        # existing website_issue classification (preserved by the else-branch
-        # below). We intentionally do NOT use uni_match / name_match here: PDF
-        # uploads set uni_match=True when the University cell reads MATCH, which
-        # would mask genuine website issues and make the count drift down.
-        if has_page_error:
+        issue_cat = c.get('issue_category', '')
+        
+        # If the course has been explicitly categorised (e.g. by PDF upload), respect it!
+        # Do not let legacy text in c['reason'] override a recent PDF verification.
+        if issue_cat == ISSUE_CATEGORY_VERIFIED:
+            c['status'] = 'Verified'
+        elif issue_cat == ISSUE_CATEGORY_COURSE:
+            c['status'] = 'Discrepancy'
+        elif issue_cat == ISSUE_CATEGORY_WEBSITE:
+            c['status'] = 'Error'
+        elif has_page_error:
+            # Apply heuristics only if not explicitly categorised yet
             c['issue_category'] = ISSUE_CATEGORY_WEBSITE
             c['status'] = 'Error'
-        elif is_unverified and not c.get('issue_category') and not any(bool(c.get(k, False)) for k in _basic_match_keys):
+        elif is_unverified and not issue_cat and not any(bool(c.get(k, False)) for k in _basic_match_keys):
             # Only reclassify as website_issue when ALL 7 basic match flags are
-            # False (i.e. the page never loaded at all). Courses that simply
-            # haven't been categorised yet but DO have some matching fields are
-            # left as Unverified so they don't silently disappear from the count.
+            # False (i.e. the page never loaded at all).
             c['issue_category'] = ISSUE_CATEGORY_WEBSITE
             c['status'] = 'Error'
-        else:
-            # Sync status with issue_category for existing records
-            issue_cat = c.get('issue_category', '')
-            if issue_cat == ISSUE_CATEGORY_VERIFIED:
-                c['status'] = 'Verified'
-            elif issue_cat == ISSUE_CATEGORY_WEBSITE:
-                c['status'] = 'Error'
-            elif issue_cat == ISSUE_CATEGORY_COURSE:
-                c['status'] = 'Discrepancy'
 
         # Backfill issue_sub_type from real signals when missing. Never
         # overwrites a value already persisted in Mongo / 1.json.
         if not c.get('issue_sub_type'):
             c['issue_sub_type'] = derive_issue_sub_type(c)
 
-    # Atomic swap: global_courses is never observed empty by a concurrent
-    # reader (solve's compute_stats, /api/data.json) mid-reload.
-    global_courses[:] = loaded
-
-# Load immediately
-load_courses()
+    with _load_lock:
+        if globals().get('_LAST_SAVE_TS', 0) > fetch_start_time:
+            print("[REFRESH] Save occurred during load; discarding stale fetch.")
+            return
+        # Atomic swap: global_courses is never observed empty by a concurrent
+        # reader (solve's compute_stats, /api/data.json) mid-reload.
+        global_courses[:] = loaded
 
 # On Vercel, the serverless function instance is reused across requests, so
 # global_courses (loaded once above) goes stale and the hosted dashboard never
 # sees new uploads. Refresh from MongoDB on a short TTL so the live site stays
 # current. Local dev benefits too: it picks up writes from other clients.
 _LAST_LOAD_TS = time.time()
+_LAST_SAVE_TS = time.time()
 _LOAD_TTL_SEC = 15
 _load_lock = threading.Lock()
 _refresh_in_progress = False
 analytics_thread = None
+
+# Load immediately
+load_courses()
 
 def _build_analytics_in_background():
     """Module-level builder thread loop: rebuild analytics cache in the background.
@@ -2639,10 +2644,18 @@ def upload_data():
             if os.path.exists(temp_path):
                 os.remove(temp_path)
     if updates > 0:
-        # Save ALL courses to ensure complete data persistence
+        # Re-apply updates to the CURRENT global_courses in case a background 
+        # reload swapped the objects out from under us during the long PDF processing.
+        for updated_c in verified_in_this_batch:
+            for i, c in enumerate(global_courses):
+                if c.get('id') == updated_c.get('id'):
+                    global_courses[i] = updated_c
+                    break
+
+        # Save specific courses to ensure complete data persistence
         # This prevents data loss when MongoDB is the primary data source
         try:
-            save_courses(global_courses)
+            save_courses(verified_in_this_batch)
         except Exception as e:
             # Don't let a persistence failure 500 the whole upload — the
             # in-memory mutation already happened, so report a soft warning
