@@ -7,9 +7,10 @@
     <meta name="description" content="Live course verification and country-wise analysis platform by Khushboo Singh">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=10">
+    <link rel="stylesheet" href="/static/style.css?v=12">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://unpkg.com/chartjs-chart-geo@4.2.8/build/index.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3"></script>
     <script src="https://kit.fontawesome.com/997b419143.js" crossorigin="anonymous"></script>
 </head>
 <body>
@@ -357,58 +358,108 @@
             <!-- Analytics Page Header -->
             <div class="analytics-page-hdr">
                 <div class="analytics-page-title">
-                    <div class="analytics-icon">📊</div>
+                    <div class="analytics-icon" aria-hidden="true"></div>
                     <div>
                         <h2>Course Analytics</h2>
                         <p>Deep-dive into every dimension of the global portfolio</p>
                     </div>
                 </div>
-                <nav class="analytics-subnav" id="analytics-subnav">
-                    <button class="asubtab active" data-atab="atab-overview">📋 Overview</button>
-                    <button class="asubtab" data-atab="atab-geography">🌍 Geography</button>
-                    <button class="asubtab" data-atab="atab-domains">🔬 Specializations</button>
-                    <button class="asubtab" data-atab="atab-verification">✅ Verification</button>
-                </nav>
+                <div class="analytics-hdr-right">
+                    <div id="an-export-bar" class="an-export-bar">
+                        <span class="an-export-label">EXPORT SNAPSHOT</span>
+                        <button class="an-export-btn" id="an-export-csv" type="button">Download CSV</button>
+                        <button class="an-export-btn" id="an-export-json" type="button">Download JSON</button>
+                        <button class="an-export-btn an-export-btn--print" id="an-export-print" type="button">Print summary</button>
+                    </div>
+                    <nav class="analytics-subnav" id="analytics-subnav">
+                        <button class="asubtab active" data-atab="atab-overview">Overview</button>
+                        <button class="asubtab" data-atab="atab-geography">Geography</button>
+                        <button class="asubtab" data-atab="atab-domains">Specializations</button>
+                        <button class="asubtab" data-atab="atab-verification">Verification</button>
+                        <button class="asubtab" data-atab="atab-rankings">Rankings</button>
+                    </nav>
+                </div>
             </div>
 
-            <!-- Analytics KPI Cards (always visible) -->
-            <div class="analytics-kpi-row">
-                <div class="a-stat-card a-blue" title="Click to see breakdown" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-overview]').click()">
-                    <div class="a-stat-icon">📚</div>
+            <!-- Persistent Filter Bar (applies to all sub-tabs) -->
+            <div id="an-filter-bar" class="an-filter-bar">
+                <span class="an-filter-label">FILTERS</span>
+                <select class="an-filter-select" id="an-filter-level" aria-label="Filter by level">
+                    <option value="">Level: All</option>
+                </select>
+                <select class="an-filter-select" id="an-filter-country" aria-label="Filter by country">
+                    <option value="">Country: All</option>
+                </select>
+                <select class="an-filter-select" id="an-filter-cost" aria-label="Filter by cost tier">
+                    <option value="">Cost Tier: All</option>
+                </select>
+                <select class="an-filter-select" id="an-filter-ranking" aria-label="Filter by ranking">
+                    <option value="">Ranking: All</option>
+                </select>
+                <button class="an-filter-reset" id="an-filter-reset" type="button">RESET</button>
+                <div id="an-filter-chips" class="an-filter-chips"></div>
+            </div>
+
+            <!-- Analytics KPI Strip (always visible) -->
+            <div id="analytics-kpi-row" class="analytics-kpi-row">
+                <div class="a-stat-card a-blue" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-overview]').click()">
+                    <span class="an-label-chip">TOTAL</span>
                     <div class="a-stat-body">
                         <div class="a-stat-val" id="an-total">—</div>
                         <div class="a-stat-label">Total Unique Courses</div>
                         <div class="a-stat-sub" id="an-variants-sub">— delivery variants</div>
                     </div>
                 </div>
-                <div class="a-stat-card a-green" title="Click to filter" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-geography]').click()">
-                    <div class="a-stat-icon">🇮🇳</div>
+                <div class="a-stat-card a-green" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-geography]').click()">
+                    <span class="an-label-chip">IN</span>
                     <div class="a-stat-body">
                         <div class="a-stat-val" id="an-indian">—</div>
                         <div class="a-stat-label">Indian Programs</div>
                         <div class="a-stat-sub" id="an-indian-pct">—% of total catalog</div>
                     </div>
                 </div>
-                <div class="a-stat-card a-purple" title="Click to see international breakdown" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-geography]').click()">
-                    <div class="a-stat-icon">🌐</div>
+                <div class="a-stat-card a-purple" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-geography]').click()">
+                    <span class="an-label-chip">INTL</span>
                     <div class="a-stat-body">
                         <div class="a-stat-val" id="an-intl">—</div>
                         <div class="a-stat-label">International Programs</div>
                         <div class="a-stat-sub" id="an-countries-count">— countries represented</div>
                     </div>
                 </div>
-                <div class="a-stat-card a-orange" title="Click to see verification stats" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-verification]').click()">
-                    <div class="a-stat-icon">✅</div>
+                <div class="a-stat-card a-orange" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-verification]').click()">
+                    <span class="an-label-chip">VERIFIED</span>
                     <div class="a-stat-body">
                         <div class="a-stat-val" id="an-matchrate">—%</div>
                         <div class="a-stat-label">Verification Match Rate</div>
                         <div class="a-stat-sub" id="an-verified-sub">— courses perfectly verified</div>
                     </div>
                 </div>
+                <div class="a-stat-card a-green" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-overview]').click()">
+                    <span class="an-label-chip">ACCESS</span>
+                    <div class="a-stat-body">
+                        <div class="a-stat-val" id="an-affordability">—</div>
+                        <div class="a-stat-label">Affordability Index</div>
+                        <div class="a-stat-sub" id="an-affordability-sub">based on — priced programs in INR</div>
+                    </div>
+                </div>
+                <div class="a-stat-card a-purple" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-overview]').click()">
+                    <span class="an-label-chip">FREE</span>
+                    <div class="a-stat-body">
+                        <div class="a-stat-val" id="an-free-paid-ratio">—</div>
+                        <div class="a-stat-label">Free-to-Paid Ratio</div>
+                        <div class="a-stat-sub" id="an-free-paid-sub">— free of — priced</div>
+                    </div>
+                </div>
             </div>
 
             <!-- ── OVERVIEW sub-tab ── -->
             <div id="atab-overview" class="atab-content active">
+
+                <!-- Key Findings narrative -->
+                <div id="an-key-findings" class="an-keyfindings">
+                    <div class="an-keyfindings-hdr">KEY FINDINGS</div>
+                    <div id="an-key-findings-body" class="an-keyfindings-body"></div>
+                </div>
 
                 <!-- Auto-computed Insight Cards -->
                 <div class="insight-cards-row" id="insight-cards-row"></div>
@@ -436,15 +487,52 @@
                     <div class="an-card">
                         <div class="an-card-hdr">
                             <div>
-                                <div class="an-card-title">🇮🇳 India vs 🌐 World</div>
+                                <div class="an-card-title">India vs World</div>
                                 <div class="an-card-sub">Portfolio split by origin</div>
                             </div>
                         </div>
                         <div id="an-split-visual" class="an-split-block"></div>
                         <div id="an-top-countries" class="an-hub-list" style="margin-top:16px;"></div>
                         <button class="an-cta-btn" onclick="document.querySelector('.asubtab[data-atab=atab-geography]').click()">
-                            View Full Geographic Report →
+                            View Full Geographic Report
                         </button>
+                    </div>
+
+                    <!-- Affordability Gauge -->
+                    <div class="an-card">
+                        <div class="an-card-hdr">
+                            <div>
+                                <div class="an-card-title">Affordability Index</div>
+                                <div class="an-card-sub">Cost-access composite across priced programs</div>
+                            </div>
+                        </div>
+                        <div id="an-affordability-gauge" class="an-score-gauge"></div>
+                    </div>
+
+                    <!-- Free vs Paid doughnut -->
+                    <div class="an-card">
+                        <div class="an-card-hdr">
+                            <div>
+                                <div class="an-card-title">Free vs Paid</div>
+                                <div class="an-card-sub">Share of programs offered at no cost</div>
+                            </div>
+                        </div>
+                        <div class="an-chart-zone" style="height:240px; position:relative;">
+                            <canvas id="an-free-paid-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Fee histogram -->
+                    <div class="an-card an-full-width">
+                        <div class="an-card-hdr">
+                            <div>
+                                <div class="an-card-title">Fee Distribution (INR)</div>
+                                <div class="an-card-sub" id="an-fee-histogram-sub">Median INR —, Mean INR —</div>
+                            </div>
+                        </div>
+                        <div class="an-chart-zone" style="height:260px; position:relative;">
+                            <canvas id="an-fee-histogram"></canvas>
+                        </div>
                     </div>
 
                     <!-- Full-width Pricing Bar Chart -->
@@ -461,6 +549,17 @@
                         </div>
                     </div>
 
+                    <!-- Credential x Cost Tier heatmap -->
+                    <div class="an-card an-full-width">
+                        <div class="an-card-hdr">
+                            <div>
+                                <div class="an-card-title">Credential x Cost Tier</div>
+                                <div class="an-card-sub">Program counts by credential level and cost tier</div>
+                            </div>
+                        </div>
+                        <div id="an-credential-cost-heatmap" class="an-heatmap-wrap"></div>
+                    </div>
+
                 </div>
             </div>
 
@@ -469,24 +568,29 @@
                 <div class="an-section-hdr">
                     <div>
                         <div class="an-section-title">Geographic Footprint</div>
-                        <div class="an-section-sub">Click any row to see its courses · sorted by volume</div>
+                        <div class="an-section-sub">Click any row to drill into its courses. Quality score blends verification rate, issue rate, and ranked-university density.</div>
                     </div>
                     <div class="an-search-wrap">
-                        <span class="an-search-icon">🔍</span>
-                        <input type="text" id="an-country-search" placeholder="Search country…" class="an-search-input">
+                        <input type="text" id="an-country-search" placeholder="Search countries" class="an-search-input">
                     </div>
                 </div>
 
-                <div class="an-card an-full-width" style="padding:0; overflow:hidden;">
+                <!-- Concentration gauge -->
+                <div id="an-geo-concentration" class="an-score-gauge an-score-gauge--wide"></div>
+
+                <div class="an-card an-full-width" style="padding:0; overflow:hidden; margin-top:20px;">
                     <div class="tbl-wrap" style="max-height:55vh;">
                         <table class="data-table an-geo-table">
                             <thead><tr>
                                 <th style="width:56px;">Rank</th>
                                 <th>Country</th>
+                                <th>Region</th>
                                 <th style="text-align:center;">Courses</th>
-                                <th style="text-align:center;">Verified ✅</th>
-                                <th style="text-align:center;">Issues ⚠️</th>
+                                <th style="text-align:center;">Verified</th>
+                                <th style="text-align:center;">Issues</th>
                                 <th style="text-align:right;">Share</th>
+                                <th style="text-align:center;">Quality Score</th>
+                                <th style="text-align:center;">Ranked Universities</th>
                                 <th style="width:120px;">Distribution</th>
                             </tr></thead>
                             <tbody id="an-country-tbody"></tbody>
@@ -494,18 +598,53 @@
                     </div>
                 </div>
 
-                <!-- Drill-down panel for geography -->
-                <div id="geo-drilldown" class="drilldown-panel" style="display:none;">
-                    <div class="drilldown-hdr">
-                        <div id="geo-drilldown-title" class="drilldown-title"></div>
-                        <button class="drilldown-close" onclick="closeDrilldown('geo-drilldown')">✕ Close</button>
+                <!-- Regional groupings -->
+                <div class="an-card an-full-width" style="margin-top:20px;">
+                    <div class="an-card-hdr">
+                        <div>
+                            <div class="an-card-title">Regional Groupings</div>
+                            <div class="an-card-sub">Catalog distribution by standard world regions — click a bar to filter the footprint table.</div>
+                        </div>
+                    </div>
+                    <div id="an-regional-chart" class="an-region-list"></div>
+                </div>
+
+                <!-- Most-problematic countries -->
+                <div class="an-card an-full-width" style="margin-top:20px;">
+                    <div class="an-card-hdr">
+                        <div>
+                            <div class="an-card-title">Most-Problematic Countries</div>
+                            <div class="an-card-sub">Ranked by issue rate among countries with five or more courses. Click a row to drill into its flagged courses.</div>
+                        </div>
                     </div>
                     <div class="tbl-wrap" style="max-height:40vh;">
                         <table class="data-table">
-                            <thead><tr><th>#</th><th>Course Name</th><th>University</th><th>Domain</th><th>Status</th></tr></thead>
-                            <tbody id="geo-drilldown-tbody"></tbody>
+                            <thead><tr>
+                                <th style="width:56px;">Rank</th>
+                                <th>Country</th>
+                                <th style="text-align:center;">Courses</th>
+                                <th style="text-align:center;">Issues</th>
+                                <th style="text-align:center;">Issue Rate</th>
+                                <th style="text-align:center;">Quality Score</th>
+                            </tr></thead>
+                            <tbody id="an-geo-problem-tbody"></tbody>
                         </table>
                     </div>
+                </div>
+
+                <!-- Comparative country benchmark -->
+                <div class="an-card an-full-width" style="margin-top:20px;">
+                    <div class="an-card-hdr">
+                        <div>
+                            <div class="an-card-title">Comparative Country Benchmark</div>
+                            <div class="an-card-sub">Select two countries to compare across normalized indicators.</div>
+                        </div>
+                    </div>
+                    <div class="an-compare-controls">
+                        <select class="an-compare-select" id="an-compare-a" aria-label="Country A"><option value="">Country A</option></select>
+                        <select class="an-compare-select" id="an-compare-b" aria-label="Country B"><option value="">Country B</option></select>
+                    </div>
+                    <div id="an-geo-compare" class="an-benchmark-table-wrap"></div>
                 </div>
             </div>
 
@@ -513,15 +652,21 @@
             <div id="atab-domains" class="atab-content">
                 <div class="an-section-hdr" style="margin-bottom:20px;">
                     <div>
-                        <div class="an-section-title">Domain Intelligence</div>
+                        <div class="an-section-title">Specializations</div>
                         <div class="an-section-sub">Click any row or bar to drill into courses of that specialization</div>
                     </div>
                 </div>
 
+                <!-- Concentration gauge -->
+                <div id="an-concentration-gauge" class="an-score-gauge an-score-gauge--wide"></div>
+
                 <!-- Domain bar chart -->
-                <div class="an-card an-full-width">
+                <div class="an-card an-full-width" style="margin-top:20px;">
                     <div class="an-card-hdr">
-                        <div class="an-card-title">📊 Domain Saturation · click bars to explore</div>
+                        <div>
+                            <div class="an-card-title">Specialization Volume & Concentration</div>
+                            <div class="an-card-sub">Click bars to explore — color denotes saturation tier</div>
+                        </div>
                         <div class="an-badge slate">Unique Offerings</div>
                     </div>
                     <div class="an-chart-zone" style="height:340px; position:relative;">
@@ -530,35 +675,115 @@
                 </div>
 
                 <!-- Domain table -->
-                <div class="an-card an-full-width" style="padding:0; overflow:hidden;">
+                <div class="an-card an-full-width" style="padding:0; overflow:hidden; margin-top:20px;">
+                    <div style="padding:16px 24px 8px;">
+                        <div class="an-card-title">Specialization Saturation Index</div>
+                        <div class="an-card-sub">Click to explore</div>
+                    </div>
                     <div class="tbl-wrap" style="max-height:45vh;">
                         <table class="data-table an-domain-table">
                             <thead><tr>
                                 <th>Specialization</th>
-                                <th style="text-align:center;">Total</th>
-                                <th style="text-align:center;">🇮🇳 Indian</th>
-                                <th style="text-align:center;">🌐 Intl</th>
-                                <th style="text-align:center;">✅ Verified</th>
-                                <th style="text-align:center;">⚠️ Issues</th>
-                                <th style="width:100px;">Mix</th>
+                                <th style="text-align:center;">Programs</th>
+                                <th style="text-align:center;">Catalog Share</th>
+                                <th style="text-align:center;">Saturation</th>
+                                <th style="text-align:center;">India</th>
+                                <th style="text-align:center;">Intl</th>
+                                <th style="text-align:center;">Verified</th>
+                                <th style="text-align:center;">Discrepancies</th>
+                                <th style="width:110px;">Origin Mix</th>
                             </tr></thead>
                             <tbody id="an-domain-tbody"></tbody>
                         </table>
                     </div>
                 </div>
 
-                <!-- Drill-down panel for domains -->
-                <div id="dom-drilldown" class="drilldown-panel" style="display:none;">
-                    <div class="drilldown-hdr">
-                        <div id="dom-drilldown-title" class="drilldown-title"></div>
-                        <button class="drilldown-close" onclick="closeDrilldown('dom-drilldown')">✕ Close</button>
+                <!-- Credential ladder table -->
+                <div class="an-card an-full-width" style="padding:0; overflow:hidden; margin-top:20px;">
+                    <div style="padding:16px 24px 8px;">
+                        <div class="an-card-title">Credential Ladder — Cost, Verification & Geography by Level</div>
+                        <div class="an-card-sub">Click to view programs</div>
                     </div>
-                    <div class="tbl-wrap" style="max-height:40vh;">
+                    <div class="tbl-wrap" style="max-height:45vh;">
                         <table class="data-table">
-                            <thead><tr><th>#</th><th>Course Name</th><th>University</th><th>Country</th><th>Status</th><th>Note</th></tr></thead>
-                            <tbody id="dom-drilldown-tbody"></tbody>
+                            <thead><tr>
+                                <th>Credential Level</th>
+                                <th style="text-align:center;">Programs</th>
+                                <th style="text-align:right;">Avg Cost (INR)</th>
+                                <th style="text-align:right;">Median Cost</th>
+                                <th style="text-align:center;">Free %</th>
+                                <th style="text-align:center;">Verification Rate</th>
+                                <th style="text-align:center;">India %</th>
+                                <th style="text-align:center;">Intl %</th>
+                                <th style="width:110px;">Coverage</th>
+                            </tr></thead>
+                            <tbody id="an-credential-ladder-tbody"></tbody>
                         </table>
                     </div>
+                    <div class="an-heatmap-legend">VERIFICATION RATE — High / Moderate / Low</div>
+                </div>
+
+                <!-- Credential cost profile chart -->
+                <div class="an-card an-full-width" style="margin-top:20px;">
+                    <div class="an-card-hdr">
+                        <div>
+                            <div class="an-card-title">Credential Cost Profile — Average vs Median Fee by Level</div>
+                            <div class="an-card-sub">Costs normalized to INR; free programs excluded from averages.</div>
+                        </div>
+                    </div>
+                    <div class="an-chart-zone" style="height:300px; position:relative;">
+                        <canvas id="an-credential-cost-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Verification quality by credential level heatmap -->
+                <div class="an-card an-full-width" style="padding:0; overflow:hidden; margin-top:20px;">
+                    <div style="padding:16px 24px 8px;">
+                        <div class="an-card-title">Verification Quality by Credential Level</div>
+                    </div>
+                    <div id="an-credential-verification-heatmap" class="an-heatmap-wrap"></div>
+                </div>
+
+                <!-- Ranked vs Unranked by credential level -->
+                <div class="an-card" style="margin-top:20px;">
+                    <div class="an-card-hdr">
+                        <div>
+                            <div class="an-card-title">Ranked vs Unranked Institutions by Credential Level</div>
+                            <div class="an-card-sub">Ranked = university carries a QS or NIRF ranking.</div>
+                        </div>
+                    </div>
+                    <div class="an-chart-zone" style="height:280px; position:relative;">
+                        <canvas id="an-ranked-credential-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- University leaderboard -->
+                <div class="an-card an-full-width" style="padding:0; overflow:hidden; margin-top:20px;">
+                    <div style="padding:16px 24px 8px;">
+                        <div class="an-card-title">Top Universities Leaderboard</div>
+                        <div class="an-card-sub">Click to view this institution's programs</div>
+                    </div>
+                    <div class="tbl-wrap" style="max-height:45vh;">
+                        <table class="data-table">
+                            <thead><tr>
+                                <th style="width:56px;">Rank</th>
+                                <th>University</th>
+                                <th>Country</th>
+                                <th style="text-align:center;">Programs</th>
+                                <th style="text-align:center;">Verified %</th>
+                                <th style="text-align:center;">QS</th>
+                                <th style="text-align:center;">NIRF</th>
+                                <th style="text-align:center;">Status</th>
+                            </tr></thead>
+                            <tbody id="an-university-leaderboard"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Academic findings narrative -->
+                <div id="an-academic-findings" class="an-keyfindings" style="margin-top:20px;">
+                    <div class="an-keyfindings-hdr">Key Findings — Academic & Credential Intelligence</div>
+                    <div id="an-academic-findings-body" class="an-keyfindings-body"></div>
                 </div>
             </div>
 
@@ -566,13 +791,13 @@
             <div id="atab-verification" class="atab-content">
                 <div class="an-section-hdr" style="margin-bottom:20px;">
                     <div>
-                        <div class="an-section-title">Verification Intelligence</div>
+                        <div class="an-section-title">Verification</div>
                         <div class="an-section-sub">Accuracy rates, discrepancy reasons, and quality signals across the catalog</div>
                     </div>
                 </div>
 
                 <!-- Verification KPI row -->
-                <div class="verif-kpi-row" id="verif-kpi-row"></div>
+                <div class="verif-kpi-row" id="an-verif-kpi-row"></div>
 
                 <div class="an-overview-grid" style="margin-top:20px;">
                     <!-- Verification status doughnut -->
@@ -586,48 +811,182 @@
                         </div>
                     </div>
 
-                    <!-- Top discrepancy reasons -->
+                    <!-- Issue origin doughnut -->
                     <div class="an-card">
                         <div class="an-card-hdr">
-                            <div class="an-card-title">⚠️ Top Discrepancy Reasons</div>
+                            <div class="an-card-title">Issue Origin</div>
                             <div class="an-badge rose">Quality Flags</div>
                         </div>
-                        <div id="an-disc-reasons" class="disc-reason-list"></div>
+                        <div class="an-chart-zone" style="height:280px; position:relative;">
+                            <canvas id="an-issue-origin-chart"></canvas>
+                        </div>
                     </div>
 
-                    <!-- Verification rate by country (full width) -->
+                    <!-- Top discrepancy reasons Pareto -->
+                    <div class="an-card an-full-width">
+                        <div class="an-card-hdr">
+                            <div>
+                                <div class="an-card-title">Top Discrepancy Reasons — Pareto</div>
+                                <div class="an-card-sub">Cumulative share of mismatch reasons</div>
+                            </div>
+                        </div>
+                        <div class="an-chart-zone" style="height:300px; position:relative;">
+                            <canvas id="an-disc-pareto-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Reason-to-attribute heatmap -->
+                    <div class="an-card an-full-width">
+                        <div class="an-card-hdr">
+                            <div>
+                                <div class="an-card-title">Reason-to-Attribute Mismatch Map</div>
+                                <div class="an-card-sub">Counts of mismatches by reason cluster and attribute</div>
+                            </div>
+                        </div>
+                        <div id="an-reason-attribute-heatmap" class="an-heatmap-wrap"></div>
+                    </div>
+
+                    <!-- Attribute verification success rate -->
+                    <div class="an-card an-full-width">
+                        <div class="an-card-hdr">
+                            <div>
+                                <div class="an-card-title">Attribute Verification Success Rate</div>
+                                <div class="an-card-sub">Click a bar to drill into courses failing that attribute</div>
+                            </div>
+                        </div>
+                        <div id="an-attribute-match-bar" class="an-attr-match-wrap"></div>
+                    </div>
+
+                    <!-- Country quality table (full width) -->
                     <div class="an-card an-full-width" style="padding:0; overflow:hidden;">
                         <div style="padding:20px 24px 12px;">
-                            <div class="an-card-title">Verification Rate by Country</div>
-                            <div class="an-card-sub">Countries with verified + discrepant courses — click row to drill down</div>
+                            <div class="an-card-title">Country Quality</div>
+                            <div class="an-card-sub">Quality score blends verification rate, issue rate, and ranked density</div>
                         </div>
                         <div class="tbl-wrap" style="max-height:45vh;">
                             <table class="data-table">
                                 <thead><tr>
                                     <th>Country</th>
                                     <th style="text-align:center;">Total</th>
-                                    <th style="text-align:center;">✅ Verified</th>
-                                    <th style="text-align:center;">⚠️ Discrepant</th>
-                                    <th style="text-align:center;">❌ Error</th>
-                                    <th>Match Rate</th>
+                                    <th style="text-align:center;">Verified</th>
+                                    <th style="text-align:center;">Discrepancies</th>
+                                    <th style="text-align:center;">Errors</th>
+                                    <th style="text-align:center;">Match Rate</th>
+                                    <th style="text-align:center;">Quality Score</th>
+                                    <th style="text-align:center;">Flag</th>
                                 </tr></thead>
                                 <tbody id="an-verif-country-tbody"></tbody>
                             </table>
                         </div>
                     </div>
+
+                    <!-- DQ health gauge -->
+                    <div class="an-card">
+                        <div class="an-card-hdr">
+                            <div>
+                                <div class="an-card-title">Data-Quality Health Score</div>
+                                <div class="an-card-sub">Composite of verification, error, and completeness</div>
+                            </div>
+                        </div>
+                        <div id="an-dq-health-gauge" class="an-score-gauge"></div>
+                    </div>
+
+                    <!-- Anomaly panel -->
+                    <div class="an-card">
+                        <div class="an-card-hdr">
+                            <div>
+                                <div class="an-card-title">Anomaly and Outlier Flags</div>
+                                <div class="an-card-sub">Auto-detected data-quality outliers</div>
+                            </div>
+                        </div>
+                        <div id="an-anomaly-panel" class="an-anomaly-wrap"></div>
+                    </div>
+
+                    <!-- Domain quality table -->
+                    <div class="an-card an-full-width" style="padding:0; overflow:hidden;">
+                        <div style="padding:20px 24px 12px;">
+                            <div class="an-card-title">Verification Quality by Domain</div>
+                        </div>
+                        <div class="tbl-wrap" style="max-height:45vh;">
+                            <table class="data-table">
+                                <thead><tr>
+                                    <th>Domain</th>
+                                    <th style="text-align:center;">Total</th>
+                                    <th style="text-align:center;">Verified</th>
+                                    <th style="text-align:center;">Discrepancies</th>
+                                    <th style="text-align:center;">Errors</th>
+                                    <th style="text-align:center;">Verification Rate</th>
+                                    <th style="text-align:center;">Quality Score</th>
+                                </tr></thead>
+                                <tbody id="an-domain-quality-table"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Verif key findings -->
+                    <div id="an-verif-key-findings" class="an-keyfindings an-full-width">
+                        <div class="an-keyfindings-hdr">Key Findings</div>
+                        <div id="an-verif-key-findings-body" class="an-keyfindings-body"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── RANKINGS sub-tab (NEW) ── -->
+            <div id="atab-rankings" class="atab-content">
+                <div class="an-section-hdr" style="margin-bottom:20px;">
+                    <div>
+                        <div class="an-section-title">Rankings</div>
+                        <div class="an-section-sub">University ranking coverage and ranked-vs-unranked verification comparison</div>
+                    </div>
                 </div>
 
-                <!-- Verification drill-down -->
-                <div id="verif-drilldown" class="drilldown-panel" style="display:none;">
-                    <div class="drilldown-hdr">
-                        <div id="verif-drilldown-title" class="drilldown-title"></div>
-                        <button class="drilldown-close" onclick="closeDrilldown('verif-drilldown')">✕ Close</button>
+                <div class="an-overview-grid">
+                    <!-- Ranking mix doughnut -->
+                    <div class="an-card an-card-lg">
+                        <div class="an-card-hdr">
+                            <div>
+                                <div class="an-card-title">University Ranking Coverage</div>
+                                <div class="an-card-sub" id="an-ranking-mix-sub">— courses (—%)</div>
+                            </div>
+                            <div class="an-badge indigo">Ranking Mix</div>
+                        </div>
+                        <div class="an-chart-zone" style="height:300px; position:relative;">
+                            <canvas id="an-ranking-mix"></canvas>
+                        </div>
                     </div>
-                    <div class="tbl-wrap" style="max-height:40vh;">
-                        <table class="data-table">
-                            <thead><tr><th>#</th><th>Course Name</th><th>University</th><th>Domain</th><th>Status</th><th>Reason</th></tr></thead>
-                            <tbody id="verif-drilldown-tbody"></tbody>
-                        </table>
+
+                    <!-- Ranked vs Unranked comparison -->
+                    <div class="an-card">
+                        <div class="an-card-hdr">
+                            <div>
+                                <div class="an-card-title">Ranked vs Unranked Verification</div>
+                                <div class="an-card-sub">Cohort comparison across key metrics</div>
+                            </div>
+                        </div>
+                        <div id="an-ranked-vs-unranked" class="an-benchmark-table-wrap"></div>
+                    </div>
+
+                    <!-- University leaderboard (rankings view) -->
+                    <div class="an-card an-full-width" style="padding:0; overflow:hidden;">
+                        <div style="padding:16px 24px 8px;">
+                            <div class="an-card-title">University Leaderboard</div>
+                            <div class="an-card-sub">Click a row to view this institution's programs</div>
+                        </div>
+                        <div class="tbl-wrap" style="max-height:55vh;">
+                            <table class="data-table">
+                                <thead><tr>
+                                    <th>University</th>
+                                    <th style="text-align:center;">Courses</th>
+                                    <th style="text-align:center;">Verified</th>
+                                    <th style="text-align:center;">Discrepancies</th>
+                                    <th style="text-align:center;">Errors</th>
+                                    <th style="text-align:center;">Verification rate</th>
+                                    <th style="text-align:center;">QS</th>
+                                    <th style="text-align:center;">NIRF</th>
+                                </tr></thead>
+                                <tbody id="an-university-leaderboard-rank"></tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -665,6 +1024,18 @@
     </div>
 </div>
 
-<script src="/static/app.js?v=12"></script>
+<!-- ══════════════ ANALYTICS DETAIL MODAL (single, reused) ══════════════ -->
+<div id="an-modal" class="modal-overlay">
+    <div class="modal-box">
+        <div class="modal-hdr">
+            <h3 id="an-modal-title">Details</h3>
+            <button id="an-modal-close" class="modal-close">✕</button>
+        </div>
+        <div id="an-modal-kpis" class="an-modal-kpis"></div>
+        <div id="an-modal-body" class="an-modal-body"></div>
+    </div>
+</div>
+
+<script src="/static/app.js?v=14"></script>
 </body>
 </html>

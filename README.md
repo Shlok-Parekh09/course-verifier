@@ -203,7 +203,6 @@ Then open `http://localhost:5000` in your browser.
 | `static/style.css` | Dashboard styling |
 | `CombinedWork.xlsx` | Supplemental verification data with hyperlinks |
 | `rankings.db` | Offline university ranking database |
-| `public/api/` | Static JSON exports (`courses.json`, `data.json`) for Firebase hosting |
 | `verification_screenshots/` | Captured screenshots organized by run timestamp |
 
 ---

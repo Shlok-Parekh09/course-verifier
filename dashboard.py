@@ -28,7 +28,7 @@ except Exception:
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024 # 50 MB
 
-# CORS — allow the Firebase-hosted static site (and any other client) to call
+# CORS — allow the Vercel-hosted dashboard (and any other client) to call
 # this dashboard API cross-origin. Set CORS_ALLOW_ORIGIN to a specific origin
 # in production if you want to lock it down; defaults to '*'.
 @app.after_request
@@ -51,7 +51,7 @@ ISSUE_CATEGORY_WEBSITE = "website_issue"
 ISSUE_CATEGORY_COURSE = "course_issue"
 ISSUE_CATEGORY_VERIFIED = "verified"
 
-# Initialize Firebase
+# Initialize MongoDB
 import os
 
 db_client = None
@@ -287,8 +287,8 @@ def save_courses(updated_courses=None):
     """
     Save courses to all persistence layers
     Args:
-        updated_courses: Optional list of courses that were updated. 
-                        If None, all courses will be saved to Firestore.
+        updated_courses: Optional list of courses that were updated.
+                        If None, all courses will be saved to MongoDB.
     """
     try:
         print(f"[SAVE] Saving {len(global_courses)} total courses...")
@@ -318,146 +318,13 @@ def save_courses(updated_courses=None):
                 print(f"[SAVE] ✗ Error saving to MongoDB: {e}")
         else:
             print("[SAVE] ⚠ MongoDB not available, skipping cloud sync")
-            
-        # 3. EXPORT STATIC JSON FOR PUBLIC HOSTING
+
+        # Data changed → analytics summary is stale. Mark dirty so the next
+        # /api/analytics request rebuilds it (instead of serving the old cache).
         try:
-            os.makedirs(os.path.join("public", "api"), exist_ok=True)
-            
-            # Export courses.json
-            with open(os.path.join("public", "api", "courses.json"), "w", encoding="utf-8") as f:
-                json.dump({"status": "success", "courses": global_courses}, f, indent=2)
-                
-            # Export data.json (aggregated stats)
-            total_courses = len(global_courses)
-            verified = sum(1 for c in global_courses if c.get('status') == 'Verified')
-            discrepancies = sum(1 for c in global_courses if c.get('status') == 'Discrepancy')
-            errors = sum(1 for c in global_courses if c.get('status') == 'Error')
-            unverified = sum(1 for c in global_courses if c.get('status') == 'Unverified')
-            website_issues = sum(1 for c in global_courses if c.get('issue_category') == ISSUE_CATEGORY_WEBSITE)
-            course_issues = sum(1 for c in global_courses if c.get('issue_category') == ISSUE_CATEGORY_COURSE)
-
-            website_sub_counts = {}
-            course_sub_counts = {}
-            domain_issue_counts = {}
-            for c in global_courses:
-                sub = c.get('issue_sub_type', '')
-                if c.get('issue_category') == ISSUE_CATEGORY_WEBSITE and sub:
-                    website_sub_counts[sub] = website_sub_counts.get(sub, 0) + 1
-                elif c.get('issue_category') == ISSUE_CATEGORY_COURSE and sub:
-                    course_sub_counts[sub] = course_sub_counts.get(sub, 0) + 1
-                if c.get('issue_category') == ISSUE_CATEGORY_WEBSITE:
-                    dom = normalize_domain(c.get('domain', 'Unknown'))
-                    domain_issue_counts[dom] = domain_issue_counts.get(dom, 0) + 1
-
-            domain_warnings = [{"domain": d, "issue_count": cnt} for d, cnt in domain_issue_counts.items() if cnt >= 3]
-
-            domain_counts = {}
-            country_counts = {}
-            country_status = {}
-            discrepancy_list = []
-            website_issue_list = []
-            course_issue_list = []
-
-            for c in global_courses:
-                d = normalize_domain(c.get('domain')) if c.get('domain') else None
-                if d:
-                    domain_counts[d] = domain_counts.get(d, 0) + 1
-                cty = c.get('country')
-                if cty and cty != 'Unknown':
-                    cty = clean_country(cty)
-                    country_counts[cty] = country_counts.get(cty, 0) + 1
-                    st = country_status.setdefault(cty, {"total": 0, "verified": 0, "discrepancies": 0, "errors": 0})
-                    st["total"] += 1
-                    s = c.get('status')
-                    if s == 'Verified':
-                        st["verified"] += 1
-                    elif s == 'Discrepancy':
-                        st["discrepancies"] += 1
-                    elif s == 'Error':
-                        st["errors"] += 1
-
-                if c.get('status') == 'Discrepancy':
-                    discrepancy_list.append({
-                        "name": c.get('name', ''),
-                        "university": c.get('university', ''),
-                        "reason": c.get('disc_reason', ''),
-                        "domain": d
-                    })
-                if c.get('issue_category') == ISSUE_CATEGORY_WEBSITE:
-                    website_issue_list.append({
-                        "name": c.get('name', ''),
-                        "university": c.get('university', ''),
-                        "sub_type": c.get('issue_sub_type', ''),
-                        "reason": c.get('disc_reason', ''),
-                        "domain": d
-                    })
-                elif c.get('issue_category') == ISSUE_CATEGORY_COURSE:
-                    course_issue_list.append({
-                        "name": c.get('name', ''),
-                        "university": c.get('university', ''),
-                        "sub_type": c.get('issue_sub_type', ''),
-                        "reason": c.get('disc_reason', ''),
-                        "domain": d
-                    })
-
-            data_json = {
-                "status": "success",
-                "stats": {
-                    "total": total_courses,
-                    "verified": verified,
-                    "discrepancies": discrepancies,
-                    "errors": errors,
-                    "unverified": unverified,
-                    "website_issues": website_issues,
-                    "course_issues": course_issues,
-                    "open_issues": sum(course_open_issues(c) for c in global_courses)
-                },
-                "website_sub_counts": website_sub_counts,
-                "course_sub_counts": course_sub_counts,
-                "domain_warnings": domain_warnings,
-                "domain_counts": domain_counts,
-                "country_counts": country_counts,
-                "country_status": country_status,
-                "discrepancy_list": discrepancy_list,
-                "website_issue_list": website_issue_list,
-                "course_issue_list": course_issue_list,
-                "recent": [c for c in global_courses if c.get('status') in ['Discrepancy', 'Error'] and 'pdf_page' in c]
-            }
-            with open(os.path.join("public", "api", "data.json"), "w", encoding="utf-8") as f:
-                json.dump(data_json, f, indent=2)
-
-            # Export analytics.json so the hosted Analytics tab (which reads the
-            # static file) stays in sync with the normalized credential mix +
-            # tiered pricing. Without this, analytics.json drifts stale because
-            # it is only ever written here, never on demand by the live route.
-            try:
-                analytics_payload = {"status": "success", "data": build_analytics_data()}
-                with open(os.path.join("public", "api", "analytics.json"), "w", encoding="utf-8") as f:
-                    json.dump(analytics_payload, f, indent=2)
-            except Exception as ae:
-                print(f"[SAVE] ⚠ Could not export analytics.json: {ae}")
-
-            print("[SAVE] ✓ Exported static JSON files for hosting")
-        except Exception as e:
-            print(f"[SAVE] ✗ Error exporting static JSON: {e}")
-
-        # 4. OPTIONAL: Trigger Firebase deploy (non-blocking)
-        # Only deploy if AUTO_DEPLOY environment variable is set to 'true'
-        if updated_courses and os.environ.get('AUTO_DEPLOY', 'false').lower() == 'true':
-            import threading
-            def deploy_site():
-                try:
-                    print("[DEPLOY] Starting Firebase deployment...")
-                    result = os.system("firebase deploy --only hosting")
-                    if result == 0:
-                        print("[DEPLOY] ✓ Successfully deployed to live website")
-                    else:
-                        print(f"[DEPLOY] ✗ Deployment failed with exit code {result}")
-                except Exception as e:
-                    print(f"[DEPLOY] ✗ Deployment error: {e}")
-            threading.Thread(target=deploy_site, daemon=True).start()
-        else:
-            print("[DEPLOY] ⚠ Auto-deploy disabled. Run 'firebase deploy --only hosting' manually to update live site.")
+            _invalidate_analytics()
+        except Exception:
+            pass
 
     except Exception as e:
         print(f"[SAVE] ✗ Critical error in save_courses: {e}")
@@ -744,25 +611,70 @@ load_courses()
 _LAST_LOAD_TS = time.time()
 _LOAD_TTL_SEC = 15
 _load_lock = threading.Lock()
-
+_refresh_in_progress = False
+analytics_thread = None
 def _refresh_courses_if_stale():
-    """Reload global_courses from MongoDB if the in-memory cache is older than
-    _LOAD_TTL_SEC seconds. No-op when MongoDB is not connected."""
-    global _LAST_LOAD_TS
+    """Stale-while-revalidate: serve the current in-memory global_courses and
+    trigger a background MongoDB reload when the cache is older than
+    _LOAD_TTL_SEC seconds. The route returns immediately using the cached list
+    so no request blocks on a full 13 MB Mongo pull (which previously stalled
+    /api/data.json and /api/courses.json for ~80s every TTL expiry). Solves
+    mutate global_courses synchronously via save_courses(), so the acting user
+    still sees their change instantly; other clients pick it up after the
+    next background refresh — same eventual-consistency as before, just
+    non-blocking. No-op when MongoDB is not connected."""
+    global _LAST_LOAD_TS, _refresh_in_progress, analytics_thread
     if db is None:
         return
+
+    # Analytics builder thread (starts once)
+    with _load_lock:
+        if not analytics_thread:
+            analytics_thread = threading.Thread(target=_build_analytics_in_background, daemon=True)
+            analytics_thread.start()
+            print("[ANABUILD] analytics builder thread started.")
+
     if (time.time() - _LAST_LOAD_TS) < _LOAD_TTL_SEC:
         return
+    # Mark the cache fresh-scheduled so concurrent requests don't each spawn a
+    # reload thread; the background reload bumps _LAST_LOAD_TS when done.
     with _load_lock:
-        # Re-check inside the lock to avoid duplicate concurrent reloads.
-        if (time.time() - _LAST_LOAD_TS) < _LOAD_TTL_SEC:
+        if _refresh_in_progress or (time.time() - _LAST_LOAD_TS) < _LOAD_TTL_SEC:
             return
+        _refresh_in_progress = True
+
+    
+    def _build_analytics_in_background():
+        """Builder thread main loop: rebuild analytics data in the background."""
+        while True:
+            try:
+                print("[ANABUILD] rebuilding analytics data (background)...")
+                data = build_analytics_data()
+                with _load_lock:
+                    _ANALYTICS_CACHE["data"] = data
+                    _ANALYTICS_CACHE["ts"] = time.time()
+                    _ANALYTICS_CACHE["dirty"] = False
+                    _ANALYTICS_CACHE["mtimes"] = _analytics_mtimes()
+                print("[ANABUILD] ✓ rebuild complete.")
+            except Exception as e:
+                print(f"[ANABUILD] ✗ error: {e}")
+                import traceback
+                traceback.print_exc()
+            time.sleep(_ANALYTICS_TTL_SEC)
+    
+    def _bg_reload():
+        global _LAST_LOAD_TS, _refresh_in_progress
         try:
             load_courses()
-            _LAST_LOAD_TS = time.time()
-            print("[REFRESH] reloaded global_courses from MongoDB")
+            print("[REFRESH] reloaded global_courses from MongoDB (background)")
         except Exception as e:
             print("[REFRESH] error reloading from MongoDB:", e)
+        finally:
+            with _load_lock:
+                _LAST_LOAD_TS = time.time()
+                _refresh_in_progress = False
+
+    threading.Thread(target=_bg_reload, daemon=True).start()
 
 @app.route("/")
 def index():
@@ -915,7 +827,7 @@ def delete_course(course_id):
         for i, c in enumerate(global_courses):
             c['id'] = i + 1
             
-        # Resync everything to Firestore (since IDs changed)
+        # Resync everything to MongoDB (since IDs changed)
         save_courses(global_courses)
         
         # Delete the extra document at the end since size decreased by 1
@@ -938,7 +850,7 @@ def solve_course_issue(course_id):
       - "_all"                  -> solve (or un-solve) every open FALSE attribute
       - "_website"              -> solve (or un-solve) a broken-site (website_issue) course
 
-    Persists to Firestore + 1.json + public/api/data.json so every dashboard
+    Persists to MongoDB + 1.json so every dashboard
     client (multiple users) sees the change on its next 5s poll.
     """
     data = request.get_json(silent=True) or {}
@@ -1044,127 +956,1533 @@ def api_reclassify():
 import pandas as pd
 import os
 
+# ── Analytics helpers (module-level so save_courses + routes can reuse) ──────
+import sqlite3
+import statistics as _statistics
+
+_RANKINGS_CACHE = None
+
+def _load_rankings():
+    """Return (qs_set, nirf_set) of lowercased university names from rankings.db.
+    Membership-only (no rank numbers). Returns (set(), set()) if the DB is
+    unreadable/missing so ranking fields gracefully default to zero/false."""
+    global _RANKINGS_CACHE
+    if _RANKINGS_CACHE is not None:
+        return _RANKINGS_CACHE
+    qs, nirf = set(), set()
+    if os.path.exists('rankings.db'):
+        try:
+            conn = sqlite3.connect('rankings.db')
+            cur = conn.cursor()
+            for row in cur.execute('SELECT university FROM qs_ranking'):
+                if row and row[0]:
+                    qs.add(str(row[0]).strip().lower())
+            for row in cur.execute('SELECT university FROM nirf_ranking'):
+                if row and row[0]:
+                    nirf.add(str(row[0]).strip().lower())
+            conn.close()
+        except Exception as e:
+            print('[ANALYTICS] rankings.db read failed:', e)
+    _RANKINGS_CACHE = (qs, nirf)
+    return _RANKINGS_CACHE
+
+# ── Analytics result cache ──────────────────────────────────────────────────
+# build_analytics_data() is expensive (~30-40 full passes over global_courses
+# plus xlsx/json parses) and used to take ~9s of pure compute (the hosted
+# /api/analytics.json took ~89s only because _refresh_courses_if_stale blocked
+# on a 13 MB Mongo pull — now fixed by SWR). Cache the built payload so repeated
+# requests are instant, and only rebuild when:
+#   - save_courses() set the dirty flag (a local solve/upload mutated data), or
+#   - the TTL expires (catches external Mongo writes from other clients), or
+#   - a source file (CombinedWork.xlsx / variants JSON / rankings.db) changed.
+# load_courses() intentionally does NOT set dirty: a background reload that
+# fetches unchanged data should not force a 9s rebuild every 15s; external
+# changes are picked up via the TTL instead.
+_ANALYTICS_CACHE = {"data": None, "ts": 0, "dirty": False, "mtimes": None}
+_ANALYTICS_TTL_SEC = 60
+
+def _file_mtime(path):
+    try:
+        return os.path.getmtime(path)
+    except Exception:
+        return 0
+
+def _analytics_mtimes():
+    # NOTE: rankings.db is intentionally excluded — sqlite3 read access can bump
+    # its mtime via journal/WAL checkpoint, which would nondeterministically
+    # invalidate the cache. rankings.db is a static asset; the 60s TTL catches
+    # any external change, and save_courses() sets the dirty flag on uploads.
+    return (
+        _file_mtime('CombinedWork.xlsx'),
+        _file_mtime('autonomous_verified_link_compile.pdf.json'),
+    )
+
+def _invalidate_analytics():
+    """Mark the analytics cache dirty so the next request rebuilds it."""
+    _ANALYTICS_CACHE["dirty"] = True
+
+def get_analytics_data(force_rebuild=False):
+    """Return the cached analytics payload. Never builds, never blocks."""
+    if force_rebuild:
+        print("[ANACACHE] force-rebuild requested, marking dirty.")
+        _ANALYTICS_CACHE["dirty"] = True
+
+    # The cache is populated by a background thread. If it's empty, the first
+    # few polls will get this "building" status until the first build completes.
+    if _ANALYTICS_CACHE["data"] is None:
+        return {"status": "building"}
+
+    # Also check the dirty flag for near-instant rebuilds on solve/upload.
+    if _ANALYTICS_CACHE["dirty"]:
+        return {"status": "building"}
+
+    return _ANALYTICS_CACHE["data"]
+
+
+@app.route("/api/analytics", methods=["GET", "POST", "OPTIONS"])
+@app.route("/api/analytics.json", methods=["GET", "POST", "OPTIONS"])
+def api_analytics():
+    if request.method == "OPTIONS":
+        return "", 204
+    # POST to /api/analytics to force-trigger a rebuild on the next cycle.
+    if request.method == "POST":
+        return jsonify(get_analytics_data(force_rebuild=True))
+    return jsonify(get_analytics_data())
+
+# Parsed-source-rows caches: parsing CombinedWork.xlsx (pandas) and the variants
+# JSON is the expensive part of a rebuild; keep the parsed df + cw_rows and the
+# parsed variants list keyed by file mtime so a rebuild reuses them when the
+# files haven't changed (only global_courses did).
+_CW_CACHE = {"mtime": None, "df": None, "cw_rows": None}
+_VARIANTS_CACHE = {"mtime": None, "variants": None}
+
+# Standard world-region bucketing for the Geography sub-tab regional panel.
+_REGION_MAP = {
+    'india': 'INDIA',
+    'pakistan': 'SOUTH ASIA', 'bangladesh': 'SOUTH ASIA', 'sri lanka': 'SOUTH ASIA',
+    'nepal': 'SOUTH ASIA', 'bhutan': 'SOUTH ASIA', 'maldives': 'SOUTH ASIA',
+    'china': 'EAST ASIA & PACIFIC', 'japan': 'EAST ASIA & PACIFIC',
+    'south korea': 'EAST ASIA & PACIFIC', 'korea': 'EAST ASIA & PACIFIC',
+    'hong kong': 'EAST ASIA & PACIFIC', 'taiwan': 'EAST ASIA & PACIFIC',
+    'singapore': 'EAST ASIA & PACIFIC', 'malaysia': 'EAST ASIA & PACIFIC',
+    'thailand': 'EAST ASIA & PACIFIC', 'indonesia': 'EAST ASIA & PACIFIC',
+    'philippines': 'EAST ASIA & PACIFIC', 'phillipines': 'EAST ASIA & PACIFIC',
+    'vietnam': 'EAST ASIA & PACIFIC', 'australia': 'EAST ASIA & PACIFIC',
+    'new zealand': 'EAST ASIA & PACIFIC', 'fiji': 'EAST ASIA & PACIFIC',
+    'usa': 'NORTH AMERICA', 'united states': 'NORTH AMERICA',
+    'united states of america': 'NORTH AMERICA', 'canada': 'NORTH AMERICA',
+    'mexico': 'NORTH AMERICA',
+    'uk': 'EUROPE', 'united kingdom': 'EUROPE', 'england': 'EUROPE',
+    'ireland': 'EUROPE', 'france': 'EUROPE', 'germany': 'EUROPE', 'spain': 'EUROPE',
+    'italy': 'EUROPE', 'netherlands': 'EUROPE', 'belgium': 'EUROPE',
+    'switzerland': 'EUROPE', 'austria': 'EUROPE', 'sweden': 'EUROPE',
+    'denmark': 'EUROPE', 'norway': 'EUROPE', 'finland': 'EUROPE',
+    'poland': 'EUROPE', 'portugal': 'EUROPE', 'romania': 'EUROPE',
+    'hungary': 'EUROPE', 'lithuania': 'EUROPE', 'luxembourg': 'EUROPE',
+    'russia': 'EUROPE', 'ukraine': 'EUROPE', 'turkey': 'EUROPE', 'greece': 'EUROPE',
+    'czech': 'EUROPE', 'slovakia': 'EUROPE', 'croatia': 'EUROPE',
+    'saudi arabia': 'MIDDLE EAST & AFRICA', 'uae': 'MIDDLE EAST & AFRICA',
+    'united arab emirates': 'MIDDLE EAST & AFRICA', 'qatar': 'MIDDLE EAST & AFRICA',
+    'oman': 'MIDDLE EAST & AFRICA', 'israel': 'MIDDLE EAST & AFRICA',
+    'iran': 'MIDDLE EAST & AFRICA', 'jordan': 'MIDDLE EAST & AFRICA',
+    'kuwait': 'MIDDLE EAST & AFRICA', 'bahrain': 'MIDDLE EAST & AFRICA',
+    'south africa': 'MIDDLE EAST & AFRICA', 'egypt': 'MIDDLE EAST & AFRICA',
+    'nigeria': 'MIDDLE EAST & AFRICA', 'kenya': 'MIDDLE EAST & AFRICA',
+    'morocco': 'MIDDLE EAST & AFRICA', 'ghana': 'MIDDLE EAST & AFRICA',
+    'brazil': 'LATIN AMERICA', 'argentina': 'LATIN AMERICA',
+    'chile': 'LATIN AMERICA', 'colombia': 'LATIN AMERICA', 'peru': 'LATIN AMERICA',
+}
+
+def _region_for_country(name):
+    if not name:
+        return 'OTHER'
+    k = str(name).strip().lower()
+    if k in _REGION_MAP:
+        return _REGION_MAP[k]
+    for frag, reg in _REGION_MAP.items():
+        if frag in k:
+            return reg
+    return 'OTHER'
+
+def _get_level(ctype):
+    """Canonical credential label from a Course Type / domain string."""
+    c = str(ctype).lower().replace('gradiuate', 'graduate').strip()
+    if 'post graduate diploma' in c or 'post grad diploma' in c or 'graduate diploma' in c:
+        return "Post Graduate Diploma"
+    if 'post graduate certificate' in c or 'post grad certificate' in c or 'post grad cert' in c:
+        return "Post Graduate Certificate"
+    if 'bachelor' in c or c == 'ug' or 'undergrad' in c:
+        return "Bachelor's Degree"
+    if 'master' in c or c == 'pg':
+        return "Master's Degree"
+    if 'diploma' in c:
+        return "Diploma"
+    if 'cert' in c:
+        return "Certificate"
+    return "Other"
+
+def _parse_inr(fee):
+    """Parse a fee string to a numeric INR value. 'Free'/0 -> 0, unparseable -> None."""
+    s = str(fee).lower()
+    if 'free' in s:
+        return 0
+    m = re.search(r'[\d][\d,]*(?:\.\d+)?', str(fee))
+    if not m:
+        return None
+    try:
+        return float(m.group(0).replace(',', ''))
+    except ValueError:
+        return None
+
+def _parse_fee_tier(fee):
+    """Bucket a fee string into Free/Affordable/Mid/Premium (INR). None if unparseable."""
+    val = _parse_inr(fee)
+    if val is None:
+        return None
+    if val <= 0:
+        return 'Free'
+    if val <= 50000:
+        return 'Affordable'
+    if val <= 200000:
+        return 'Mid'
+    return 'Premium'
+
+_TIER_WEIGHT = {'Free': 100, 'Affordable': 70, 'Mid': 45, 'Premium': 15}
+_DEGREE_LEVELS = ["Bachelor's Degree", "Master's Degree", "Diploma",
+                  "Post Graduate Certificate", "Post Graduate Diploma", "Certificate"]
+
+def _median(vals):
+    vals = sorted(v for v in vals if v is not None)
+    if not vals:
+        return None
+    n = len(vals)
+    mid = n // 2
+    if n % 2:
+        return vals[mid]
+    return (vals[mid - 1] + vals[mid]) / 2.0
+
+def _hhi(counts_dict):
+    """Herfindahl-Hirschman Index (0-10000) over a {key: count} dict."""
+    total = sum(counts_dict.values()) if counts_dict else 0
+    if total <= 0:
+        return 0
+    return int(round(sum((c / total) * 10000 for c in counts_dict.values() if c)))
+
+def _hhi_label(hhi):
+    if hhi >= 2500:
+        return "Highly Concentrated"
+    if hhi >= 1500:
+        return "Moderately Concentrated"
+    return "Diversified"
+
+def _geo_hhi_label(hhi):
+    if hhi >= 2500:
+        return "CONCENTRATED"
+    if hhi >= 1500:
+        return "MODERATELY CONCENTRATED"
+    return "DIVERSIFIED"
+
+def _norm_name(s):
+    return re.sub(r'\s+', ' ', str(s or '').strip().lower())
+
+def _saturation_label(share_pct):
+    if share_pct >= 20:
+        return "SATURATED"
+    if share_pct >= 10:
+        return "COMPETITIVE"
+    if share_pct >= 5:
+        return "NICHE"
+    return "EMERGING"
+
+def _parse_mismatch_attrs(reason):
+    """Extract canonical attribute names from a 'Mismatch: Cost, Duration' string."""
+    r = str(reason or '').strip().lower()
+    if r.startswith('mismatch:'):
+        parts = [p.strip() for p in r[len('mismatch:'):].split(',') if p.strip()]
+        cap = []
+        for p in parts:
+            cap.append(p[:1].upper() + p[1:])
+        return cap
+    return []
+
+_ATTR_KEYS = {
+    'Cost': 'cost_match', 'Duration': 'duration_match', 'Mode': 'mode_match',
+    'Language': 'lang_match', 'Country': 'country_match',
+    'University': 'uni_match', 'Skills': 'sk_match',
+}
+
 def build_analytics_data():
-    """Build the analytics payload dict (course_category, pricing_category,
-    variant_category, domain_pivot, country_pivot). Pure data build — used by
-    /api/analytics and by save_courses() so public/api/analytics.json stays in
-    sync with the static data/courses exports instead of drifting stale."""
+    """Build the analytics payload dict per the Analytics Tab data contract.
+
+    Pure data build — used by the /api/analytics route. Every
+    new field gracefully no-ops (empty/zero/null) when its source file is
+    missing so the route never 500s."""
+    qs_set, nirf_set = _load_rankings()
+
     data = {
+        # EXISTING (preserved)
         "course_category": {},
         "variant_category": {},
         "pricing_category": {},
         "domain_pivot": {},
-        "country_pivot": {}
+        "country_pivot": {},
+        # NEW blocks
+        "cost_access": {},
+        "concentration": {},
+        "geo_concentration": {},
+        "regional_groups": {},
+        "country_quality": {},
+        "geo_problem_ranking": [],
+        "geo_anomalies": {"low_verification": [], "high_issue_rate": [],
+                          "fee_outlier": [], "global_median_fee": None},
+        "geo_comparison_seed": {"country_a": None, "country_b": None},
+        "ranked_share": {"qs_pct": 0, "nirf_pct": 0},
+        "ranking_mix": {"qs_ranked": 0, "nirf_ranked": 0, "both": 0,
+                        "unranked": 0, "total": 0, "qs_ranked_pct": 0,
+                        "nirf_ranked_pct": 0, "unranked_pct": 0},
+        "ranked_vs_unranked_metrics": [],
+        "credential_ladder": {},
+        "credential_verification_matrix": {},
+        "ranked_credential_mix": {},
+        "credential_level_pricing": {},
+        "domain_saturation": [],
+        "specialization_hhi": {"value": 0, "label": "Diversified"},
+        "university_leaderboard": [],
+        "verification_quality": {
+            "status_counts": {"verified": 0, "discrepancies": 0, "errors": 0,
+                               "unverified": 0, "total": 0},
+            "issue_category_counts": {"website_issue": 0, "course_issue": 0,
+                                       "verified": 0},
+            "issue_sub_counts": {},
+            "reason_clusters": {},
+            "disc_reason_pareto": [],
+            "reason_attribute_matrix": {},
+            "attribute_match_rates": [],
+            "country_quality": [],
+            "country_quality_anomalies": {},
+            "domain_quality": [],
+            "data_quality_health": {"score": 0, "verified_rate": 0,
+                                    "error_rate": 0, "attribute_completeness": 0,
+                                    "open_issues": 0},
+            "anomalies": [],
+        },
+        "benchmark_india_intl": {},
+        "analytics_courses": [],
+        "filter_facets": {"levels": [], "countries": [], "cost_tiers": [],
+                          "ranking": ["QS Ranked", "NIRF Ranked", "Unranked"]},
+        "anomalies": {"outlier_fees": [], "low_verification_countries": [],
+                      "high_error_domains": []},
+        "cost_distribution": {"histogram": [], "median_fee_inr": None,
+                              "iqr_low": None, "iqr_high": None, "free_share": 0,
+                              "affordable_share": 0, "cost_access_index": 0},
+        "key_findings": [],
+        "stats": {"total": 0, "verified": 0, "discrepancies": 0, "errors": 0,
+                  "unverified": 0, "website_issues": 0, "course_issues": 0,
+                  "open_issues": 0},
     }
 
-    # 1. Parse CombinedWork.xlsx
+    # ────────────────────────────────────────────────────────────────────────
+    # 1. CombinedWork.xlsx → course_category, pricing_category, country_pivot,
+    #    cost_access, credential_ladder, ranked_credential_mix,
+    #    credential_level_pricing, cost_distribution.
+    # ────────────────────────────────────────────────────────────────────────
+    cw_rows = []  # list of dicts: {name, country, level, fee_inr, tier, university}
+    df = None
     if os.path.exists('CombinedWork.xlsx'):
-        xl = pd.ExcelFile('CombinedWork.xlsx')
-        dfs = [xl.parse(s).assign(Country=s) for s in xl.sheet_names]
-        df = pd.concat(dfs)
-        df = df.dropna(subset=['Course name'])
-
-        # Country Count
-        country_counts = df['Country'].value_counts().to_dict()
-        data['country_pivot'] = country_counts
-
-        # Academic credential mix — DEGREE LEVELS ONLY.
-        # Geography (Indian vs International) is shown elsewhere (split
-        # visual + Geography sub-tab); it must not pollute the credential
-        # doughnut. Labels are canonical and agree with normalize_domain()
-        # so the Analytics credential chart and the Dashboard breakdown match.
-        # Genuinely different degrees (Bachelor's vs Master's vs Diploma, etc.)
-        # are kept as separate segments — only case/spelling variants of the
-        # SAME degree are collapsed.
-        def get_level(ctype):
-            c = str(ctype).lower().replace('gradiuate', 'graduate').strip()
-            if 'post graduate diploma' in c or 'post grad diploma' in c or 'graduate diploma' in c:
-                return "Post Graduate Diploma"
-            if 'post graduate certificate' in c or 'post grad certificate' in c or 'post grad cert' in c:
-                return "Post Graduate Certificate"
-            if 'bachelor' in c or c == 'ug' or 'undergrad' in c:
-                return "Bachelor's Degree"
-            if 'master' in c or 'pg' in c:
-                return "Master's Degree"
-            if 'diploma' in c:
-                return "Diploma"
-            if 'cert' in c:
-                return "Certificate"
-            return "Other"
-
-        levels = df['Course Type'].apply(get_level).value_counts().to_dict()
-        for k, v in levels.items():
-            if k != 'Other':
-                data['course_category'][k] = int(v)
-
-        # Pricing — calibrated cost-access intelligence (INR).
-        # Old code matched any fee containing the digit "0" → ~everything.
-        # Now: parse the numeric fee (strip ₹/commas), bucket into 4 tiers.
-        import re as _re
-        def parse_fee_tier(fee):
-            s = str(fee).lower()
-            if 'free' in s:
-                return 'Free'
-            m = _re.search(r'[\d][\d,]*(?:\.\d+)?', str(fee))
-            if not m:
-                return None
+        cw_mtime = _file_mtime('CombinedWork.xlsx')
+        if _CW_CACHE["mtime"] == cw_mtime and _CW_CACHE["df"] is not None:
+            # Cache hit: reuse the parsed DataFrame + enriched rows.
+            df = _CW_CACHE["df"]
+            cw_rows = _CW_CACHE["cw_rows"]
+        else:
             try:
-                val = float(m.group(0).replace(',', ''))
-            except ValueError:
-                return None
-            if val <= 0:
-                return 'Free'
-            if val <= 50000:
-                return 'Affordable'
-            if val <= 200000:
-                return 'Mid'
-            return 'Premium'
+                xl = pd.ExcelFile('CombinedWork.xlsx')
+                dfs = [xl.parse(s).assign(Country=s) for s in xl.sheet_names]
+                df = pd.concat(dfs)
+                df = df.dropna(subset=['Course name'])
 
-        pricing = {'Free': 0, 'Affordable': 0, 'Mid': 0, 'Premium': 0}
-        for fee in df['Fees'].tolist():
-            tier = parse_fee_tier(fee)
-            if tier:
-                pricing[tier] = pricing.get(tier, 0) + 1
-        data['pricing_category'] = pricing
+                # Single-pass enrichment for cost_access / credential ladder.
+                uni_col = 'Name of Institute' if 'Name of Institute' in df.columns else None
+                for _, row in df.iterrows():
+                    name = str(row.get('Course name', '')).strip()
+                    if not name:
+                        continue
+                    level = _get_level(row.get('Course Type', ''))
+                    fee_inr = _parse_inr(row.get('Fees', ''))
+                    tier = _parse_fee_tier(row.get('Fees', ''))
+                    country = str(row.get('Country', '')).strip()
+                    university = str(row.get(uni_col, '')).strip() if uni_col else ''
+                    cw_rows.append({'name': name, 'country': country, 'level': level,
+                                    'fee_inr': fee_inr, 'tier': tier,
+                                    'university': university})
+                _CW_CACHE["mtime"] = cw_mtime
+                _CW_CACHE["df"] = df
+                _CW_CACHE["cw_rows"] = cw_rows
+            except Exception as e:
+                print('[ANALYTICS] CombinedWork.xlsx parse failed:', e)
 
-    # 2. Parse Variants (link_compile.pdf.json)
+        # Cheap derivations from the (possibly cached) DataFrame.
+        if df is not None:
+            # Country Count (preserved)
+            data['country_pivot'] = {str(k): int(v) for k, v in
+                                     df['Country'].value_counts().to_dict().items()}
+
+            # Academic credential mix (degree levels only)
+            levels = df['Course Type'].apply(_get_level).value_counts().to_dict()
+            for k, v in levels.items():
+                if k != 'Other':
+                    data['course_category'][k] = int(v)
+
+            # Pricing tiers (preserved)
+            pricing = {'Free': 0, 'Affordable': 0, 'Mid': 0, 'Premium': 0}
+            for fee in df['Fees'].tolist():
+                tier = _parse_fee_tier(fee)
+                if tier:
+                    pricing[tier] = pricing.get(tier, 0) + 1
+            data['pricing_category'] = pricing
+
+    if cw_rows:
+        data['cost_access'] = _build_cost_access(cw_rows)
+        data['cost_distribution'] = _build_cost_distribution(cw_rows)
+        data['credential_ladder'] = _build_credential_ladder(cw_rows, qs_set, nirf_set)
+        data['ranked_credential_mix'] = _build_ranked_credential_mix(cw_rows, qs_set, nirf_set)
+        data['credential_level_pricing'] = _build_credential_level_pricing(cw_rows)
+
+    # ────────────────────────────────────────────────────────────────────────
+    # 2. Variants JSON → variant_category, domain_pivot.
+    # ────────────────────────────────────────────────────────────────────────
     json_file = 'autonomous_verified_link_compile.pdf.json'
+    variants = []
     if os.path.exists(json_file):
-        with open(json_file, 'r', encoding='utf-8') as f:
-            variants = json.load(f)
+        v_mtime = _file_mtime(json_file)
+        if _VARIANTS_CACHE["mtime"] == v_mtime and _VARIANTS_CACHE["variants"] is not None:
+            variants = _VARIANTS_CACHE["variants"]
+        else:
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    variants = json.load(f)
+                _VARIANTS_CACHE["mtime"] = v_mtime
+                _VARIANTS_CACHE["variants"] = variants
+            except Exception as e:
+                print('[ANALYTICS] variants JSON parse failed:', e)
 
-        ind_var = len([v for v in variants if v.get('country') == 'India'])
+    if variants:
+        ind_var = sum(1 for v in variants if v.get('country') == 'India')
         int_var = len(variants) - ind_var
-
-        data['variant_category']['Indian Variants'] = ind_var
-        data['variant_category']['International Variants'] = int_var
-        data['variant_category']['Total Variants'] = len(variants)
-
-        # Pivot by domain
+        data['variant_category'] = {"Indian": ind_var, "International": int_var,
+                                     "Total Variants": len(variants)}
         domains = {}
         for v in variants:
             d = v.get('domain', 'Unknown')
-            if d not in domains:
-                domains[d] = {'Total': 0, 'Indian': 0, 'International': 0}
-            domains[d]['Total'] += 1
+            entry = domains.setdefault(d, {'Total': 0, 'Indian': 0, 'International': 0})
+            entry['Total'] += 1
             if v.get('country') == 'India':
-                domains[d]['Indian'] += 1
+                entry['Indian'] += 1
             else:
-                domains[d]['International'] += 1
+                entry['International'] += 1
         data['domain_pivot'] = domains
+
+    # ────────────────────────────────────────────────────────────────────────
+    # 3. global_courses → analytics_courses, verification_quality, country
+    #    intelligence, university leaderboard, benchmarks.
+    # ────────────────────────────────────────────────────────────────────────
+    gc = list(global_courses)
+    data['stats'] = compute_stats()
+    data['analytics_courses'] = _build_analytics_courses(gc, qs_set, nirf_set)
+    data['filter_facets'] = _build_filter_facets(data['analytics_courses'])
+    data['verification_quality'] = _build_verification_quality(gc)
+    data['credential_verification_matrix'] = _build_credential_verification_matrix(gc)
+
+    # Country intelligence (global_courses + rankings.db)
+    cq_dict = _build_country_quality(gc, qs_set, nirf_set)
+    data['country_quality'] = cq_dict
+    data['regional_groups'] = _build_regional_groups(gc)
+    data['geo_concentration'] = _build_geo_concentration(gc)
+    data['geo_problem_ranking'] = _build_geo_problem_ranking(cq_dict)
+    data['geo_anomalies'] = _build_geo_anomalies(cq_dict)
+    data['geo_comparison_seed'] = _build_geo_comparison_seed(cq_dict)
+    data['verification_quality']['country_quality'] = _build_vq_country_quality(gc)
+    data['verification_quality']['country_quality_anomalies'] = _build_vq_country_anomalies(gc)
+    data['verification_quality']['domain_quality'] = _build_domain_quality(gc)
+    data['anomalies'] = _build_cross_anomalies(gc, data['verification_quality'])
+    data['university_leaderboard'] = _build_university_leaderboard(gc, qs_set, nirf_set)
+    data['benchmark_india_intl'] = _build_benchmark(gc, qs_set, nirf_set,
+                                                    data['geo_concentration'])
+
+    # Rankings (analytics_courses joined to rankings.db)
+    data['ranking_mix'] = _build_ranking_mix(data['analytics_courses'])
+    data['ranked_share'] = _build_ranked_share(data['analytics_courses'])
+    data['ranked_vs_unranked_metrics'] = _build_ranked_vs_unranked(data['analytics_courses'])
+
+    # ────────────────────────────────────────────────────────────────────────
+    # 4. Derived from pivots (concentration, saturation, HHI).
+    # ────────────────────────────────────────────────────────────────────────
+    data['concentration'] = _build_concentration(data['country_pivot'], data['domain_pivot'])
+    data['specialization_hhi'] = _build_specialization_hhi(data['domain_pivot'])
+    data['domain_saturation'] = _build_domain_saturation(data['domain_pivot'])
+
+    # ────────────────────────────────────────────────────────────────────────
+    # 5. Auto-generated executive narrative.
+    # ────────────────────────────────────────────────────────────────────────
+    data['key_findings'] = _build_key_findings(data)
 
     return data
 
 
-@app.route("/api/analytics", methods=["GET"])
-@app.route("/api/analytics.json", methods=["GET"])
-def api_analytics():
-    _refresh_courses_if_stale()
+# ── Populator helpers (each guards its inputs; never raises) ─────────────────
+
+def _build_cost_access(cw_rows):
+    """cost_access block from CombinedWork rows."""
+    out = {
+        "affordability_index": 0, "median_fee_inr": None, "mean_fee_inr": None,
+        "free_vs_paid": {"free": 0, "paid": 0, "free_pct": 0, "paid_pct": 0, "ratio": None},
+        "fee_histogram": [],
+        "cost_tier_by_level": {},
+        "region_affordability": {
+            "india": {"affordability_index": 0, "free_pct": 0, "median_fee_inr": None},
+            "intl": {"affordability_index": 0, "free_pct": 0, "median_fee_inr": None},
+        },
+    }
     try:
-        return jsonify({"status": "success", "data": build_analytics_data()})
+        tiered = [r for r in cw_rows if r['tier']]
+        priced = [r['fee_inr'] for r in cw_rows if r['fee_inr'] and r['fee_inr'] > 0]
+        free = [r for r in cw_rows if r['fee_inr'] == 0 or r['tier'] == 'Free']
+
+        if tiered:
+            out['affordability_index'] = int(round(
+                sum(_TIER_WEIGHT[r['tier']] for r in tiered) / len(tiered)))
+        if priced:
+            med = _median(priced)
+            mean = sum(priced) / len(priced)
+            out['median_fee_inr'] = int(round(med)) if med is not None else None
+            out['mean_fee_inr'] = int(round(mean))
+
+        total = len(cw_rows)
+        nf = len(free)
+        npaid = len(priced)
+        if total > 0:
+            out['free_vs_paid'] = {
+                "free": nf, "paid": npaid,
+                "free_pct": round(nf / total * 100, 1),
+                "paid_pct": round(npaid / total * 100, 1),
+                "ratio": round(nf / npaid, 2) if npaid else None,
+            }
+
+        # Fee histogram buckets
+        buckets = [
+            {"label": "Free", "min": None, "max": 0, "count": 0},
+            {"label": "1-25k", "min": 1, "max": 25000, "count": 0},
+            {"label": "25k-50k", "min": 25001, "max": 50000, "count": 0},
+            {"label": "50k-100k", "min": 50001, "max": 100000, "count": 0},
+            {"label": "100k-200k", "min": 100001, "max": 200000, "count": 0},
+            {"label": "200k-500k", "min": 200001, "max": 500000, "count": 0},
+            {"label": "500k+", "min": 500001, "max": None, "count": 0},
+        ]
+        for r in cw_rows:
+            v = r['fee_inr']
+            if v is None:
+                continue
+            if v == 0:
+                buckets[0]['count'] += 1
+            elif v <= 25000:
+                buckets[1]['count'] += 1
+            elif v <= 50000:
+                buckets[2]['count'] += 1
+            elif v <= 100000:
+                buckets[3]['count'] += 1
+            elif v <= 200000:
+                buckets[4]['count'] += 1
+            elif v <= 500000:
+                buckets[5]['count'] += 1
+            else:
+                buckets[6]['count'] += 1
+        out['fee_histogram'] = buckets
+
+        # Cost tier by credential level
+        ctl = {}
+        for r in cw_rows:
+            lvl = r['level']
+            if lvl == 'Other' or not r['tier']:
+                continue
+            d = ctl.setdefault(lvl, {'Free': 0, 'Affordable': 0, 'Mid': 0, 'Premium': 0})
+            d[r['tier']] += 1
+        out['cost_tier_by_level'] = ctl
+
+        # Region affordability (India vs International)
+        def region_block(rows):
+            rt = [r for r in rows if r['tier']]
+            rp = [r['fee_inr'] for r in rows if r['fee_inr'] and r['fee_inr'] > 0]
+            rf = [r for r in rows if r['fee_inr'] == 0 or r['tier'] == 'Free']
+            ai = int(round(sum(_TIER_WEIGHT[r['tier']] for r in rt) / len(rt))) if rt else 0
+            fp = round(len(rf) / len(rows) * 100, 1) if rows else 0
+            med = _median(rp) if rp else None
+            return {"affordability_index": ai, "free_pct": fp,
+                    "median_fee_inr": int(round(med)) if med is not None else None}
+
+        india_rows = [r for r in cw_rows if str(r['country']).lower() == 'india']
+        intl_rows = [r for r in cw_rows if str(r['country']).lower() != 'india']
+        out['region_affordability']['india'] = region_block(india_rows)
+        out['region_affordability']['intl'] = region_block(intl_rows)
     except Exception as e:
-        import traceback
-        return jsonify({"status": "error", "message": str(e), "trace": traceback.format_exc()})
+        print('[ANALYTICS] cost_access build failed:', e)
+    return out
+
+
+def _build_cost_distribution(cw_rows):
+    """Richer fee distribution complementing cost_access."""
+    out = {"histogram": [], "median_fee_inr": None, "iqr_low": None,
+           "iqr_high": None, "free_share": 0, "affordable_share": 0,
+           "cost_access_index": 0}
+    try:
+        priced = sorted(r['fee_inr'] for r in cw_rows if r['fee_inr'] and r['fee_inr'] > 0)
+        total = len(cw_rows)
+        nfree = sum(1 for r in cw_rows if r['fee_inr'] == 0)
+        naff = sum(1 for r in cw_rows if r['fee_inr'] and 0 < r['fee_inr'] <= 50000)
+        bands = [
+            ("Free", 0, 0), ("0-50000", 1, 50000),
+            ("50001-100000", 50001, 100000), ("100001-200000", 100001, 200000),
+            ("200001-500000", 200001, 500000), ("500001-1000000", 500001, 1000000),
+            ("above_1000000", 1000001, float('inf')),
+        ]
+        hist = []
+        for label, lo, hi in bands:
+            cnt = sum(1 for r in cw_rows
+                      if r['fee_inr'] is not None
+                      and (lo <= r['fee_inr'] <= hi if hi != float('inf')
+                           else r['fee_inr'] >= lo))
+            hist.append({"band": label, "count": cnt})
+        out['histogram'] = hist
+        if priced:
+            med = _median(priced)
+            out['median_fee_inr'] = int(round(med)) if med is not None else None
+            n = len(priced)
+            q1 = priced[int(n * 0.25)] if n >= 4 else (priced[0] if priced else None)
+            q3 = priced[int(n * 0.75)] if n >= 4 else (priced[-1] if priced else None)
+            out['iqr_low'] = round(q1, 1) if q1 is not None else None
+            out['iqr_high'] = round(q3, 1) if q3 is not None else None
+        if total > 0:
+            fs = nfree / total
+            as_ = naff / total
+            out['free_share'] = round(fs, 3)
+            out['affordable_share'] = round(as_, 3)
+            med = out['median_fee_inr'] or 0
+            out['cost_access_index'] = int(round(
+                40 * fs + 35 * as_ + 25 * (1 - min(med, 1000000) / 1000000)))
+    except Exception as e:
+        print('[ANALYTICS] cost_distribution build failed:', e)
+    return out
+
+
+def _build_credential_ladder(cw_rows, qs_set, nirf_set):
+    """Per-level cost, geography, verification (joined by name) and rank presence."""
+    out = {}
+    try:
+        # name -> status lookup from global_courses (case-insensitive, trimmed)
+        name_status = {}
+        for c in global_courses:
+            name_status[_norm_name(c.get('name'))] = c.get('status')
+
+        agg = {}
+        for r in cw_rows:
+            lvl = r['level']
+            if lvl == 'Other':
+                continue
+            a = agg.setdefault(lvl, {'count': 0, 'fees': [], 'free': 0,
+                                    'indian': 0, 'intl': 0,
+                                    'verified': 0, 'matched': 0,
+                                    'ranked': 0, 'unranked': 0})
+            a['count'] += 1
+            if r['fee_inr'] and r['fee_inr'] > 0:
+                a['fees'].append(r['fee_inr'])
+            if r['fee_inr'] == 0:
+                a['free'] += 1
+            if str(r['country']).lower() == 'india':
+                a['indian'] += 1
+            else:
+                a['intl'] += 1
+            st = name_status.get(_norm_name(r['name']))
+            if st:
+                a['matched'] += 1
+                if st == 'Verified':
+                    a['verified'] += 1
+            uni_l = _norm_name(r['university'])
+            if uni_l and (uni_l in qs_set or uni_l in nirf_set):
+                a['ranked'] += 1
+            else:
+                a['unranked'] += 1
+
+        for lvl, a in agg.items():
+            cnt = a['count'] or 0
+            priced = [f for f in a['fees'] if f]
+            med = _median(priced)
+            out[lvl] = {
+                "count": cnt,
+                "avg_cost_inr": round(sum(priced) / len(priced), 1) if priced else None,
+                "median_cost_inr": round(med, 1) if med is not None else None,
+                "free_count": a['free'],
+                "free_pct": round(a['free'] / cnt * 100, 1) if cnt else 0,
+                "indian": a['indian'],
+                "international": a['intl'],
+                "indian_pct": round(a['indian'] / cnt * 100, 1) if cnt else 0,
+                "verification_rate": round(a['verified'] / a['matched'], 3)
+                                     if a['matched'] else None,
+                "ranked_count": a['ranked'],
+                "unranked_count": a['unranked'],
+            }
+    except Exception as e:
+        print('[ANALYTICS] credential_ladder build failed:', e)
+    return out
+
+
+def _build_ranked_credential_mix(cw_rows, qs_set, nirf_set):
+    out = {}
+    try:
+        agg = {}
+        for r in cw_rows:
+            lvl = r['level']
+            if lvl == 'Other':
+                continue
+            a = agg.setdefault(lvl, {'ranked': 0, 'unranked': 0})
+            uni_l = _norm_name(r['university'])
+            if uni_l and (uni_l in qs_set or uni_l in nirf_set):
+                a['ranked'] += 1
+            else:
+                a['unranked'] += 1
+        out = {lvl: {"ranked": a['ranked'], "unranked": a['unranked']}
+               for lvl, a in agg.items()}
+    except Exception as e:
+        print('[ANALYTICS] ranked_credential_mix build failed:', e)
+    return out
+
+
+def _build_credential_level_pricing(cw_rows):
+    out = {}
+    try:
+        agg = {}
+        for r in cw_rows:
+            lvl = r['level']
+            if lvl == 'Other' or not r['tier']:
+                continue
+            d = agg.setdefault(lvl, {'Free': 0, 'Affordable': 0, 'Mid': 0, 'Premium': 0})
+            d[r['tier']] += 1
+        out = agg
+    except Exception as e:
+        print('[ANALYTICS] credential_level_pricing build failed:', e)
+    return out
+
+
+def _build_credential_verification_matrix(gc):
+    """Per-credential-level verification quality (percentages share within level)."""
+    out = {}
+    try:
+        agg = {}
+        for c in gc:
+            lvl = _get_level(c.get('domain', ''))
+            a = agg.setdefault(lvl, {'verified': 0, 'discrepancy': 0,
+                                     'error': 0, 'unverified': 0, 'total': 0})
+            a['total'] += 1
+            s = c.get('status')
+            if s == 'Verified': a['verified'] += 1
+            elif s == 'Discrepancy': a['discrepancy'] += 1
+            elif s == 'Error': a['error'] += 1
+            elif s == 'Unverified': a['unverified'] += 1
+        for lvl, a in agg.items():
+            tot = a['total']
+            if not tot:
+                continue
+            out[lvl] = {
+                "verified_pct": round(a['verified'] / tot * 100, 1),
+                "discrepancy_pct": round(a['discrepancy'] / tot * 100, 1),
+                "error_pct": round(a['error'] / tot * 100, 1),
+                "unverified_pct": round(a['unverified'] / tot * 100, 1),
+                "total": tot, "blank_when_zero": tot == 0,
+            }
+    except Exception as e:
+        print('[ANALYTICS] credential_verification_matrix build failed:', e)
+    return out
+
+
+def _build_analytics_courses(gc, qs_set, nirf_set):
+    """Normalized per-course rows for client-side filtering."""
+    out = []
+    try:
+        for c in gc:
+            uni = c.get('university') or ''
+            uni_l = _norm_name(uni)
+            qs = uni_l in qs_set if uni_l else False
+            nirf = uni_l in nirf_set if uni_l else False
+            fee = _parse_inr(c.get('cost', ''))
+            out.append({
+                "name": c.get('name', ''),
+                "university": uni or None,
+                "country": c.get('country'),
+                "level": _get_level(c.get('domain', '')),
+                "domain": normalize_domain(c.get('domain', '')),
+                "cost_tier": _parse_fee_tier(c.get('cost', '')) or "Free",
+                "fee_inr": round(fee, 1) if fee is not None else None,
+                "status": c.get('status', ''),
+                "qs_ranked": bool(qs),
+                "nirf_ranked": bool(nirf),
+                "issue_category": c.get('issue_category') or None,
+                "disc_reason": c.get('disc_reason') or None,
+            })
+    except Exception as e:
+        print('[ANALYTICS] analytics_courses build failed:', e)
+    return out
+
+
+def _build_filter_facets(analytics_courses):
+    try:
+        levels = sorted({r['level'] for r in analytics_courses
+                         if r.get('level') and r['level'] != 'Other'})
+        countries = sorted({r['country'] for r in analytics_courses
+                            if r.get('country') and r['country'] != 'Unknown'})
+        tiers = sorted({r['cost_tier'] for r in analytics_courses if r.get('cost_tier')})
+        return {"levels": levels, "countries": countries, "cost_tiers": tiers,
+                "ranking": ["QS Ranked", "NIRF Ranked", "Unranked"]}
+    except Exception:
+        return {"levels": [], "countries": [], "cost_tiers": [],
+                "ranking": ["QS Ranked", "NIRF Ranked", "Unranked"]}
+
+
+def _build_verification_quality(gc):
+    vq = {
+        "status_counts": {"verified": 0, "discrepancies": 0, "errors": 0,
+                          "unverified": 0, "total": 0},
+        "issue_category_counts": {"website_issue": 0, "course_issue": 0, "verified": 0},
+        "issue_sub_counts": {},
+        "reason_clusters": {},
+        "disc_reason_pareto": [],
+        "reason_attribute_matrix": {},
+        "attribute_match_rates": [],
+        "country_quality": [],
+        "country_quality_anomalies": {},
+        "domain_quality": [],
+        "data_quality_health": {"score": 0, "verified_rate": 0, "error_rate": 0,
+                                "attribute_completeness": 0, "open_issues": 0},
+        "anomalies": [],
+    }
+    try:
+        total = len(gc)
+        verified = sum(1 for c in gc if c.get('status') == 'Verified')
+        discrepancies = sum(1 for c in gc if c.get('status') == 'Discrepancy')
+        errors = sum(1 for c in gc if c.get('status') == 'Error')
+        unverified = sum(1 for c in gc if c.get('status') == 'Unverified')
+        vq["status_counts"] = {"verified": verified, "discrepancies": discrepancies,
+                                "errors": errors, "unverified": unverified, "total": total}
+        vq["issue_category_counts"] = {
+            "website_issue": sum(1 for c in gc if c.get('issue_category') == ISSUE_CATEGORY_WEBSITE),
+            "course_issue": sum(1 for c in gc if c.get('issue_category') == ISSUE_CATEGORY_COURSE),
+            "verified": sum(1 for c in gc if c.get('issue_category') == ISSUE_CATEGORY_VERIFIED),
+        }
+        sub = {}
+        for c in gc:
+            s = c.get('issue_sub_type', '')
+            if s:
+                sub[s] = sub.get(s, 0) + 1
+        vq["issue_sub_counts"] = dict(sorted(sub.items(), key=lambda x: -x[1]))
+
+        # Reason clusters + reason-attribute matrix
+        clusters = {}
+        matrix = {}
+        for c in gc:
+            if c.get('status') != 'Discrepancy':
+                continue
+            attrs = _parse_mismatch_attrs(c.get('disc_reason', ''))
+            if attrs:
+                key = ", ".join(attrs)
+            elif c.get('issue_category') == ISSUE_CATEGORY_WEBSITE:
+                key = "Website Unreachable"
+            else:
+                key = c.get('disc_reason', '') or "Other"
+            clusters[key] = clusters.get(key, 0) + 1
+            row = matrix.setdefault(key, {a: 0 for a in _ATTR_KEYS})
+            for a in attrs:
+                if a in row:
+                    row[a] += 1
+        vq["reason_clusters"] = dict(sorted(clusters.items(), key=lambda x: -x[1]))
+        vq["reason_attribute_matrix"] = matrix
+
+        # Pareto (top 8 clusters)
+        pareto = []
+        cum = 0
+        tot_clusters = sum(clusters.values()) if clusters else 0
+        for k, v in sorted(clusters.items(), key=lambda x: -x[1])[:8]:
+            cum += v
+            pareto.append({"reason": k, "count": v,
+                           "cumulative_pct": round(cum / tot_clusters * 100, 1)
+                           if tot_clusters else 0})
+        vq["disc_reason_pareto"] = pareto
+
+        # Attribute match rates
+        rates = []
+        for attr, key in _ATTR_KEYS.items():
+            matched = sum(1 for c in gc if bool(c.get(key, False)))
+            rates.append({"attribute": attr, "total": total,
+                          "matched": matched,
+                          "mismatched": total - matched,
+                          "match_rate": round(matched / total, 3) if total else 0})
+        rates.sort(key=lambda x: x['match_rate'])
+        vq["attribute_match_rates"] = rates
+
+        # Data-quality health
+        vr = verified / total if total else 0
+        er = errors / total if total else 0
+        completeness = (sum(r['match_rate'] for r in rates) / len(rates)) if rates else 0
+        score = int(round(100 * (0.4 * vr + 0.3 * (1 - er) + 0.3 * completeness)))
+        vq["data_quality_health"] = {
+            "score": score, "verified_rate": round(vr, 3),
+            "error_rate": round(er, 3),
+            "attribute_completeness": round(completeness, 3),
+            "open_issues": sum(course_open_issues(c) for c in gc),
+        }
+
+        # Anomaly panel
+        vq["anomalies"] = _build_vq_anomalies(gc)
+    except Exception as e:
+        print('[ANALYTICS] verification_quality build failed:', e)
+    return vq
+
+
+def _build_vq_anomalies(gc):
+    out = []
+    try:
+        fees = [(_parse_inr(c.get('cost', '')) or 0) for c in gc]
+        fees_pos = [f for f in fees if f > 0]
+        med = _median(fees_pos) or 0
+        outlier = [c for c in gc if (_parse_inr(c.get('cost', '')) or 0) > 3 * med and med > 0]
+        rank_claim = [c for c in gc
+                      if (c.get('has_qs_badge') or c.get('has_nirf_badge'))
+                      and not _norm_name(c.get('university', ''))]
+        all_mis = [c for c in gc
+                   if c.get('issue_category') == ISSUE_CATEGORY_COURSE
+                   and all(not bool(c.get(k, False)) for k in _ATTR_KEYS.values())]
+        web_un = [c for c in gc if c.get('issue_category') == ISSUE_CATEGORY_WEBSITE]
+
+        def samples(rows, n=5):
+            res = []
+            for c in rows[:n]:
+                fee = _parse_inr(c.get('cost', ''))
+                res.append({"id": str(c.get('id', '')), "name": c.get('name', ''),
+                            "country": c.get('country'),
+                            "domain": normalize_domain(c.get('domain', '')),
+                            "cost": round(fee, 1) if fee is not None else None})
+            return res
+
+        out = [
+            {"type": "outlier_fees", "count": len(outlier), "severity": "High",
+             "sample_ids": samples(outlier)},
+            {"type": "unverified_rank_claim", "count": len(rank_claim), "severity": "Med",
+             "sample_ids": samples(rank_claim)},
+            {"type": "all_attribute_mismatch", "count": len(all_mis), "severity": "High",
+             "sample_ids": samples(all_mis)},
+            {"type": "website_unreachable", "count": len(web_un), "severity": "Med",
+             "sample_ids": samples(web_un)},
+        ]
+    except Exception as e:
+        print('[ANALYTICS] vq anomalies build failed:', e)
+    return out
+
+
+def _build_country_quality(gc, qs_set, nirf_set):
+    out = {}
+    try:
+        agg = {}
+        for c in gc:
+            country = c.get('country', 'Unknown')
+            if not country or country == 'Unknown':
+                continue
+            a = agg.setdefault(country, {
+                'total': 0, 'verified': 0, 'discrepancies': 0, 'errors': 0,
+                'fees': [], 'free': 0, 'unis': set(), 'qs_unis': set(),
+                'nirf_unis': set(), 'domains': {}, 'universities': {},
+                'complete': 0})
+            a['total'] += 1
+            s = c.get('status')
+            if s == 'Verified': a['verified'] += 1
+            elif s == 'Discrepancy': a['discrepancies'] += 1
+            elif s == 'Error': a['errors'] += 1
+            fee = _parse_inr(c.get('cost', ''))
+            if fee is not None and fee > 0:
+                a['fees'].append(fee)
+            if fee == 0:
+                a['free'] += 1
+            uni = c.get('university', '')
+            if uni:
+                a['unis'].add(uni)
+                uni_l = _norm_name(uni)
+                if uni_l in qs_set: a['qs_unis'].add(uni)
+                if uni_l in nirf_set: a['nirf_unis'].add(uni)
+            dom = normalize_domain(c.get('domain', ''))
+            a['domains'][dom] = a['domains'].get(dom, 0) + 1
+            if uni:
+                a['universities'][uni] = a['universities'].get(uni, 0) + 1
+            # Single-pass completeness tally (replaces the old O(countries×N)
+            # nested loop): count courses whose 7 solvable attrs are all True.
+            if all(bool(c.get(k, False)) for k in
+                   ('cost_match', 'duration_match', 'mode_match', 'lang_match',
+                    'country_match', 'uni_match', 'sk_match')):
+                a['complete'] += 1
+
+        for country, a in agg.items():
+            tot = a['total']
+            vr = a['verified'] / tot if tot else 0
+            ir = (a['discrepancies'] + a['errors']) / tot if tot else 0
+            med = _median(a['fees'])
+            top_dom = max(a['domains'], key=a['domains'].get) if a['domains'] else None
+            top_uni = max(a['universities'], key=a['universities'].get) if a['universities'] else None
+            qs_unis = len(a['qs_unis'])
+            nirf_unis = len(a['nirf_unis'])
+            completeness = (a['complete'] / tot) if tot else 0
+            qs_score = round(100 * (0.5 * vr + 0.3 * (1 - ir) + 0.2 * completeness))
+            flags = []
+            if tot >= 5 and vr < 0.5: flags.append("LOW-VERIF")
+            if tot >= 5 and ir > 0.5: flags.append("HIGH-ISSUE")
+            if med and med > 500000: flags.append("FEE-OUTLIER")
+            out[country] = {
+                "total": tot, "verified": a['verified'],
+                "discrepancies": a['discrepancies'], "errors": a['errors'],
+                "verified_rate": round(vr, 3), "issue_rate": round(ir, 3),
+                "median_fee": int(round(med)) if med is not None else None,
+                "free_count": a['free'], "qs_universities": qs_unis,
+                "nirf_universities": nirf_unis,
+                "top_domain": top_dom, "top_university": top_uni,
+                "quality_score": max(0, min(100, qs_score)),
+                "anomaly_flags": flags,
+            }
+    except Exception as e:
+        print('[ANALYTICS] country_quality build failed:', e)
+    return out
+
+
+def _build_regional_groups(gc):
+    out = {}
+    try:
+        agg = {}
+        for c in gc:
+            country = c.get('country', 'Unknown')
+            region = _region_for_country(country)
+            a = agg.setdefault(region, {'countries': set(), 'total': 0,
+                                        'verified': 0, 'discrepancies': 0,
+                                        'errors': 0})
+            a['countries'].add(country)
+            a['total'] += 1
+            s = c.get('status')
+            if s == 'Verified': a['verified'] += 1
+            elif s == 'Discrepancy': a['discrepancies'] += 1
+            elif s == 'Error': a['errors'] += 1
+        for region, a in agg.items():
+            out[region] = {
+                "countries": len(a['countries']), "total": a['total'],
+                "verified": a['verified'], "discrepancies": a['discrepancies'],
+                "errors": a['errors'],
+                "verified_rate": round(a['verified'] / a['total'], 3) if a['total'] else 0,
+            }
+    except Exception as e:
+        print('[ANALYTICS] regional_groups build failed:', e)
+    return out
+
+
+def _build_geo_concentration(gc):
+    out = {"hhi": 0, "n_countries": 0, "top1_share": 0, "top3_share": 0,
+           "effective_countries": 0, "label": "DIVERSIFIED", "top1_country": None}
+    try:
+        counts = {}
+        for c in gc:
+            country = c.get('country', 'Unknown')
+            if country and country != 'Unknown':
+                counts[country] = counts.get(country, 0) + 1
+        total = sum(counts.values())
+        if total <= 0:
+            return out
+        hhi = _hhi(counts)
+        ranked = sorted(counts.items(), key=lambda x: -x[1])
+        top1 = ranked[0][1] / total if ranked else 0
+        top3 = sum(v for _, v in ranked[:3]) / total if ranked else 0
+        eff = 1 / sum((v / total) ** 2 for v in counts.values()) if total else 0
+        out = {"hhi": hhi, "n_countries": len(counts),
+               "top1_share": round(top1 * 100, 1),
+               "top3_share": round(top3 * 100, 1),
+               "effective_countries": round(eff, 1),
+               "label": _geo_hhi_label(hhi),
+               "top1_country": ranked[0][0] if ranked else None}
+    except Exception as e:
+        print('[ANALYTICS] geo_concentration build failed:', e)
+    return out
+
+
+def _build_geo_problem_ranking(cq_dict):
+    out = []
+    try:
+        for country, d in cq_dict.items():
+            if d.get('total', 0) >= 5:
+                out.append({"country": country, "total": d['total'],
+                            "issues": d['discrepancies'] + d['errors'],
+                            "issue_rate": d.get('issue_rate', 0),
+                            "quality_score": d.get('quality_score', 0)})
+        out.sort(key=lambda x: -x['issue_rate'])
+        out = out[:12]
+    except Exception as e:
+        print('[ANALYTICS] geo_problem_ranking build failed:', e)
+    return out
+
+
+def _build_geo_anomalies(cq_dict):
+    out = {"low_verification": [], "high_issue_rate": [], "fee_outlier": [],
+           "global_median_fee": None}
+    try:
+        meds = [d['median_fee'] for d in cq_dict.values() if d.get('median_fee')]
+        gmed = _median(meds) if meds else None
+        out["global_median_fee"] = int(round(gmed)) if gmed is not None else None
+        for country, d in cq_dict.items():
+            if d.get('total', 0) < 5:
+                continue
+            if d.get('verified_rate', 1) < 0.6:
+                out["low_verification"].append(country)
+            if d.get('issue_rate', 0) > 0.4:
+                out["high_issue_rate"].append(country)
+            if d.get('median_fee') and gmed and d['median_fee'] > 2 * gmed:
+                out["fee_outlier"].append(country)
+    except Exception as e:
+        print('[ANALYTICS] geo_anomalies build failed:', e)
+    return out
+
+
+def _build_geo_comparison_seed(cq_dict):
+    try:
+        ranked = sorted(cq_dict.items(), key=lambda x: -x[1].get('total', 0))
+        a = ranked[0][0] if len(ranked) > 0 else None
+        b = ranked[1][0] if len(ranked) > 1 else None
+        return {"country_a": a, "country_b": b}
+    except Exception:
+        return {"country_a": None, "country_b": None}
+
+
+def _build_vq_country_quality(gc):
+    out = []
+    try:
+        agg = {}
+        for c in gc:
+            country = c.get('country', 'Unknown')
+            if not country or country == 'Unknown':
+                continue
+            a = agg.setdefault(country, {'total': 0, 'verified': 0,
+                                         'discrepancies': 0, 'errors': 0,
+                                         'matched': 0})
+            a['total'] += 1
+            s = c.get('status')
+            if s == 'Verified': a['verified'] += 1
+            elif s == 'Discrepancy': a['discrepancies'] += 1
+            elif s == 'Error': a['errors'] += 1
+            for k in _ATTR_KEYS.values():
+                if bool(c.get(k, False)):
+                    a['matched'] += 1
+        for country, a in agg.items():
+            tot = a['total']
+            vr = a['verified'] / tot if tot else 0
+            er = a['errors'] / tot if tot else 0
+            comp = a['matched'] / (tot * len(_ATTR_KEYS)) if tot else 0
+            score = int(round(100 * (0.5 * vr + 0.3 * (1 - er) + 0.2 * comp)))
+            out.append({"country": country, "total": tot, "verified": a['verified'],
+                        "discrepancies": a['discrepancies'], "errors": a['errors'],
+                        "verification_rate": round(vr, 3), "error_rate": round(er, 3),
+                        "quality_score": max(0, min(100, score)),
+                        "completeness": round(comp, 3)})
+        out.sort(key=lambda x: -x['total'])
+    except Exception as e:
+        print('[ANALYTICS] vq country_quality build failed:', e)
+    return out
+
+
+def _build_vq_country_anomalies(gc):
+    out = {}
+    try:
+        agg = {}
+        for c in gc:
+            country = c.get('country', 'Unknown')
+            if not country or country == 'Unknown':
+                continue
+            a = agg.setdefault(country, {'total': 0, 'verified': 0,
+                                         'issues': 0})
+            a['total'] += 1
+            if c.get('status') == 'Verified': a['verified'] += 1
+            if c.get('status') in ('Discrepancy', 'Error'): a['issues'] += 1
+        for country, a in agg.items():
+            tot = a['total']
+            if tot < 5:
+                out[country] = "SAMPLE-TOO-SMALL"
+            elif a['verified'] / tot < 0.5:
+                out[country] = "LOW"
+            elif a['issues'] / tot > 0.5:
+                out[country] = "HIGH"
+            else:
+                out[country] = None
+    except Exception as e:
+        print('[ANALYTICS] vq country anomalies build failed:', e)
+    return out
+
+
+def _build_domain_quality(gc):
+    out = []
+    try:
+        agg = {}
+        for c in gc:
+            dom = normalize_domain(c.get('domain', ''))
+            a = agg.setdefault(dom, {'total': 0, 'verified': 0,
+                                     'discrepancies': 0, 'errors': 0})
+            a['total'] += 1
+            s = c.get('status')
+            if s == 'Verified': a['verified'] += 1
+            elif s == 'Discrepancy': a['discrepancies'] += 1
+            elif s == 'Error': a['errors'] += 1
+        for dom, a in agg.items():
+            tot = a['total']
+            vr = a['verified'] / tot if tot else 0
+            ir = (a['discrepancies'] + a['errors']) / tot if tot else 0
+            score = int(round(100 * (0.6 * vr + 0.4 * (1 - ir))))
+            out.append({"domain": dom, "total": tot, "verified": a['verified'],
+                        "discrepancies": a['discrepancies'], "errors": a['errors'],
+                        "verification_rate": round(vr, 3),
+                        "quality_score": max(0, min(100, score))})
+        out.sort(key=lambda x: -x['total'])
+    except Exception as e:
+        print('[ANALYTICS] domain_quality build failed:', e)
+    return out
+
+
+def _build_cross_anomalies(gc, vq):
+    out = {"outlier_fees": [], "low_verification_countries": [],
+           "high_error_domains": []}
+    try:
+        fees = [(_parse_inr(c.get('cost', '')) or 0) for c in gc]
+        med = _median([f for f in fees if f > 0]) or 0
+        for c in gc:
+            f = _parse_inr(c.get('cost', '')) or 0
+            if med > 0 and f > 3 * med:
+                out["outlier_fees"].append({"course": c.get('name', ''),
+                                             "university": c.get('university'),
+                                             "country": c.get('country'),
+                                             "fee_inr": round(f, 1)})
+        # low verification countries
+        ctry = {}
+        for c in gc:
+            country = c.get('country', 'Unknown')
+            a = ctry.setdefault(country, {'total': 0, 'verified': 0})
+            a['total'] += 1
+            if c.get('status') == 'Verified': a['verified'] += 1
+        for country, a in ctry.items():
+            if a['total'] >= 5:
+                vr = a['verified'] / a['total']
+                if vr < 0.5:
+                    out["low_verification_countries"].append(
+                        {"country": country, "verification_rate": round(vr, 3),
+                         "course_count": a['total']})
+        # high error domains
+        dom_agg = {}
+        for c in gc:
+            dom = normalize_domain(c.get('domain', ''))
+            a = dom_agg.setdefault(dom, {'total': 0, 'errors': 0})
+            a['total'] += 1
+            if c.get('status') == 'Error': a['errors'] += 1
+        for dom, a in dom_agg.items():
+            if a['total'] >= 5:
+                er = a['errors'] / a['total']
+                if er > 0.3:
+                    out["high_error_domains"].append(
+                        {"domain": dom, "error_rate": round(er, 3),
+                         "course_count": a['total']})
+    except Exception as e:
+        print('[ANALYTICS] cross anomalies build failed:', e)
+    return out
+
+
+def _build_university_leaderboard(gc, qs_set, nirf_set):
+    out = []
+    try:
+        agg = {}
+        for c in gc:
+            uni = c.get('university', '')
+            if not uni:
+                continue
+            a = agg.setdefault(uni, {'country': c.get('country'), 'count': 0,
+                                     'verified': 0, 'discrepancies': 0, 'errors': 0})
+            a['count'] += 1
+            s = c.get('status')
+            if s == 'Verified': a['verified'] += 1
+            elif s == 'Discrepancy': a['discrepancies'] += 1
+            elif s == 'Error': a['errors'] += 1
+        rows = []
+        for uni, a in agg.items():
+            uni_l = _norm_name(uni)
+            qs = uni_l in qs_set
+            nirf = uni_l in nirf_set
+            rows.append({"university": uni, "country": a['country'],
+                          "course_count": a['count'], "verified": a['verified'],
+                          "discrepancies": a['discrepancies'], "errors": a['errors'],
+                          "verification_rate": round(a['verified'] / a['count'], 3)
+                                               if a['count'] else 0,
+                          "qs_ranked": bool(qs), "nirf_ranked": bool(nirf),
+                          "ranked": bool(qs or nirf)})
+        rows.sort(key=lambda x: -x['course_count'])
+        out = rows[:15]
+    except Exception as e:
+        print('[ANALYTICS] university_leaderboard build failed:', e)
+    return out
+
+
+def _build_benchmark(gc, qs_set, nirf_set, geo_conc):
+    out = {}
+    try:
+        india = [c for c in gc if str(c.get('country', '')).lower() == 'india']
+        intl = [c for c in gc if str(c.get('country', '')).lower() != 'india']
+        n_i, n_x = len(india), len(intl)
+        tot = n_i + n_x
+
+        def rate(rows, status):
+            return round(sum(1 for c in rows if c.get('status') == status) / len(rows), 3) \
+                if rows else 0
+
+        def median_fee(rows):
+            fees = [_parse_inr(c.get('cost', '')) for c in rows]
+            fees = [f for f in fees if f and f > 0]
+            m = _median(fees)
+            return int(round(m)) if m is not None else None
+
+        def cai(rows):
+            fees = [_parse_inr(c.get('cost', '')) for c in rows]
+            free = sum(1 for f in fees if f == 0)
+            aff = sum(1 for f in fees if f and 0 < f <= 50000)
+            t = len(rows)
+            return int(round(40 * free / t + 35 * aff / t)) if t else 0
+
+        def ranked_share(rows, s):
+            return round(sum(1 for c in rows
+                             if _norm_name(c.get('university', '')) in s) / len(rows), 3) \
+                if rows else 0
+
+        def top_spec(rows):
+            doms = {}
+            for c in rows:
+                d = normalize_domain(c.get('domain', ''))
+                doms[d] = doms.get(d, 0) + 1
+            return max(doms, key=doms.get) if doms else None
+
+        india_hhi = _hhi({c.get('country', 'Unknown'): 1 for c in india}) if india else 0
+        # geographic contribution: share of total catalog
+        def metric(label, india_v, intl_v, fmt=None):
+            delta = round(india_v - intl_v, 3) if isinstance(india_v, (int, float)) \
+                and isinstance(intl_v, (int, float)) else None
+            return {"india": india_v, "international": intl_v, "delta": delta,
+                    "label": label}
+
+        out = {
+            "courses": metric("Total Courses", n_i, n_x),
+            "variant_share": metric("Catalog Share",
+                                     round(n_i / tot, 3) if tot else 0,
+                                     round(n_x / tot, 3) if tot else 0),
+            "verification_rate": metric("Verification Rate",
+                                        rate(india, 'Verified'), rate(intl, 'Verified')),
+            "discrepancy_rate": metric("Discrepancy Rate",
+                                       rate(india, 'Discrepancy'), rate(intl, 'Discrepancy')),
+            "error_rate": metric("Error Rate",
+                                  rate(india, 'Error'), rate(intl, 'Error')),
+            "median_fee_inr": metric("Median Fee INR",
+                                     median_fee(india), median_fee(intl)),
+            "cost_access_index": metric("Cost Access Index",
+                                         cai(india), cai(intl)),
+            "qs_ranked_share": metric("QS-Ranked Share",
+                                       ranked_share(india, qs_set),
+                                       ranked_share(intl, qs_set)),
+            "nirf_ranked_share": metric("NIRF-Ranked Share",
+                                        ranked_share(india, nirf_set),
+                                        ranked_share(intl, nirf_set)),
+            "top_specialization": metric("Top Specialization",
+                                          top_spec(india), top_spec(intl)),
+            "geographic_contribution_hhi": metric("Geographic Contribution HHI",
+                                                  india_hhi, geo_conc.get('hhi', 0)),
+        }
+    except Exception as e:
+        print('[ANALYTICS] benchmark build failed:', e)
+    return out
+
+
+def _build_ranking_mix(analytics_courses):
+    out = {"qs_ranked": 0, "nirf_ranked": 0, "both": 0, "unranked": 0, "total": 0,
+           "qs_ranked_pct": 0, "nirf_ranked_pct": 0, "unranked_pct": 0}
+    try:
+        qs = sum(1 for r in analytics_courses if r.get('qs_ranked') and not r.get('nirf_ranked'))
+        nirf = sum(1 for r in analytics_courses if r.get('nirf_ranked') and not r.get('qs_ranked'))
+        both = sum(1 for r in analytics_courses if r.get('qs_ranked') and r.get('nirf_ranked'))
+        unranked = sum(1 for r in analytics_courses
+                       if not r.get('qs_ranked') and not r.get('nirf_ranked'))
+        total = len(analytics_courses)
+        out = {"qs_ranked": qs, "nirf_ranked": nirf, "both": both,
+               "unranked": unranked, "total": total,
+               "qs_ranked_pct": round(qs / total * 100, 1) if total else 0,
+               "nirf_ranked_pct": round(nirf / total * 100, 1) if total else 0,
+               "unranked_pct": round(unranked / total * 100, 1) if total else 0}
+    except Exception as e:
+        print('[ANALYTICS] ranking_mix build failed:', e)
+    return out
+
+
+def _build_ranked_share(analytics_courses):
+    try:
+        total = len(analytics_courses)
+        if not total:
+            return {"qs_pct": 0, "nirf_pct": 0}
+        qs = sum(1 for r in analytics_courses if r.get('qs_ranked'))
+        nirf = sum(1 for r in analytics_courses if r.get('nirf_ranked'))
+        return {"qs_pct": round(qs / total * 100, 1),
+                "nirf_pct": round(nirf / total * 100, 1)}
+    except Exception:
+        return {"qs_pct": 0, "nirf_pct": 0}
+
+
+def _build_ranked_vs_unranked(analytics_courses):
+    out = []
+    try:
+        def cohort(pred):
+            rows = [r for r in analytics_courses if pred(r)]
+            tot = len(rows)
+            vr = round(sum(1 for r in rows if r.get('status') == 'Verified') / tot, 3) \
+                if tot else 0
+            dr = round(sum(1 for r in rows if r.get('status') == 'Discrepancy') / tot, 3) \
+                if tot else 0
+            fees = [r['fee_inr'] for r in rows if r.get('fee_inr') and r['fee_inr'] > 0]
+            med = _median(fees)
+            return {"courses": tot, "verification_rate": vr,
+                    "discrepancy_rate": dr,
+                    "median_fee_inr": int(round(med)) if med is not None else None}
+
+        out = [
+            {"cohort": "QS Ranked", **cohort(lambda r: r.get('qs_ranked'))},
+            {"cohort": "NIRF Ranked", **cohort(lambda r: r.get('nirf_ranked'))},
+            {"cohort": "Both", **cohort(lambda r: r.get('qs_ranked') and r.get('nirf_ranked'))},
+            {"cohort": "Unranked",
+             **cohort(lambda r: not r.get('qs_ranked') and not r.get('nirf_ranked'))},
+        ]
+    except Exception as e:
+        print('[ANALYTICS] ranked_vs_unranked build failed:', e)
+    return out
+
+
+def _build_concentration(country_pivot, domain_pivot):
+    out = {"geographic_hhi": 0, "specialization_hhi": {"value": 0, "label": "Diversified"},
+           "top_country_share_pct": 0, "top_domain_share_pct": 0,
+           "top_country": None, "top_domain": None}
+    try:
+        geo_h = _hhi(country_pivot)
+        spec_h = _hhi({d: v['Total'] for d, v in domain_pivot.items()
+                       if isinstance(v, dict) and 'Total' in v}) if domain_pivot else 0
+        c_tot = sum(country_pivot.values()) if country_pivot else 0
+        d_tot = sum(v['Total'] for v in domain_pivot.values()
+                   if isinstance(v, dict) and 'Total' in v) if domain_pivot else 0
+        top_c = max(country_pivot.items(), key=lambda x: x[1]) if country_pivot else None
+        top_d = max(((d, v['Total']) for d, v in domain_pivot.items()
+                     if isinstance(v, dict) and 'Total' in v), key=lambda x: x[1]) \
+            if domain_pivot else None
+        out = {
+            "geographic_hhi": geo_h,
+            "specialization_hhi": {"value": spec_h, "label": _hhi_label(spec_h)},
+            "top_country_share_pct": round(top_c[1] / c_tot * 100, 1)
+            if top_c and c_tot else 0,
+            "top_domain_share_pct": round(top_d[1] / d_tot * 100, 1)
+            if top_d and d_tot else 0,
+            "top_country": top_c[0] if top_c else None,
+            "top_domain": top_d[0] if top_d else None,
+        }
+    except Exception as e:
+        print('[ANALYTICS] concentration build failed:', e)
+    return out
+
+
+def _build_specialization_hhi(domain_pivot):
+    try:
+        counts = {d: v['Total'] for d, v in domain_pivot.items()
+                  if isinstance(v, dict) and 'Total' in v}
+        h = _hhi(counts)
+        return {"value": h, "label": _hhi_label(h)}
+    except Exception:
+        return {"value": 0, "label": "Diversified"}
+
+
+def _build_domain_saturation(domain_pivot):
+    out = []
+    try:
+        counts = {d: v['Total'] for d, v in domain_pivot.items()
+                  if isinstance(v, dict) and 'Total' in v
+                  and d not in ('Unknown Domain', 'Unknown', 'Total')}
+        total = sum(counts.values())
+        for d, c in sorted(counts.items(), key=lambda x: -x[1]):
+            share = c / total * 100 if total else 0
+            out.append({"domain": d, "total": c, "share_pct": round(share, 1),
+                        "hhi_contribution": round((c / total) ** 2 * 10000, 1) if total else 0,
+                        "saturation_label": _saturation_label(share)})
+    except Exception as e:
+        print('[ANALYTICS] domain_saturation build failed:', e)
+    return out
+
+
+def _build_key_findings(d):
+    """Auto-generated professional plain-text findings (no emoji)."""
+    findings = []
+    try:
+        stats = d.get('stats', {})
+        total = stats.get('total', 0)
+        verified = stats.get('verified', 0)
+        discrepancies = stats.get('discrepancies', 0)
+        errors = stats.get('errors', 0)
+        vr = round(verified / total * 100, 1) if total else 0
+        findings.append(
+            f"The catalog spans {total} programs with a verification match rate "
+            f"of {vr} percent, {verified} perfectly matched, {discrepancies} "
+            f"flagged for review, and {errors} unreachable pages.")
+
+        cc = d.get('country_pivot') or {}
+        top_c = max(cc.items(), key=lambda x: x[1]) if cc else None
+        if top_c:
+            findings.append(
+                f"Geographic footprint covers {len(cc)} countries; the leading "
+                f"origin is {top_c[0]} with {top_c[1]} programs.")
+
+        dp = d.get('domain_pivot') or {}
+        top_d = max(((k, v['Total']) for k, v in dp.items()
+                     if isinstance(v, dict) and 'Total' in v), key=lambda x: x[1],
+                    default=None)
+        if top_d:
+            findings.append(
+                f"Specialization concentration is highest in {top_d[0]} "
+                f"({top_d[1]} programs).")
+
+        ca = d.get('cost_access') or {}
+        ai = ca.get('affordability_index', 0)
+        med = ca.get('median_fee_inr')
+        fvp = ca.get('free_vs_paid') or {}
+        free = fvp.get('free', 0)
+        findings.append(
+            f"Cost-access intelligence shows an affordability index of {ai} "
+            f"with {free} free programs and a median paid fee of "
+            f"{med if med is not None else 'n/a'} INR.")
+
+        rm = d.get('ranking_mix') or {}
+        qs = rm.get('qs_ranked_pct', 0)
+        nirf = rm.get('nirf_ranked_pct', 0)
+        findings.append(
+            f"University ranking coverage stands at {qs} percent QS-ranked "
+            f"and {nirf} percent NIRF-ranked across the catalog.")
+
+        dqh = (d.get('verification_quality') or {}).get('data_quality_health') or {}
+        score = dqh.get('score', 0)
+        findings.append(
+            f"The composite data-quality health score is {score} out of 100, "
+            f"reflecting verification rate, error load, and attribute completeness.")
+    except Exception as e:
+        print('[ANALYTICS] key_findings build failed:', e)
+    return findings
+
+
+
 
 @app.route("/api/upload", methods=["POST", "OPTIONS"])
 def upload_data():
@@ -1296,7 +2614,7 @@ def upload_data():
                 os.remove(temp_path)
     if updates > 0:
         # Save ALL courses to ensure complete data persistence
-        # This prevents data loss when Firestore is the primary data source
+        # This prevents data loss when MongoDB is the primary data source
         try:
             save_courses(global_courses)
         except Exception as e:
