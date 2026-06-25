@@ -1040,7 +1040,8 @@ async function solveCourse(courseId, attr, unsolve) {
         // Re-apply active filters so both tabs reflect the change immediately.
         applyVerificationFilter();
         applyCourseFilter();
-        fetchData(); // Trigger full refresh
+        // Stats already updated from solve response above — no extra
+        // fetchData() needed. The 5s poll handles multi-user sync.
     } catch (e) {
         console.error('Solve error:', e);
         // Rollback on failure
@@ -1095,52 +1096,51 @@ function initModal() {
 }
 
 // ================================================================
+//  SHARED DATA APPLY LOGIC
+// ================================================================
+function _applyData(data, animate) {
+    if (!data || data.status !== 'success') return;
+    globalData = data;
+
+    const statsHash    = JSON.stringify(data.stats);
+    const countryHash  = JSON.stringify(data.country_counts);
+    const barSrc       = barMode === 'domain' ? data.domain_counts : data.country_counts;
+    const barHash      = JSON.stringify(barSrc);
+
+    if (statsHash !== lastStatsHash) {
+        updateCards(data.stats);
+        updateIssuePieChart(data.stats, animate);
+        lastStatsHash = statsHash;
+    }
+    if (barHash !== lastBarHash) {
+        updateBarChart(animate);
+        lastBarHash = barHash;
+    }
+    if (countryHash !== lastCountryHash) {
+        updateLineChart(data.country_counts, animate);
+        updateMapChart(data.country_counts, animate);
+        updateCountryLeaderboard(data.country_counts, 'country-list');
+        lastCountryHash = countryHash;
+    }
+    updateRecentVerifications(data.recent || []);
+    if (currentFilter.type) applyFilter(currentFilter.type, currentFilter.value);
+    document.body.dataset.loading = 'false';
+}
+
+// ================================================================
 //  MAIN DATA FETCH
 // ================================================================
 async function fetchData() {
     if (!globalData) document.body.dataset.loading = 'true';
     try {
-        const res = await fetch(API_BASE_URL + '/api/data.json');
+        const res  = await fetch(API_BASE_URL + '/api/data.json');
         const data = await res.json();
         if (data.status !== 'success') return;
-
-        globalData = data;
-
-        // ── Change-guarded, no-animation renders ──────────────────────
-        // Only re-render the expensive visuals when their underlying data
-        // actually changed since the last poll. A 5s tick that returns
-        // identical data therefore produces zero visible flicker. The very
-        // first fetch keeps Chart.js animations so the initial paint feels
-        // alive; every subsequent poll uses update('none').
         const animate = firstDataFetch;
-        const statsHash = JSON.stringify(data.stats);
-        const countryHash = JSON.stringify(data.country_counts);
-        const barSrc = barMode === 'domain' ? data.domain_counts : data.country_counts;
-        const barHash = JSON.stringify(barSrc);
-
-        if (statsHash !== lastStatsHash) {
-            updateCards(data.stats);
-            updateIssuePieChart(data.stats, animate);
-            lastStatsHash = statsHash;
-        }
-        if (barHash !== lastBarHash) {
-            updateBarChart(animate);
-            lastBarHash = barHash;
-        }
-        if (countryHash !== lastCountryHash) {
-            updateLineChart(data.country_counts, animate);
-            updateMapChart(data.country_counts, animate);
-            updateCountryLeaderboard(data.country_counts, 'country-list');
-            lastCountryHash = countryHash;
-        }
-
-        // Real recent courses only — no fabricated fallback rows.
-        // (Already content-hash guarded via lastDataHash.)
-        updateRecentVerifications(data.recent || []);
-
-        if (currentFilter.type) applyFilter(currentFilter.type, currentFilter.value);
-        document.body.dataset.loading = 'false';
         firstDataFetch = false;
+        _applyData(data, animate);
+        // Cache for instant next-load on the static Firebase host
+        try { localStorage.setItem('cv_data_cache', JSON.stringify({ts: Date.now(), data})); } catch(_) {}
     } catch (e) {
         console.error('Data fetch error:', e);
     }
@@ -1798,9 +1798,13 @@ function initUpload() {
     input.addEventListener('change', async () => {
         if (!input.files.length) return;
         if (!isLocalEnv) { alert('Upload is only available on the local dashboard.'); input.value = ''; return; }
-        // Prompt for password before uploading
-        const password = prompt('Enter password to upload PDFs:');
-        if (!password) { input.value = ''; return; }
+        // Only prompt for password if we haven't saved it this session
+        let password = sessionStorage.getItem('upload_password');
+        if (!password) {
+            password = prompt('Enter password to upload PDFs:');
+            if (!password) { input.value = ''; return; }
+        }
+        
         const orig = label.textContent;
         label.textContent = 'Uploading…';
         const fd = new FormData();
@@ -1810,28 +1814,40 @@ function initUpload() {
             const res = await fetch(API_BASE_URL + '/api/upload', { method: 'POST', body: fd });
             if (res.status === 403) {
                 alert('Incorrect password. Upload denied.');
+                sessionStorage.removeItem('upload_password');
                 input.value = '';
                 label.textContent = orig;
                 return;
             }
+            
+            // Password was correct, remember it for the session
+            sessionStorage.setItem('upload_password', password);
             const result = await res.json();
             if (result.status === 'success') {
-                alert(`✓ ${result.message}`);
-                // Merge updated courses directly into allCoursesData for instant
-                // visibility, then force a full data refresh.
-                const updatedIds = new Set((result.verified_courses || []).map(c => c.id));
+                // ── Instant KPI update from the response (no second fetch needed) ──
+                if (result.data_payload) {
+                    // Reset hash caches to force re-render
+                    lastStatsHash = '';
+                    lastCountryHash = '';
+                    lastBarHash = '';
+                    _applyData(result.data_payload, false);
+                }
+                // Merge returned courses directly into allCoursesData
+                const updatedMap = {};
+                (result.verified_courses || []).forEach(c => { updatedMap[c.id] = c; });
                 allCoursesData = allCoursesData.map(c =>
-                    updatedIds.has(c.id) ? result.verified_courses.find(u => u.id === c.id) : c
+                    updatedMap[c.id] !== undefined ? updatedMap[c.id] : c
                 );
-                fetchData();
-                // Also reload the full courses list from the server so the
-                // All Courses tab reflects the new data immediately.
-                loadAllCourses();
+                currentPage = 1;
+                renderCoursesPage();
+                // Show non-blocking success message after update
+                label.textContent = `✓ ${result.updates} updated`;
+                setTimeout(() => { label.textContent = orig; }, 3000);
             } else {
                 alert(`✗ ${result.message}`);
             }
-        } catch (e) { alert('Upload failed.'); }
-        finally { label.textContent = orig; input.value = ''; }
+        } catch (e) { alert('Upload failed: ' + (e.message || 'network error')); }
+        finally { input.value = ''; }
     });
 }
 
@@ -1871,12 +1887,31 @@ document.addEventListener('DOMContentLoaded', () => {
     initUpload();
     initAnalyticsSubTabs();
 
-    // Chain: fetch dashboard data first, then analytics (analytics needs globalData)
+    // ── Tier 1: Server-pre-embedded data (instant, 0 ms latency) ─────────
+    // The Flask index route embeds the current payload into window.__INITIAL_DATA__.
+    // Consuming it here paints real KPI numbers before any network request fires.
+    if (window.__INITIAL_DATA__ && window.__INITIAL_DATA__.status === 'success') {
+        _applyData(window.__INITIAL_DATA__, true /*animate*/);
+        firstDataFetch = false;
+    }
+
+    // ── Tier 2: localStorage cache (instant, 0 ms, for static/Firebase host) ──
+    // When the static site serves the page (no Flask pre-embed), use the
+    // localStorage snapshot from the previous session for an instant first paint.
+    if (!globalData) {
+        try {
+            const cached = JSON.parse(localStorage.getItem('cv_data_cache') || 'null');
+            // Accept cache up to 10 minutes old
+            if (cached && cached.data && (Date.now() - cached.ts) < 10 * 60 * 1000) {
+                _applyData(cached.data, true);
+                firstDataFetch = false;
+            }
+        } catch (_) {}
+    }
+
+    // ── Tier 3: Live fetch (always runs initially to ensure fresh data) ──────
     fetchData().then(() => fetchAnalytics());
 
-    // Periodic refresh for dashboard data; analytics refreshes on tab click.
-    // 10s poll (down from 5s) — solves are instant via optimistic UI, and the
-    // backend now caches the payload so each poll is a cheap cache hit.
-    // The poll's only job is multi-user sync (picking up changes from others).
-    setInterval(fetchData, 10000);
-});
+    // Polling has been removed per user request. 
+    // Data now only updates on initial load and immediately after a successful upload/solve action.
+});

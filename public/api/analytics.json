@@ -2,65 +2,120 @@
   "status": "success",
   "data": {
     "course_category": {
-      "Bachelor's Degree": 679,
-      "Master's Degree": 552,
-      "Certificate": 312,
-      "Post Graduate Certificate": 60,
-      "Post Graduate Diploma": 55,
-      "Diploma": 44
+      "Free": 25,
+      "Free to Audit": 23,
+      "High Value Low Cost": 52,
+      "Diploma": 89,
+      "Bachelor's Degree": 1891,
+      "Post Graduate Diploma": 107,
+      "Certificate": 352,
+      "Post Graduate Certificate": 68,
+      "Master's Degree": 1120
     },
-    "variant_category": {},
+    "variant_category": {
+      "Indian Variants": 1938,
+      "International Variants": 1789,
+      "Total Variants": 3727
+    },
     "pricing_category": {
-      "Free": 63,
-      "Affordable": 770,
-      "Mid": 365,
-      "Premium": 504
+      "Free": 39,
+      "Affordable": 1446,
+      "Mid": 862,
+      "Premium": 1380
     },
-    "domain_pivot": {},
+    "domain_pivot": {
+      "Free": {
+        "Total": 25,
+        "Indian": 5,
+        "International": 20
+      },
+      "Free to Audit": {
+        "Total": 23,
+        "Indian": 6,
+        "International": 17
+      },
+      "High Value Low Cost": {
+        "Total": 52,
+        "Indian": 34,
+        "International": 18
+      },
+      "Diploma": {
+        "Total": 89,
+        "Indian": 49,
+        "International": 40
+      },
+      "Bachelor's Degree": {
+        "Total": 1891,
+        "Indian": 1231,
+        "International": 660
+      },
+      "Post Graduate Diploma": {
+        "Total": 107,
+        "Indian": 80,
+        "International": 27
+      },
+      "Certificate": {
+        "Total": 352,
+        "Indian": 63,
+        "International": 289
+      },
+      "Post Graduate Certificate": {
+        "Total": 68,
+        "Indian": 10,
+        "International": 58
+      },
+      "Master's Degree": {
+        "Total": 1120,
+        "Indian": 460,
+        "International": 660
+      }
+    },
     "country_pivot": {
-      "India": 769,
-      "USA": 380,
-      "UK": 179,
-      "Australia": 104,
-      "France": 40,
-      "Canada": 35,
-      "Germany": 19,
-      "Spain": 13,
-      "Ireland": 10,
-      "Netherlands": 10,
-      "Switzerland": 10,
-      "New Zealand": 9,
-      "Thailand": 7,
-      "UAE": 7,
-      "Italy": 7,
-      "Saudi Arabia": 7,
-      "Lithuania": 6,
-      "Portugal": 6,
-      "Colombia": 6,
-      "Malaysia": 6,
-      "Russia": 5,
-      "South Africa": 5,
-      "Hong Kong": 5,
-      "Hungary": 4,
-      "Singapore": 4,
-      "Norway": 4,
-      "Sweden": 4,
-      "Oman": 4,
-      "Qatar": 3,
-      "Denmark": 3,
-      "Ukraine": 3,
-      "Belgium": 3,
-      "Mexico": 3,
-      "Israel": 3,
-      "Phillipines": 3,
-      "Fiji": 3,
-      "Poland": 2,
-      "Romania": 2,
-      "China": 2,
-      "Finland": 2,
-      "Turkey": 2,
-      "Brazil": 2,
-      "Luxembourg": 1
+      "India": 1938,
+      "Australia": 189,
+      "South Africa": 6,
+      "Italy": 16,
+      "United Kingdom": 354,
+      "United States of America": 704,
+      "Belgium": 7,
+      "Colombia": 11,
+      "Spain": 31,
+      "Canada": 64,
+      "Austria": 1,
+      "Hong Kong": 9,
+      "Switzerland": 20,
+      "France": 86,
+      "Qatar": 6,
+      "Fiji": 4,
+      "Malaysia": 16,
+      "Thailand": 13,
+      "United Arab Emirates": 24,
+      "New Zealand": 15,
+      "Germany": 29,
+      "Lithuania": 12,
+      "Russia": 6,
+      "Norway": 7,
+      "Oman": 9,
+      "Phillipines": 6,
+      "Denmark": 4,
+      "Sweden": 14,
+      "Turkey": 6,
+      "Ireland": 22,
+      "Saudi Arabia": 23,
+      "Hungary": 7,
+      "Romania": 4,
+      "Portugal": 11,
+      "China": 5,
+      "Netherlands": 16,
+      "Singapore": 10,
+      "Israel": 4,
+      "Mexico": 5,
+      "Poland": 6,
+      "Philippines": 1,
+      "Luxembourg": 2,
+      "English": 1,
+      "CHF": 1,
+      "Brazil": 2
     }
   }
 }

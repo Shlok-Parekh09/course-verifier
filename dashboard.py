@@ -591,8 +591,22 @@ def load_courses():
     # showed "0" after solving instead of the incremented count.
     loaded = []
 
+    loaded_raw = False
+    
+    # ── LOCAL OVERRIDE ──
+    # If 1.json exists, we are running locally and should prioritize it over MongoDB
+    # to avoid overwriting local changes with old remote data on startup.
+    if os.path.exists(PERSISTENT_FILE):
+        try:
+            with open(PERSISTENT_FILE, "r", encoding="utf-8") as f:
+                raw_data = json.load(f)
+            loaded_raw = True
+            print(f"Loaded {len(raw_data)} courses from {PERSISTENT_FILE}")
+        except Exception as e:
+            print("Error loading 1.json:", e)
+
     loaded_from_mongo = False
-    if db is not None:
+    if not loaded_raw and db is not None:
         try:
             print("Loading courses from MongoDB...")
             docs = list(db.courses.find({}, {'_id': 0}))
@@ -602,18 +616,7 @@ def load_courses():
                 print(f"Loaded {len(loaded)} courses from MongoDB.")
                 loaded_from_mongo = True
         except Exception as e:
-            print(f"Error loading from MongoDB, falling back to local files: {e}")
-    
-    loaded_raw = False
-    
-    if not loaded_from_mongo and os.path.exists(PERSISTENT_FILE):
-        try:
-            with open(PERSISTENT_FILE, "r", encoding="utf-8") as f:
-                raw_data = json.load(f)
-            loaded_raw = True
-            print(f"Loaded {len(raw_data)} courses from {PERSISTENT_FILE}")
-        except Exception as e:
-            print("Error loading 1.json, falling back to base JSON:", e)
+            print(f"Error loading from MongoDB: {e}")
             
     if not loaded_from_mongo and not loaded_raw:
         # Fallback to original JSON files if 1.json doesn't exist
@@ -813,7 +816,12 @@ load_courses()
 # sees new uploads. Refresh from MongoDB on a short TTL so the live site stays
 # current. Local dev benefits too: it picks up writes from other clients.
 _LAST_LOAD_TS = time.time()
-_LOAD_TTL_SEC = 30
+# On the local machine (1.json present) we never poll MongoDB — the local file
+# IS the source of truth and MongoDB re-polling would overwrite in-memory edits.
+# On production (Vercel / Cloud Run) we reload every 120 s so multi-client
+# changes propagate without hammering Atlas.
+_IS_LOCAL = os.path.exists(PERSISTENT_FILE)
+_LOAD_TTL_SEC = 999999 if _IS_LOCAL else 120
 _load_lock = threading.Lock()
 
 def _refresh_courses_if_stale():
@@ -837,7 +845,21 @@ def _refresh_courses_if_stale():
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    # Embed the current stats payload directly into the HTML so the browser
+    # renders real KPI numbers the instant the page is parsed — no extra HTTP
+    # round-trip to /api/data.json before the first paint.
+    try:
+        initial_payload = _get_cached_data_payload()
+        initial_data_json = json.dumps({
+            "status": initial_payload.get("status"),
+            "stats": initial_payload.get("stats"),
+            "country_counts": initial_payload.get("country_counts"),
+            "domain_counts": initial_payload.get("domain_counts"),
+            "recent": initial_payload.get("recent", []),
+        })
+    except Exception:
+        initial_data_json = 'null'
+    return render_template("index.html", initial_data=initial_data_json)
 
 @app.route("/api/courses")
 @app.route("/api/courses.json")
@@ -1001,6 +1023,64 @@ def _invalidate_data_cache():
     global _data_cache, _data_cache_key
     _data_cache = None
     _data_cache_key = None
+
+def _push_cached_payloads_to_mongo():
+    """Push pre-computed /api/data.json and /api/courses.json payloads to MongoDB
+    so the public website can load data in milliseconds by reading a single cached
+    document rather than re-computing stats from 3700+ individual course documents.
+    Also pushes to Cloudflare KV if configured."""
+    if db is None:
+        return
+    try:
+        data_payload = _get_cached_data_payload()
+        courses_payload = {"status": "success", "courses": global_courses}
+
+        # Store in a 'api_cache' collection — one doc per endpoint
+        db.api_cache.update_one(
+            {"_endpoint": "data.json"},
+            {"$set": {"_endpoint": "data.json", "payload": data_payload, "_ts": time.time()}},
+            upsert=True
+        )
+        db.api_cache.update_one(
+            {"_endpoint": "courses.json"},
+            {"$set": {"_endpoint": "courses.json", "payload": courses_payload, "_ts": time.time()}},
+            upsert=True
+        )
+        print("[CACHE] ✓ Pushed pre-computed API payloads to MongoDB")
+    except Exception as e:
+        print(f"[CACHE] ✗ Error pushing payloads: {e}")
+
+    # Also push to Cloudflare KV via the Worker's /api/kv-push endpoint
+    _push_to_cloudflare_kv(data_payload, courses_payload)
+
+def _push_to_cloudflare_kv(data_payload, courses_payload):
+    """Push pre-computed payloads to the Cloudflare Worker's KV store so the
+    public website at courseverifiy.kesug.com loads data in milliseconds."""
+    import requests as req_lib
+
+    worker_url = os.environ.get('CF_WORKER_URL', '').rstrip('/')
+    kv_push_key = os.environ.get('CF_KV_PUSH_KEY', '')
+    if not worker_url or not kv_push_key:
+        print("[CF-KV] ⚠ CF_WORKER_URL or CF_KV_PUSH_KEY not set — skipping Cloudflare KV push")
+        return
+    push_url = f'{worker_url}/api/kv-push'
+    for endpoint, payload in [('data.json', data_payload), ('courses.json', courses_payload)]:
+        try:
+            # Dump to JSON bytes string
+            import json
+            raw_data = json.dumps(payload, separators=(',', ':'))
+            headers = {
+                'Authorization': f'Bearer {kv_push_key}',
+                'Content-Type': 'application/json',
+                'X-Endpoint': endpoint
+            }
+            resp = req_lib.post(push_url, data=raw_data, headers=headers, timeout=60)
+            if resp.status_code == 200:
+                print(f"[CF-KV] ✓ Pushed {endpoint} to Cloudflare KV")
+            else:
+                print(f"[CF-KV] ✗ Failed to push {endpoint}: HTTP {resp.status_code} — {resp.text[:200]}")
+        except Exception as e:
+            print(f"[CF-KV] ✗ Error pushing {endpoint}: {e}")
 
 @app.route("/api/data")
 @app.route("/api/data.json")
@@ -1280,86 +1360,95 @@ def upload_data():
         file.save(temp_path)
         
         try:
-            with pdfplumber.open(temp_path) as pdf:
-                for page_num, page in enumerate(pdf.pages, start=1):
-                    text = page.extract_text()
-                    if not text: continue
+            import fitz
+            doc = fitz.open(temp_path)
+            for page_num in range(len(doc)):
+                # 1. Ultra-fast text extraction with PyMuPDF
+                fitz_page = doc[page_num]
+                text = fitz_page.get_text()
+                if not text: continue
+                
+                match = re.search(r'^\s*(\d+)\.\s+(.+?)\s*$', text, re.MULTILINE)
+                if not match: continue
+                
+                title = match.group(2).strip()
+                
+                # 2. Ultra-fast native table extraction with PyMuPDF
+                tabs = fitz_page.find_tables()
+                extracted = {}
+                if tabs:
+                    table = tabs[0].extract()
+                    for row in table:
+                        if len(row) >= 4:
+                            attr_name = str(row[0]).strip().replace('\n', ' ')
+                            if attr_name.lower() == 'attribute': continue
+                            
+                            original = str(row[1]).strip().replace('\n', ' ') if len(row) > 1 else ''
+                            verified = str(row[2]).strip().replace('\n', ' ') if len(row) > 2 else ''
+                            row_status = str(row[3]).strip().replace('\n', ' ') if len(row) > 3 else ''
+                            
+                            if 'pdf_table' not in extracted:
+                                extracted['pdf_table'] = []
+                            extracted['pdf_table'].append({
+                                "attribute": attr_name,
+                                "original": original,
+                                "verified": verified,
+                                "status": row_status
+                            })
+                            
+                            for a in attributes:
+                                if a.lower() in attr_name.lower():
+                                    if a.lower() == 'university':
+                                        extracted['Original_University'] = original
+                                    if row_status == 'MATCH':
+                                        extracted[a] = 'MATCH'
+                                    break
+                            
+                            for ra in ranking_attributes:
+                                if ra.lower().replace(' box', '') in attr_name.lower().replace(' box', ''):
+                                    if row_status == 'MATCH':
+                                        extracted[ra] = 'MATCH'
+                                    break
+                
+                actual_page = page_num + 1
+                page_match = re.search(r'PDF Page (\d+)', text)
+                if page_match:
+                    actual_page = int(page_match.group(1))
+                
+                if 'free' in file.filename.lower() and actual_page <= 7:
+                    actual_page += 16
                     
-                    match = re.search(r'^\s*(\d+)\.\s+(.+?)\s*$', text, re.MULTILINE)
-                    if not match: continue
-                    
-                    title = match.group(2).strip()
-                    
-                    tables = page.extract_tables()
-                    extracted = {}
-                    if tables:
-                        table = tables[0]
-                        for row in table:
-                            if len(row) >= 4:
-                                attr_name = str(row[0]).strip().replace('\n', ' ')
-                                if attr_name.lower() == 'attribute': continue
-                                
-                                original = str(row[1]).strip().replace('\n', ' ') if len(row) > 1 else ''
-                                verified = str(row[2]).strip().replace('\n', ' ') if len(row) > 2 else ''
-                                row_status = str(row[3]).strip().replace('\n', ' ') if len(row) > 3 else ''
-                                
-                                if 'pdf_table' not in extracted:
-                                    extracted['pdf_table'] = []
-                                extracted['pdf_table'].append({
-                                    "attribute": attr_name,
-                                    "original": original,
-                                    "verified": verified,
-                                    "status": row_status
-                                })
-                                
-                                for a in attributes:
-                                    if a.lower() in attr_name.lower():
-                                        if a.lower() == 'university':
-                                            extracted['Original_University'] = original
-                                        if row_status == 'MATCH':
-                                            extracted[a] = 'MATCH'
-                                        break
-                                
-                                for ra in ranking_attributes:
-                                    if ra.lower().replace(' box', '') in attr_name.lower().replace(' box', ''):
-                                        if row_status == 'MATCH':
-                                            extracted[ra] = 'MATCH'
-                                        break
-                    
-                    actual_page = page_num
-                    page_match = re.search(r'PDF Page (\d+)', text)
-                    if page_match:
-                        actual_page = int(page_match.group(1))
-                    
-                    if 'free' in file.filename.lower() and actual_page <= 7:
-                        actual_page += 16
-                        
-                    pdf_course_id = int(match.group(1))
-                    
-                    # Detect domain from filename
-                    raw_name = file.filename.replace('_', ' ').replace('-', ' ').lower()
-                    detected_domain = None
-                    valid_domains = [
-                        "High Value Low Cost", "Post Graduate Certificate", "Certificate",
-                        "Bachelors", "Masters", "Post Graduate Diploma", "Diploma",
-                        "Free to Audit", "Free"
-                    ]
-                    for d in valid_domains:
-                        if d.lower() in raw_name:
-                            detected_domain = normalize_domain(d)
-                            break
-                    
-                    all_extracted[pdf_course_id] = {
-                        'extracted': extracted,
-                        'title': title,
-                        'page': actual_page,
-                        'domain': detected_domain,
-                    }
+                pdf_course_id = int(match.group(1))
+                
+                # Detect domain from filename
+                raw_name = file.filename.replace('_', ' ').replace('-', ' ').lower()
+                detected_domain = None
+                valid_domains = [
+                    "High Value Low Cost", "Post Graduate Certificate", "Certificate",
+                    "Bachelors", "Masters", "Post Graduate Diploma", "Diploma",
+                    "Free to Audit", "Free"
+                ]
+                for d in valid_domains:
+                    if d.lower() in raw_name:
+                        detected_domain = normalize_domain(d)
+                        break
+                
+                all_extracted[pdf_course_id] = {
+                    'extracted': extracted,
+                    'title': title,
+                    'page': actual_page,
+                    'domain': detected_domain,
+                }
+            if 'doc' in locals():
+                doc.close()
         except Exception as e:
             print(f"Error processing {file.filename}: {e}")
         finally:
             if os.path.exists(temp_path):
-                os.remove(temp_path)
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
     
     # Pass 2: Range-wipe + replace.
     # Determine the [min_id, max_id] range from the uploaded PDF.
@@ -1519,15 +1608,26 @@ def upload_data():
             # durable (120 s is plenty for Atlas to acknowledge the bulk write).
             global _LAST_LOAD_TS
             _LAST_LOAD_TS = time.time() + 90  # delay next mongo reload by 120s total
+
+            # ── Push pre-computed API payloads to MongoDB for instant website loading ──
+            try:
+                _push_cached_payloads_to_mongo()
+            except Exception as cache_err:
+                print(f"[UPLOAD] Cache push error: {cache_err}")
         except Exception as e:
             print(f"[UPLOAD] save_courses error: {e}")
+
+    # Compute fresh stats to include in the response so the frontend
+    # can update KPIs instantly without a second fetch round-trip.
+    fresh_data_payload = _get_cached_data_payload()
 
     return jsonify({
         "status": "success",
         "updates": updates,
         "wiped": wiped_count,
         "message": f"Processed {len(files)} files. Updated {updates} courses" + (f" (range {min_id}-{max_id}), wiped {wiped_count} stale." if all_extracted else "."),
-        "verified_courses": verified_in_this_batch
+        "verified_courses": verified_in_this_batch,
+        "data_payload": fresh_data_payload
     })
 
 if __name__ == "__main__":

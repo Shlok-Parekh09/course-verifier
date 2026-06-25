@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Course Verifier Dashboard</title>
+    <meta name="description" content="Live course verification and country-wise analysis platform by Khushboo Singh">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./style.css?v=11">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/chartjs-chart-geo@4.2.8/build/index.umd.min.js"></script>
+    <script src="https://kit.fontawesome.com/997b419143.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+<!-- ══════════════ TOP NAVBAR ══════════════ -->
+<nav class="navbar">
+    <a class="navbar-logo" href="#">
+        <div class="logo-icon">⬡</div>
+        CourseVerify
+    </a>
+
+    <div class="navbar-tabs" id="nav-tabs">
+        <a href="#" data-target="tab-dashboard" class="active">Dashboard</a>
+        <a href="#" data-target="tab-analytics">Analytics</a>
+        <a href="#" data-target="tab-verification">Verification</a>
+        <a href="#" data-target="tab-courses">All Courses</a>
+        
+    </div>
+
+    <div class="navbar-right">
+        <span class="theme-label" id="theme-label">Dark</span>
+        <div class="theme-toggle" id="theme-toggle" title="Toggle dark/light mode"></div>
+
+        <input type="file" id="pdf-upload-global" multiple accept=".pdf" style="display:none;">
+        <label for="pdf-upload-global" class="upload-btn" id="upload-label-global">↑ Upload PDFs</label>
+    </div>
+</nav>
+
+<!-- ══════════════ PAGE SHELL ══════════════ -->
+<div class="page">
+
+    <!-- ══════════ DASHBOARD TAB ══════════ -->
+    <div id="tab-dashboard" class="tab-content active">
+        <div class="dash-wrap">
+
+            <!-- KPI Cards -->
+            <div class="kpi-row">
+                <div class="kpi-card">
+                    <div class="kpi-label">Total Courses</div>
+                    <div class="kpi-value" id="total-count">0</div>
+                    <span class="kpi-trend neu" id="kpi-total-trend">— All time</span>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Perfect Matches</div>
+                    <div class="kpi-value" id="verified-count">0</div>
+                    <span class="kpi-trend up" id="kpi-verified-trend">↑ Verified</span>
+                </div>
+                <div class="kpi-card" id="kpi-card-discrepancies" style="cursor:pointer;" title="Click to view discrepancies">
+                    <div class="kpi-label">Discrepancies</div>
+                    <div class="kpi-value" id="discrepancy-count">0</div>
+                    <span class="kpi-trend warn" id="kpi-disc-trend">⚠ Need review</span>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Errors / Unverified</div>
+                    <div class="kpi-value" id="error-count">0</div>
+                    <span class="kpi-trend down" id="kpi-err-trend">✕ Failed</span>
+                </div>
+            </div>
+
+            <!-- Country-wise Analysis  ← MAIN DASHBOARD SECTION -->
+            <div class="country-split">
+                <!-- World Map -->
+                <div class="panel">
+                    <div class="panel-hdr">
+                        <div>
+                            <div class="panel-title">Course Distribution Map</div>
+                            <div class="panel-sub">Courses by country of origin</div>
+                        </div>
+                        <div class="icon-btn" id="map-expand-btn" title="Expand">⤢</div>
+                    </div>
+                    <div class="chart-wrap chart-h420">
+                        <canvas id="countryMapChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Country Leaderboard -->
+                <div class="panel">
+                    <div class="panel-hdr">
+                        <div>
+                            <div class="panel-title">Country Leaders</div>
+                            <div class="panel-sub">Top countries by course count</div>
+                        </div>
+                        <div class="icon-btn" id="country-toggle-view" title="Switch view">≡</div>
+                    </div>
+                    <div id="country-list" class="country-list">
+                        <!-- populated by JS -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Charts Row -->
+            <div class="main-grid">
+                <div style="display:grid; gap:20px; align-items:start;">
+
+                    <!-- Line Chart: Country Trend -->
+                    <div class="panel">
+                        <div class="panel-hdr">
+                            <div>
+                                <div class="panel-title">Country-wise Course Trend</div>
+                                <div class="panel-sub">Distribution across countries</div>
+                            </div>
+                        </div>
+                        <div class="chart-wrap chart-h260">
+                            <canvas id="countryLineChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Bar Chart -->
+                    <div class="panel">
+                        <div class="panel-hdr">
+                            <div class="panel-title">Course Breakdown</div>
+                            <div class="pill-toggle" id="bar-toggle-pills">
+                                <button class="active" data-val="domain">Domain</button>
+                            </div>
+                        </div>
+                        <div class="chart-wrap chart-h260">
+                            <canvas id="coursesBarChart"></canvas>
+                        </div>
+                        <p class="hint">Click a bar to filter the detail table</p>
+                    </div>
+
+                </div>
+
+                <!-- Right: Donut + Filtered Table -->
+                <div style="display:grid; gap:20px; align-items:start;">
+
+                    <!-- Issue Category Doughnut -->
+                    <div class="panel">
+                        <div class="panel-hdr">
+                            <div class="panel-title">Issue Category Breakdown</div>
+                        </div>
+                        <div class="chart-wrap chart-h260">
+                            <canvas id="issuePieChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Filter Summary Cards -->
+                    <div class="panel" id="course-details-panel" style="display:none;">
+                        <div class="panel-hdr">
+                            <div class="panel-title">Filtered Courses &nbsp;<span id="active-filter-badge" class="badge badge-open"></span></div>
+                            <button id="clear-filter" class="btn-pg">✕ Clear</button>
+                        </div>
+                        <div class="tbl-wrap" style="max-height:280px;">
+                            <table class="data-table">
+                                <thead><tr>
+                                    <th>Name</th><th>University</th>
+                                    <th>Country</th><th>QS</th><th>NIRF</th>
+                                </tr></thead>
+                                <tbody id="course-details-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ══════════ VERIFICATION TAB ══════════ -->
+    <div id="tab-verification" class="tab-content">
+        <div style="padding:24px 28px;">
+
+            <!-- Sticky headline KPI strip — the 4 parameters, always visible -->
+            <div class="kpi-strip" id="vf-kpi-strip">
+                <div class="kpi-strip-card" title="Reset filters">
+                    <div class="kpi-strip-val" id="vf-total">—</div>
+                    <div class="kpi-strip-label">Total</div>
+                </div>
+                <div class="kpi-strip-card" data-status="Verified" title="Filter: Verified">
+                    <div class="kpi-strip-val" id="vf-verified">—</div>
+                    <div class="kpi-strip-label">Verified</div>
+                </div>
+                <div class="kpi-strip-card" data-status="Discrepancy" title="Filter: Discrepancies">
+                    <div class="kpi-strip-val" id="vf-disc">—</div>
+                    <div class="kpi-strip-label">Discrepancies</div>
+                </div>
+                <div class="kpi-strip-card" data-status="Error" data-category="website_issue" title="Filter: Website issues">
+                    <div class="kpi-strip-val" id="vf-web">—</div>
+                    <div class="kpi-strip-label">Web Issues</div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <div class="panel-hdr">
+                    <div class="panel-title">Recent Verifications</div>
+                    <div class="pag">
+                        <button id="recent-prev-page" class="btn-pg">← Prev</button>
+                        <span id="recent-page-info">Page 1</span>
+                        <button id="recent-next-page" class="btn-pg">Next →</button>
+                    </div>
+                </div>
+
+                <!-- Real working filters -->
+                <div class="filter-bar" id="verification-filters">
+                    <label for="vf-search" class="vh">Search by name or university</label>
+                    <input type="text" id="vf-search" class="filter-input" placeholder="🔍 Search name / university…">
+                    <label for="vf-course-type" class="vh">Course type filter</label>
+                    <select id="vf-course-type" class="filter-select">
+                        <option value="all">All Course Types</option>
+                        <option value="Bachelor's Degree">Bachelor's Degree</option>
+                        <option value="Master's Degree">Master's Degree</option>
+                        <option value="Post Graduate Diploma">Post Graduate Diploma</option>
+                        <option value="Post Graduate Certificate">Post Graduate Certificate</option>
+                        <option value="Diploma">Diploma</option>
+                        <option value="Certificate">Certificate</option>
+                        <option value="Free to Audit">Free to Audit</option>
+                        <option value="High Value Low Cost">High Value Low Cost</option>
+                        <option value="Free">Free</option>
+                    </select>
+                    <label for="vf-status" class="vh">Status filter</label>
+                    <select id="vf-status" class="filter-select">
+                        <option value="all">All Status</option>
+                        <option value="Verified">Verified</option>
+                        <option value="Discrepancy">Discrepancy</option>
+                        <option value="Error">Error</option>
+                        <option value="Unverified">Unverified</option>
+                    </select>
+                    <label for="vf-category" class="vh">Issue category filter</label>
+                    <select id="vf-category" class="filter-select">
+                        <option value="all">All Categories</option>
+                        <option value="website_issue">Website Issue</option>
+                        <option value="course_issue">Course Issue</option>
+                        <option value="verified">Verified</option>
+                    </select>
+                    <label for="vf-subtype" class="vh">Issue sub-type filter</label>
+                    <select id="vf-subtype" class="filter-select" hidden><option value="all">All Sub-Types</option></select>
+                    <label for="vf-country" class="vh">Country filter</label>
+                    <select id="vf-country" class="filter-select"><option value="all">All Countries</option></select>
+                    <label for="vf-domain" class="vh">Domain category filter</label>
+                    <select id="vf-domain" class="filter-select">
+                        <option value="all">All Domains</option>
+                    </select>
+                    <label for="vf-attr" class="vh">Mismatched attribute filter</label>
+                    <select id="vf-attr" class="filter-select">
+                        <option value="all">All Attributes</option>
+                        <option value="Cost">Cost mismatch</option>
+                        <option value="Duration">Duration mismatch</option>
+                        <option value="Mode">Mode mismatch</option>
+                        <option value="Language">Language mismatch</option>
+                        <option value="Country">Country mismatch</option>
+                        <option value="University">University mismatch</option>
+                        <option value="Skills">Skills mismatch</option>
+                        <option value="QS Ranked">QS mismatch</option>
+                        <option value="NIRF Ranked">NIRF mismatch</option>
+                        <option value="Free Box">Free Box mismatch</option>
+                        <option value="Scholarship Box">Scholarship Box mismatch</option>
+                    </select>
+                    <button id="vf-reset" class="btn-pg">Reset</button>
+                    <span id="vf-count" class="filter-count">—</span>
+                </div>
+
+                <div class="tbl-wrap" style="max-height:72vh;">
+                    <table class="data-table">
+                        <thead><tr>
+                            <th class="col-idx">#</th>
+                            <th>Course Name</th><th>University</th>
+                            <th>Domain</th><th>Status</th><th>Reason</th><th>Page</th>
+                        </tr></thead>
+                        <tbody id="recent-verifications-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════ ALL COURSES TAB ══════════ -->
+    <div id="tab-courses" class="tab-content">
+        <div style="padding:24px 28px;">
+
+            <!-- Sticky headline KPI strip -->
+            <div class="kpi-strip" id="cf-kpi-strip">
+                <div class="kpi-strip-card" title="Reset filters">
+                    <div class="kpi-strip-val" id="cf-total">—</div>
+                    <div class="kpi-strip-label">Total</div>
+                </div>
+                <div class="kpi-strip-card" data-status="Verified" title="Filter: Verified">
+                    <div class="kpi-strip-val" id="cf-verified">—</div>
+                    <div class="kpi-strip-label">Verified</div>
+                </div>
+                <div class="kpi-strip-card" data-status="Discrepancy" title="Filter: Discrepancies">
+                    <div class="kpi-strip-val" id="cf-disc">—</div>
+                    <div class="kpi-strip-label">Discrepancies</div>
+                </div>
+                <div class="kpi-strip-card" data-status="Error" data-category="website_issue" title="Filter: Website issues">
+                    <div class="kpi-strip-val" id="cf-web">—</div>
+                    <div class="kpi-strip-label">Web Issues</div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <div class="panel-hdr">
+                    <div class="panel-title">Master Course Database</div>
+                    <div class="pag">
+                        <button id="prev-page" class="btn-pg">← Prev</button>
+                        <span id="page-info">Page 1</span>
+                        <button id="next-page" class="btn-pg">Next →</button>
+                    </div>
+                </div>
+
+                <!-- Real working filters -->
+                <div class="filter-bar" id="course-filters">
+                    <label for="cf-search" class="vh">Search by name, university or domain</label>
+                    <input type="text" id="cf-search" class="filter-input" placeholder="🔍 Search name / university / domain…">
+                    <label for="cf-course-type" class="vh">Course type filter</label>
+                    <select id="cf-course-type" class="filter-select">
+                        <option value="all">All Course Types</option>
+                        <option value="Bachelor's Degree">Bachelor's Degree</option>
+                        <option value="Master's Degree">Master's Degree</option>
+                        <option value="Post Graduate Diploma">Post Graduate Diploma</option>
+                        <option value="Post Graduate Certificate">Post Graduate Certificate</option>
+                        <option value="Diploma">Diploma</option>
+                        <option value="Certificate">Certificate</option>
+                        <option value="Free to Audit">Free to Audit</option>
+                        <option value="High Value Low Cost">High Value Low Cost</option>
+                        <option value="Free">Free</option>
+                    </select>
+                    <label for="cf-status" class="vh">Status filter</label>
+                    <select id="cf-status" class="filter-select">
+                        <option value="all">All Status</option>
+                        <option value="Verified">Verified</option>
+                        <option value="Discrepancy">Discrepancy</option>
+                        <option value="Error">Error</option>
+                        <option value="Unverified">Unverified</option>
+                    </select>
+                    <label for="cf-category" class="vh">Issue category filter</label>
+                    <select id="cf-category" class="filter-select">
+                        <option value="all">All Categories</option>
+                        <option value="website_issue">Website Issue</option>
+                        <option value="course_issue">Course Issue</option>
+                        <option value="verified">Verified</option>
+                    </select>
+                    <label for="cf-subtype" class="vh">Issue sub-type filter</label>
+                    <select id="cf-subtype" class="filter-select" hidden><option value="all">All Sub-Types</option></select>
+                    <label for="cf-country" class="vh">Country filter</label>
+                    <select id="cf-country" class="filter-select"><option value="all">All Countries</option></select>
+                    <label for="cf-domain" class="vh">Domain category filter</label>
+                    <select id="cf-domain" class="filter-select">
+                        <option value="all">All Domains</option>
+                    </select>
+                    <label for="cf-qs" class="vh">QS badge filter</label>
+                    <select id="cf-qs" class="filter-select">
+                        <option value="any">QS: Any</option>
+                        <option value="yes">QS: Yes</option>
+                        <option value="no">QS: No</option>
+                    </select>
+                    <label for="cf-nirf" class="vh">NIRF badge filter</label>
+                    <select id="cf-nirf" class="filter-select">
+                        <option value="any">NIRF: Any</option>
+                        <option value="yes">NIRF: Yes</option>
+                        <option value="no">NIRF: No</option>
+                    </select>
+                    <button id="cf-reset" class="btn-pg">Reset</button>
+                    <span id="cf-count" class="filter-count">—</span>
+                </div>
+
+                <div class="tbl-wrap" style="max-height:72vh;">
+                    <table class="data-table">
+                        <thead><tr>
+                            <th>#</th><th>Name</th><th>University</th>
+                            <th>Domain</th><th>Country</th>
+                            <th>QS</th><th>NIRF</th><th>Status</th>
+                        </tr></thead>
+                        <tbody id="all-courses-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════ ANALYTICS TAB ══════════ -->
+    <div id="tab-analytics" class="tab-content">
+        <div class="analytics-wrap">
+
+            <!-- Analytics Page Header -->
+            <div class="analytics-page-hdr">
+                <div class="analytics-page-title">
+                    <div class="analytics-icon">📊</div>
+                    <div>
+                        <h2>Course Analytics</h2>
+                        <p>Deep-dive into every dimension of the global portfolio</p>
+                    </div>
+                </div>
+                <nav class="analytics-subnav" id="analytics-subnav">
+                    <button class="asubtab active" data-atab="atab-overview">📋 Overview</button>
+                    <button class="asubtab" data-atab="atab-geography">🌍 Geography</button>
+                    <button class="asubtab" data-atab="atab-domains">🔬 Specializations</button>
+                    <button class="asubtab" data-atab="atab-verification">✅ Verification</button>
+                </nav>
+            </div>
+
+            <!-- Analytics KPI Cards (always visible) -->
+            <div class="analytics-kpi-row">
+                <div class="a-stat-card a-blue" title="Click to see breakdown" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-overview]').click()">
+                    <div class="a-stat-icon">📚</div>
+                    <div class="a-stat-body">
+                        <div class="a-stat-val" id="an-total">—</div>
+                        <div class="a-stat-label">Total Unique Courses</div>
+                        <div class="a-stat-sub" id="an-variants-sub">— delivery variants</div>
+                    </div>
+                </div>
+                <div class="a-stat-card a-green" title="Click to filter" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-geography]').click()">
+                    <div class="a-stat-icon">🇮🇳</div>
+                    <div class="a-stat-body">
+                        <div class="a-stat-val" id="an-indian">—</div>
+                        <div class="a-stat-label">Indian Programs</div>
+                        <div class="a-stat-sub" id="an-indian-pct">—% of total catalog</div>
+                    </div>
+                </div>
+                <div class="a-stat-card a-purple" title="Click to see international breakdown" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-geography]').click()">
+                    <div class="a-stat-icon">🌐</div>
+                    <div class="a-stat-body">
+                        <div class="a-stat-val" id="an-intl">—</div>
+                        <div class="a-stat-label">International Programs</div>
+                        <div class="a-stat-sub" id="an-countries-count">— countries represented</div>
+                    </div>
+                </div>
+                <div class="a-stat-card a-orange" title="Click to see verification stats" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-verification]').click()">
+                    <div class="a-stat-icon">✅</div>
+                    <div class="a-stat-body">
+                        <div class="a-stat-val" id="an-matchrate">—%</div>
+                        <div class="a-stat-label">Verification Match Rate</div>
+                        <div class="a-stat-sub" id="an-verified-sub">— courses perfectly verified</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── OVERVIEW sub-tab ── -->
+            <div id="atab-overview" class="atab-content active">
+
+                <!-- Auto-computed Insight Cards -->
+                <div class="insight-cards-row" id="insight-cards-row"></div>
+
+                <div class="an-overview-grid">
+
+                    <!-- Doughnut: Academic Credential Mix -->
+                    <div class="an-card an-card-lg">
+                        <div class="an-card-hdr">
+                            <div>
+                                <div class="an-card-title">Academic Credential Mix</div>
+                                <div class="an-card-sub">Categorization by degree & certification level — click a segment</div>
+                            </div>
+                            <div class="an-badge indigo">Credential Levels</div>
+                        </div>
+                        <div class="an-donut-wrap">
+                            <div class="an-chart-zone" style="height:300px; position:relative;">
+                                <canvas id="an-credential-chart"></canvas>
+                            </div>
+                            <div id="an-credential-legend" class="an-legend-grid"></div>
+                        </div>
+                    </div>
+
+                    <!-- India vs International Split -->
+                    <div class="an-card">
+                        <div class="an-card-hdr">
+                            <div>
+                                <div class="an-card-title">🇮🇳 India vs 🌐 World</div>
+                                <div class="an-card-sub">Portfolio split by origin</div>
+                            </div>
+                        </div>
+                        <div id="an-split-visual" class="an-split-block"></div>
+                        <div id="an-top-countries" class="an-hub-list" style="margin-top:16px;"></div>
+                        <button class="an-cta-btn" onclick="document.querySelector('.asubtab[data-atab=atab-geography]').click()">
+                            View Full Geographic Report →
+                        </button>
+                    </div>
+
+                    <!-- Full-width Pricing Bar Chart -->
+                    <div class="an-card an-full-width">
+                        <div class="an-card-hdr">
+                            <div>
+                                <div class="an-card-title">Cost-Access Intelligence</div>
+                                <div class="an-card-sub">Subsidized and free learning path availability — click bars to drill down</div>
+                            </div>
+                            <div class="an-badge rose">Pricing Segments</div>
+                        </div>
+                        <div class="an-chart-zone" style="height:280px; position:relative;">
+                            <canvas id="an-pricing-chart"></canvas>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- ── GEOGRAPHY sub-tab ── -->
+            <div id="atab-geography" class="atab-content">
+                <div class="an-section-hdr">
+                    <div>
+                        <div class="an-section-title">Geographic Footprint</div>
+                        <div class="an-section-sub">Click any row to see its courses · sorted by volume</div>
+                    </div>
+                    <div class="an-search-wrap">
+                        <span class="an-search-icon">🔍</span>
+                        <input type="text" id="an-country-search" placeholder="Search country…" class="an-search-input">
+                    </div>
+                </div>
+
+                <div class="an-card an-full-width" style="padding:0; overflow:hidden;">
+                    <div class="tbl-wrap" style="max-height:55vh;">
+                        <table class="data-table an-geo-table">
+                            <thead><tr>
+                                <th style="width:56px;">Rank</th>
+                                <th>Country</th>
+                                <th style="text-align:center;">Courses</th>
+                                <th style="text-align:center;">Verified ✅</th>
+                                <th style="text-align:center;">Issues ⚠️</th>
+                                <th style="text-align:right;">Share</th>
+                                <th style="width:120px;">Distribution</th>
+                            </tr></thead>
+                            <tbody id="an-country-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Drill-down panel for geography -->
+                <div id="geo-drilldown" class="drilldown-panel" style="display:none;">
+                    <div class="drilldown-hdr">
+                        <div id="geo-drilldown-title" class="drilldown-title"></div>
+                        <button class="drilldown-close" onclick="closeDrilldown('geo-drilldown')">✕ Close</button>
+                    </div>
+                    <div class="tbl-wrap" style="max-height:40vh;">
+                        <table class="data-table">
+                            <thead><tr><th>#</th><th>Course Name</th><th>University</th><th>Domain</th><th>Status</th></tr></thead>
+                            <tbody id="geo-drilldown-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── SPECIALIZATIONS sub-tab ── -->
+            <div id="atab-domains" class="atab-content">
+                <div class="an-section-hdr" style="margin-bottom:20px;">
+                    <div>
+                        <div class="an-section-title">Domain Intelligence</div>
+                        <div class="an-section-sub">Click any row or bar to drill into courses of that specialization</div>
+                    </div>
+                </div>
+
+                <!-- Domain bar chart -->
+                <div class="an-card an-full-width">
+                    <div class="an-card-hdr">
+                        <div class="an-card-title">📊 Domain Saturation · click bars to explore</div>
+                        <div class="an-badge slate">Unique Offerings</div>
+                    </div>
+                    <div class="an-chart-zone" style="height:340px; position:relative;">
+                        <canvas id="an-domain-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Domain table -->
+                <div class="an-card an-full-width" style="padding:0; overflow:hidden;">
+                    <div class="tbl-wrap" style="max-height:45vh;">
+                        <table class="data-table an-domain-table">
+                            <thead><tr>
+                                <th>Specialization</th>
+                                <th style="text-align:center;">Total</th>
+                                <th style="text-align:center;">🇮🇳 Indian</th>
+                                <th style="text-align:center;">🌐 Intl</th>
+                                <th style="text-align:center;">✅ Verified</th>
+                                <th style="text-align:center;">⚠️ Issues</th>
+                                <th style="width:100px;">Mix</th>
+                            </tr></thead>
+                            <tbody id="an-domain-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Drill-down panel for domains -->
+                <div id="dom-drilldown" class="drilldown-panel" style="display:none;">
+                    <div class="drilldown-hdr">
+                        <div id="dom-drilldown-title" class="drilldown-title"></div>
+                        <button class="drilldown-close" onclick="closeDrilldown('dom-drilldown')">✕ Close</button>
+                    </div>
+                    <div class="tbl-wrap" style="max-height:40vh;">
+                        <table class="data-table">
+                            <thead><tr><th>#</th><th>Course Name</th><th>University</th><th>Country</th><th>Status</th><th>Note</th></tr></thead>
+                            <tbody id="dom-drilldown-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── VERIFICATION sub-tab ── -->
+            <div id="atab-verification" class="atab-content">
+                <div class="an-section-hdr" style="margin-bottom:20px;">
+                    <div>
+                        <div class="an-section-title">Verification Intelligence</div>
+                        <div class="an-section-sub">Accuracy rates, discrepancy reasons, and quality signals across the catalog</div>
+                    </div>
+                </div>
+
+                <!-- Verification KPI row -->
+                <div class="verif-kpi-row" id="verif-kpi-row"></div>
+
+                <div class="an-overview-grid" style="margin-top:20px;">
+                    <!-- Verification status doughnut -->
+                    <div class="an-card">
+                        <div class="an-card-hdr">
+                            <div class="an-card-title">Verification Status Breakdown</div>
+                            <div class="an-badge indigo">Live Data</div>
+                        </div>
+                        <div class="an-chart-zone" style="height:280px; position:relative;">
+                            <canvas id="an-status-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Top discrepancy reasons -->
+                    <div class="an-card">
+                        <div class="an-card-hdr">
+                            <div class="an-card-title">⚠️ Top Discrepancy Reasons</div>
+                            <div class="an-badge rose">Quality Flags</div>
+                        </div>
+                        <div id="an-disc-reasons" class="disc-reason-list"></div>
+                    </div>
+
+                    <!-- Verification rate by country (full width) -->
+                    <div class="an-card an-full-width" style="padding:0; overflow:hidden;">
+                        <div style="padding:20px 24px 12px;">
+                            <div class="an-card-title">Verification Rate by Country</div>
+                            <div class="an-card-sub">Countries with verified + discrepant courses — click row to drill down</div>
+                        </div>
+                        <div class="tbl-wrap" style="max-height:45vh;">
+                            <table class="data-table">
+                                <thead><tr>
+                                    <th>Country</th>
+                                    <th style="text-align:center;">Total</th>
+                                    <th style="text-align:center;">✅ Verified</th>
+                                    <th style="text-align:center;">⚠️ Discrepant</th>
+                                    <th style="text-align:center;">❌ Error</th>
+                                    <th>Match Rate</th>
+                                </tr></thead>
+                                <tbody id="an-verif-country-tbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Verification drill-down -->
+                <div id="verif-drilldown" class="drilldown-panel" style="display:none;">
+                    <div class="drilldown-hdr">
+                        <div id="verif-drilldown-title" class="drilldown-title"></div>
+                        <button class="drilldown-close" onclick="closeDrilldown('verif-drilldown')">✕ Close</button>
+                    </div>
+                    <div class="tbl-wrap" style="max-height:40vh;">
+                        <table class="data-table">
+                            <thead><tr><th>#</th><th>Course Name</th><th>University</th><th>Domain</th><th>Status</th><th>Reason</th></tr></thead>
+                            <tbody id="verif-drilldown-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div><!-- /tab-analytics -->
+
+    
+<!-- ══════════════ COURSE DETAIL MODAL ══════════════ -->
+<div id="course-modal" class="modal-overlay">
+    <div class="modal-box">
+        <div class="modal-hdr">
+            <h3 id="modal-course-title">Course Details</h3>
+            <div style="display:flex; gap:10px; align-items:center;">
+                <span id="modal-solve-progress" class="modal-progress" style="display:none;"></span>
+                <button id="solve-all-btn" class="modal-solve" style="display:none;">✓ Solve all</button>
+                <button id="solve-website-btn" class="modal-solve" style="display:none;">✓ Solved</button>
+                <button id="remove-from-verification-btn" class="modal-solve" style="display:none;" title="Solve all open issues on this course and remove it from the Verification tab">✓ Remove from Verification</button>
+                <button id="delete-course-btn" class="modal-del">Delete</button>
+                <button id="close-modal" class="modal-close">✕</button>
+            </div>
+        </div>
+        <table style="width:100%; border-collapse:collapse;" id="modal-table">
+            <thead>
+                <tr style="border-bottom:1px solid var(--border);">
+                    <th style="padding:10px 12px; text-align:left; font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--text-3);">Attribute</th>
+                    <th style="padding:10px 12px; text-align:left; font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--text-3);">Original (PDF)</th>
+                    <th style="padding:10px 12px; text-align:left; font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--text-3);">Verified (Web)</th>
+                    <th style="padding:10px 12px; text-align:center; font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--text-3);">Status</th>
+                    <th style="padding:10px 12px; text-align:center; font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--text-3);">Action</th>
+                </tr>
+            </thead>
+            <tbody id="modal-table-body"></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Pre-embedded stats: the Flask route serialises the current payload into
+     this script block so the browser paints real KPI numbers immediately
+     without waiting for the /api/data.json round-trip. app.js reads this
+     before its first fetch and updates the UI synchronously on DOMContentLoaded. -->
+<script>
+  window.__INITIAL_DATA__ = null;
+</script>
+<script src="./app.js?v=21"></script>
+</body>
+</html>
