@@ -3709,9 +3709,10 @@ class AutonomousCourseVerifier:
         # Karnataka cities / state keywords
         if any(kw in uni_name_lower for kw in ['karnataka', 'bangalore', 'bengaluru', 'belgaum', 'mysore', 'mangalore', 'hubli', 'dharwad']):
             karnataka_rule = """- KARNATAKA CET FEES BASELINE EXCEPTION: Karnataka engineering colleges have standard CET baseline fees:
-  * Government / Aided Colleges: Rs. 44,311
-  * Private Unaided / Minority Colleges: Rs. 1,13,205 or Rs. 1,22,300
-  If the college is in Karnataka, determine its type from the text (Government vs Private). If the Original Cost exactly matches these baselines (e.g. 44311, 113205, 122300) OR their 4-year totals, you MUST explicitly output a MATCH and state it is the standard Karnataka CET fee baseline in the description, UNLESS the website explicitly proves a different fee."""
+  * Government / Aided Colleges: Rs. 44,200
+  * Private Unaided / Minority Colleges: Rs. 1,12,410 or Rs. 1,21,410
+  * SNQ Quota: Rs. 20,610 or Rs. 30,610
+  If the college is in Karnataka, determine its type from the text (Government vs Private). If the Original Cost exactly matches these baselines (e.g. 44200, 112410, 121410, 20610, 30610) OR their 4-year totals, you MUST explicitly output a MATCH and state it is the standard Karnataka CET fee baseline in the description, UNLESS the website explicitly proves a different fee."""
         
         prompt = f"""
 Strictly verify the course details against the webpage text. Output ONLY valid JSON.
