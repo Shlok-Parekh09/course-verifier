@@ -1050,8 +1050,8 @@ def _push_cached_payloads_to_mongo():
     except Exception as e:
         print(f"[CACHE] ✗ Error pushing payloads: {e}")
 
-    # Also push to Cloudflare KV via the Worker's /api/kv-push endpoint
-    _push_to_cloudflare_kv(data_payload, courses_payload)
+    # Cloudflare KV sync is now handled manually via push_kv_manual.py
+    # _push_to_cloudflare_kv(data_payload, courses_payload)
 
 def _push_to_cloudflare_kv(data_payload, courses_payload):
     """Push pre-computed payloads to the Cloudflare Worker's KV store so the
@@ -1535,11 +1535,20 @@ def upload_data():
                 c['free_match'] = free_match
                 c['scholarship_match'] = scholarship_match
                 
-                matches = [c['cost_match'], c['duration_match'], c['mode_match'],
-                           c['lang_match'], c['country_match'], c['uni_match'], c['sk_match'],
-                           qs_match, nirf_match, free_match, scholarship_match]
+                has_mismatch = False
+                fails = []
+                if 'pdf_table' in extracted:
+                    for row in extracted['pdf_table']:
+                        row_status = str(row.get('status', '')).strip().upper()
+                        if row_status != 'MATCH':
+                            has_mismatch = True
+                            attr = str(row.get('attribute', '')).strip()
+                            if attr: fails.append(attr)
+                else:
+                    has_mismatch = True
+                    fails.append("No Verification Data")
                 
-                if all(matches):
+                if not has_mismatch:
                     c['status'] = 'Verified'
                     c['disc_reason'] = ''
                     c['issue_category'] = ISSUE_CATEGORY_VERIFIED
@@ -1547,18 +1556,6 @@ def upload_data():
                 else:
                     c['status'] = 'Discrepancy'
                     c['issue_category'] = ISSUE_CATEGORY_COURSE
-                    fails = []
-                    if not c['cost_match']: fails.append('Cost')
-                    if not c['duration_match']: fails.append('Duration')
-                    if not c['mode_match']: fails.append('Mode')
-                    if not c['lang_match']: fails.append('Language')
-                    if not c['country_match']: fails.append('Country')
-                    if not c['uni_match']: fails.append('University')
-                    if not c['sk_match']: fails.append('Skills')
-                    if not qs_match: fails.append('QS Ranked')
-                    if not nirf_match: fails.append('NIRF Ranked')
-                    if not free_match: fails.append('Free Box')
-                    if not scholarship_match: fails.append('Scholarship Box')
                     c['disc_reason'] = "Mismatch: " + ", ".join(fails)
                 
                 c['issue_sub_type'] = derive_issue_sub_type(c)
