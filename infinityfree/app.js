@@ -41,6 +41,51 @@ let cfFilter = { search: '', status: 'all', country: 'all', domain: 'all', qs: '
 
 let modalCourse = null;        // Currently open course in modal
 
+// ── Custom State ───────────────────────────────────────────────────
+let sfPage = 1;
+let sfFilter = { search: '' };
+let sortState = {
+    vf: { col: 'id', dir: 1 },
+    cf: { col: 'id', dir: 1 },
+    sf: { col: 'id', dir: 1 }
+};
+
+function getOriginalStatus(c) {
+    if (c.pdf_table && c.pdf_table.some(r => r.status && r.status.toUpperCase() !== 'MATCH')) return 'Discrepancy';
+    if (c.disc_reason && (c.disc_reason.includes('404') || c.disc_reason.toLowerCase().includes('website') || c.disc_reason.toLowerCase().includes('not found'))) return 'Error';
+    if (c.disc_reason) return 'Discrepancy';
+    return 'Verified';
+}
+
+function getOriginalCategory(c) {
+    const s = getOriginalStatus(c);
+    if (s === 'Error') return 'website_issue';
+    if (s === 'Discrepancy') return 'mismatch';
+    return 'verified';
+}
+
+function sortCourses(list, state) {
+    return list.sort((a, b) => {
+        let vA = a[state.col];
+        let vB = b[state.col];
+        
+        if (state.col === 'domain') {
+            vA = getDomainLabel(a.id);
+            vB = getDomainLabel(b.id);
+        } else if (state.col === 'name') {
+            vA = (vA || '').toLowerCase();
+            vB = (vB || '').toLowerCase();
+        }
+        
+        if (typeof vA === 'string' && typeof vB === 'string') {
+            return vA.localeCompare(vB) * state.dir;
+        }
+        if (vA < vB) return -1 * state.dir;
+        if (vA > vB) return 1 * state.dir;
+        return 0;
+    });
+}
+
 // ── API Base URL (Cloudflare Worker) ─────────────────────────────
 // The actual deployed Cloudflare Worker URL
 const API_BASE_URL = 'https://course-verifier-api.shlokparekh08.workers.dev';
@@ -131,11 +176,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         renderDashboard();
         renderVerificationTab();
         renderCoursesTab();
+        renderSolvedTab();
 
         // Wire up filter events
         initFilters();
         initModal();
         initKpiClickThrough();
+        initSorting();
 
     } catch (err) {
         setConnStatus('error');
@@ -179,6 +226,31 @@ function initTabs() {
         document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
         link.classList.add('active');
         document.getElementById(target).classList.add('active');
+    });
+}
+
+function initSorting() {
+    document.querySelectorAll('th.sortable').forEach(th => {
+        th.addEventListener('click', () => {
+            const tableId = th.closest('tbody') ? th.closest('tbody').id : th.closest('table').querySelector('tbody').id;
+            const prefix = tableId.split('-')[0]; // vf, cf, sf
+            const col = th.dataset.sort;
+            if (sortState[prefix].col === col) {
+                sortState[prefix].dir *= -1; // toggle
+            } else {
+                sortState[prefix].col = col;
+                sortState[prefix].dir = 1;
+            }
+            // update UI arrows
+            th.closest('tr').querySelectorAll('th.sortable').forEach(t => {
+                t.textContent = t.textContent.replace(' ↑', ' ↕').replace(' ↓', ' ↕');
+            });
+            th.textContent = th.textContent.replace(' ↕', sortState[prefix].dir === 1 ? ' ↑' : ' ↓');
+            
+            if (prefix === 'vf') renderVerificationTab();
+            if (prefix === 'cf') renderCoursesTab();
+            if (prefix === 'sf') renderSolvedTab();
+        });
     });
 }
 
@@ -248,6 +320,7 @@ function initFilters() {
         document.getElementById('cf-qs').value = 'any';
         cfPage = 1;
         renderCoursesTab();
+        renderSolvedTab();
     });
 
     // Pagination
@@ -255,6 +328,20 @@ function initFilters() {
     document.getElementById('vf-next').addEventListener('click', () => { vfPage++; renderVerificationTab(); });
     document.getElementById('cf-prev').addEventListener('click', () => { if (cfPage > 1) { cfPage--; renderCoursesTab(); } });
     document.getElementById('cf-next').addEventListener('click', () => { cfPage++; renderCoursesTab(); });
+
+    // Solved Courses Tab
+    document.getElementById('sf-search').addEventListener('input', e => {
+        clearTimeout(cfTimer);
+        cfTimer = setTimeout(() => { sfFilter.search = e.target.value.toLowerCase(); sfPage = 1; renderSolvedTab(); }, 220);
+    });
+    document.getElementById('sf-reset').addEventListener('click', () => {
+        document.getElementById('sf-search').value = '';
+        sfFilter = { search: '' };
+        sfPage = 1;
+        renderSolvedTab();
+    });
+    document.getElementById('sf-prev').addEventListener('click', () => { if (sfPage > 1) { sfPage--; renderSolvedTab(); } });
+    document.getElementById('sf-next').addEventListener('click', () => { sfPage++; renderSolvedTab(); });
 }
 
 // ── KPI click-through to Verification tab ────────────────────────
@@ -477,6 +564,63 @@ function applyCfFilter(courses) {
     });
 }
 
+function renderSolvedTab() {
+    let filtered = allCourses.filter(c => c.solved_attrs && c.solved_attrs.length > 0);
+    
+    if (sfFilter.search) {
+        const q = sfFilter.search;
+        filtered = filtered.filter(c => 
+            (c.name || '').toLowerCase().includes(q) ||
+            (c.university || '').toLowerCase().includes(q) ||
+            (c.country || '').toLowerCase().includes(q)
+        );
+    }
+    
+    const total = filtered.length;
+    const totalPages = Math.ceil(total / PAGE_SIZE) || 1;
+    if (sfPage > totalPages) sfPage = totalPages;
+    
+    document.getElementById('sf-pag-info').textContent = `Page ${sfPage} of ${totalPages} (${total} total)`;
+    document.getElementById('sf-prev').disabled = sfPage === 1;
+    document.getElementById('sf-next').disabled = sfPage === totalPages;
+    
+    filtered = sortCourses(filtered, sortState.sf);
+    
+    const start = (sfPage - 1) * PAGE_SIZE;
+    const end = start + PAGE_SIZE;
+    const pageData = filtered.slice(start, end);
+    const tbody = document.getElementById('sf-tbody');
+    tbody.innerHTML = '';
+    
+    if (pageData.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" class="empty-state">No solved courses yet!</td></tr>`;
+        return;
+    }
+    
+    pageData.forEach(c => {
+        const domLabel = getDomainLabel(c.id);
+        const tr = document.createElement('tr');
+        tr.onclick = () => openModal(c.id);
+        
+        let statBadge = '';
+        if (c.status === 'Verified') statBadge = `<span class="badge-status status-ver">Verified</span>`;
+        else if (c.status === 'Discrepancy') statBadge = `<span class="badge-status status-disc">Discrepancy</span>`;
+        else if (c.status === 'Error') statBadge = `<span class="badge-status status-err">Error</span>`;
+        else statBadge = `<span class="badge-status">${c.status || '—'}</span>`;
+        
+        tr.innerHTML = `
+            <td style="color:var(--text-dim); font-size:0.8rem;">${c.id}</td>
+            <td class="td-name">${escHtml(c.name)}</td>
+            <td>${escHtml(c.university)}</td>
+            <td>${escHtml(c.country || '—')}</td>
+            <td><span class="badge-domain">${domLabel}</span></td>
+            <td>${escHtml(c.mode || '—')}</td>
+            <td>${statBadge}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
 function renderCoursesTab() {
     const filtered = applyCfFilter(allCourses);
     const total = filtered.length;
@@ -587,8 +731,16 @@ async function openModal(courseId) {
         });
         document.getElementById('modal-hint').textContent = c.disc_reason || '';
         const solveAllBtn = document.getElementById('modal-solve-all');
-        solveAllBtn.style.display = (hasMismatch && c.status !== 'Verified') ? 'inline-flex' : 'none';
-        solveAllBtn.textContent = allSolved ? '✓ All Resolved' : '✓ Mark All Resolved';
+        solveAllBtn.style.display = hasMismatch ? 'inline-flex' : 'none';
+        if (allSolved) {
+            solveAllBtn.textContent = '✗ Unsolve All';
+            solveAllBtn.style.background = '#333';
+            solveAllBtn.style.color = '#ccc';
+        } else {
+            solveAllBtn.textContent = '✓ Mark All Resolved';
+            solveAllBtn.style.background = 'var(--primary)';
+            solveAllBtn.style.color = 'var(--bg)';
+        }
 
     } catch (err) {
         document.getElementById('modal-tbody').innerHTML = `<tr><td colspan="5" class="empty-state" style="color:var(--red)">Error loading details: ${err.message}</td></tr>`;
@@ -624,8 +776,8 @@ async function solveAttr(courseId, attr, isSolved) {
         .map(r => r.attribute?.toLowerCase());
     const allSolved = mismatchAttrs.every(a => solved.includes(a));
 
-    const newStatus = allSolved ? 'Verified' : c.status;
-    const newCategory = allSolved ? 'verified' : c.issue_category;
+    const newStatus = allSolved ? 'Verified' : getOriginalStatus(c);
+    const newCategory = allSolved ? 'verified' : getOriginalCategory(c);
 
     const update = {
         solved_attrs: solved,
@@ -643,6 +795,7 @@ async function solveAttr(courseId, attr, isSolved) {
         // Refresh tab counts
         renderVerificationTab();
         renderCoursesTab();
+        renderSolvedTab();
         // Refresh dashboard KPIs
         const verified = allCourses.filter(x => x.status === 'Verified').length;
         const disc = allCourses.filter(x => x.status === 'Discrepancy').length;
@@ -664,13 +817,30 @@ async function solveAll() {
     if (!modalCourse) return;
     const c = modalCourse;
     const rows = c.pdf_table || [];
-    const solved = rows.map(r => r.attribute?.toLowerCase()).filter(Boolean);
-
-    const update = {
-        solved_attrs: solved,
-        status: 'Verified',
-        issue_category: 'verified',
-    };
+    
+    const mismatchAttrs = rows
+        .filter(r => r.status ? (r.status.toUpperCase() !== 'MATCH') : (r.original !== r.verified))
+        .map(r => r.attribute?.toLowerCase()).filter(Boolean);
+        
+    const curSolved = c.solved_attrs || [];
+    const allSolved = mismatchAttrs.every(a => curSolved.includes(a));
+    
+    let update;
+    if (allSolved) {
+        // Unsolve all! Restore original state
+        update = {
+            solved_attrs: [],
+            status: getOriginalStatus(c),
+            issue_category: getOriginalCategory(c),
+        };
+    } else {
+        // Solve all
+        update = {
+            solved_attrs: mismatchAttrs,
+            status: 'Verified',
+            issue_category: 'verified',
+        };
+    }
     Object.assign(c, update);
 
     try {
@@ -678,6 +848,7 @@ async function solveAll() {
         openModal(c.id);
         renderVerificationTab();
         renderCoursesTab();
+        renderSolvedTab();
     } catch (err) {
         alert('Failed to save: ' + err.message);
     }

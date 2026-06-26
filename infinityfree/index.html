@@ -23,6 +23,7 @@
         <a href="#" class="nav-tab active" data-tab="tab-dashboard">Dashboard</a>
         <a href="#" class="nav-tab" data-tab="tab-verification">Verification</a>
         <a href="#" class="nav-tab" data-tab="tab-courses">All Courses</a>
+        <a href="#" class="nav-tab" data-tab="tab-solved">Solved Courses</a>
     </div>
 
     <div class="nav-right">
@@ -166,17 +167,18 @@
                     <table class="data-table">
                         <thead>
                             <tr>
-                                <th style="width:48px;">#</th>
-                                <th>Course Name</th>
-                                <th>University</th>
-                                <th>Country</th>
-                                <th>Domain</th>
-                                <th>Status</th>
+                                <th class="sortable" data-sort="id" style="width:48px;"># ↕</th>
+                                <th class="sortable" data-sort="name">Course Name ↕</th>
+                                <th class="sortable" data-sort="university">University ↕</th>
+                                <th class="sortable" data-sort="country">Country ↕</th>
+                                <th class="sortable" data-sort="domain">Domain ↕</th>
+                                <th class="sortable" data-sort="mode">Mode ↕</th>
+                                <th class="sortable" data-sort="status">Status ↕</th>
                                 <th>Issue</th>
                             </tr>
                         </thead>
                         <tbody id="vf-tbody">
-                            <tr><td colspan="7" class="empty-state">Loading…</td></tr>
+                            <tr><td colspan="8" class="empty-state">Loading…</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -223,17 +225,18 @@
                     <table class="data-table">
                         <thead>
                             <tr>
-                                <th style="width:48px;">#</th>
-                                <th>Course Name</th>
-                                <th>University</th>
-                                <th>Country</th>
-                                <th>Domain</th>
+                                <th class="sortable" data-sort="id" style="width:48px;"># ↕</th>
+                                <th class="sortable" data-sort="name">Course Name ↕</th>
+                                <th class="sortable" data-sort="university">University ↕</th>
+                                <th class="sortable" data-sort="country">Country ↕</th>
+                                <th class="sortable" data-sort="domain">Domain ↕</th>
+                                <th class="sortable" data-sort="mode">Mode ↕</th>
                                 <th>QS</th>
-                                <th>Status</th>
+                                <th class="sortable" data-sort="status">Status ↕</th>
                             </tr>
                         </thead>
                         <tbody id="cf-tbody">
-                            <tr><td colspan="7" class="empty-state">Loading…</td></tr>
+                            <tr><td colspan="8" class="empty-state">Loading…</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -247,6 +250,46 @@
             </div>
         </div>
     </div><!-- /tab-courses -->
+
+    <!-- ══════════ SOLVED COURSES TAB ══════════ -->
+    <div id="tab-solved" class="tab-content">
+        <div class="tab-wrap">
+            <div class="panel">
+                <!-- Filter Bar -->
+                <div class="filter-bar">
+                    <input class="search-box" id="sf-search" placeholder="🔍  Search name, university, country…" type="text">
+                    <button class="btn-reset" id="sf-reset">✕ Reset</button>
+                </div>
+
+                <!-- Table -->
+                <div class="tbl-wrap">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th class="sortable" data-sort="id" style="width:48px;"># ↕</th>
+                                <th class="sortable" data-sort="name">Course Name ↕</th>
+                                <th class="sortable" data-sort="university">University ↕</th>
+                                <th class="sortable" data-sort="country">Country ↕</th>
+                                <th class="sortable" data-sort="domain">Domain ↕</th>
+                                <th class="sortable" data-sort="mode">Mode ↕</th>
+                                <th class="sortable" data-sort="status">Status ↕</th>
+                            </tr>
+                        </thead>
+                        <tbody id="sf-tbody">
+                            <tr><td colspan="7" class="empty-state">Loading…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination -->
+                <div class="pag-bar">
+                    <button class="btn-pg" id="sf-prev">← Prev</button>
+                    <span class="pag-info" id="sf-pag-info">—</span>
+                    <button class="btn-pg" id="sf-next">Next →</button>
+                </div>
+            </div>
+        </div>
+    </div><!-- /tab-solved -->
 
 </div><!-- /main-page -->
 
