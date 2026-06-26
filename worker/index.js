@@ -59,9 +59,14 @@ export default {
                 const cachedData = await env.COURSE_CACHE.get('courses.json');
                 if (cachedData) {
                     const parsed = JSON.parse(cachedData);
+                    const pendingStr = await env.COURSE_CACHE.get('pending_solves.json');
+                    let pending = [];
+                    if (pendingStr) {
+                        try { pending = JSON.parse(pendingStr); } catch (e) { }
+                    }
                     // The dashboard pushes {"status": "success", "courses": [...]}
-                    // We must return { documents: [...] } for the frontend
-                    return json({ documents: parsed.courses || [] });
+                    // We must return { documents: [...], pending_solves: [...] } for the frontend
+                    return json({ documents: parsed.courses || [], pending_solves: pending });
                 } else {
                     // Fallback to MongoDB if KV is empty, and automatically cache it
                     const data = await mongoRequest(env, 'find', {
@@ -96,38 +101,53 @@ export default {
                 return json({ status: 'success', message: `Saved ${endpoint} to KV cache` });
             }
 
-            // Detailed course view (fallback to Mongo directly to ensure fresh data for verification)
+            // Detailed course view (deprecated, handled by frontend now)
             if (path === '/api/get_course_details' && request.method === 'GET') {
-                const courseId = url.searchParams.get('id');
-                if (!courseId) return json({ error: 'Missing id' }, 400);
-                const data = await mongoRequest(env, 'findOne', {
-                    filter: { id: { $in: [parseInt(courseId), String(courseId)] } },
-                    projection: { _id: 0 },
-                });
-                if (!data.document) return json({ error: 'Course not found' }, 404);
-                return json({ document: data.document });
+                return json({ error: 'Endpoint deprecated. Details are returned by /api/get_courses' }, 410);
             }
 
-            // Updates write directly to MongoDB
+            // Sync solves queue directly to MongoDB (from local python dashboard)
+            if (path === '/api/pending_solves' && request.method === 'GET') {
+                const pendingStr = await env.COURSE_CACHE.get('pending_solves.json');
+                return new Response(`{"status":"success","pending_solves":${pendingStr || '[]'}}`, {
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+                });
+            }
+
+            // Clear pending solves after successful MongoDB sync
+            if (path === '/api/clear_pending_solves' && request.method === 'POST') {
+                await env.COURSE_CACHE.put('pending_solves.json', '[]');
+                return json({ status: 'success', message: 'Cleared pending solves queue' });
+            }
+
+            // Updates append to KV pending_solves queue (bypassing MongoDB Data API)
             if (path === '/api/solve_course' && request.method === 'POST') {
                 const body = await request.json();
                 const courseId = body.id;
                 const update   = body.update || {};
-                const setData  = update.$set || update;
-                if (!courseId) return json({ error: 'Missing id' }, 400);
-                const data = await mongoRequest(env, 'updateOne', {
-                    filter: { id: { $in: [parseInt(courseId), String(courseId)] } },
-                    update: { $set: setData },
+                
+                // Get existing pending solves
+                const pendingStr = await env.COURSE_CACHE.get('pending_solves.json');
+                let pending = [];
+                if (pendingStr) {
+                    try { pending = JSON.parse(pendingStr); } catch (e) { }
+                }
+
+                // Add to queue
+                pending.push({
+                    id: courseId,
+                    update: update,
+                    timestamp: Date.now()
                 });
-                
-                // INVALDITATE CACHE so the next get_courses request fetches fresh data from MongoDB
-                ctx.waitUntil(env.COURSE_CACHE.delete('courses.json'));
-                
-                return json({ matched_count: data.matchedCount, modified_count: data.modifiedCount });
+
+                // Write back to KV
+                await env.COURSE_CACHE.put('pending_solves.json', JSON.stringify(pending));
+
+                return json({ status: 'success', message: 'Buffered to Cloudflare KV queue' });
             }
 
+            // Fallback for unknown routes
             return json({ error: 'Not found' }, 404);
-
         } catch (err) {
             return json({ error: err.message }, 500);
         }

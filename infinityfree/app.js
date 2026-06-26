@@ -60,6 +60,18 @@ async function fetchAllCourses() {
     }
     const data = await res.json();
     const docs = data.documents || [];
+    const pending = data.pending_solves || [];
+
+    // Apply pending solves from Edge queue
+    for (const solve of pending) {
+        const c = docs.find(x => x.id == solve.id);
+        if (c && solve.update) {
+            // handle $set update structure if present
+            const updateObj = solve.update.$set || solve.update;
+            Object.assign(c, updateObj);
+        }
+    }
+
     setLoaderSub(`Loaded ${docs.length} courses…`);
     return docs;
 }
