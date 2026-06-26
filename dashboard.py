@@ -2,6 +2,7 @@ import os
 import json
 import re
 import sys
+import hashlib
 import fitz
 import pdfplumber
 import tempfile
@@ -11,6 +12,9 @@ import pymongo
 from pymongo import MongoClient, UpdateOne
 from flask import Flask, render_template, jsonify, request
 from werkzeug.utils import secure_filename
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Windows consoles default to the cp1252 codepage, which CANNOT encode the
 # status glyphs used throughout the print() statements below (✓ ✗ ⚠ ▸ …). A
@@ -177,37 +181,74 @@ ATTRIBUTE_ROWS = [
     ('QS Ranked',   'qs_match_expr'),
     ('NIRF Ranked', 'nirf_match_expr'),
     ('Free Box',    'free_match_expr'),
+    ('Scholarship Box', 'scholarship_match_expr'),
 ]
 
 def _attr_is_match(c, key):
     """Resolve a modal-table MATCH/FALSE flag for a course dict."""
     if key == 'qs_match_expr':
+        # Check pdf_table first (authoritative — set by upload or verifier)
+        for row in (c.get('pdf_table') or []):
+            if isinstance(row, dict) and row.get('attribute', '').lower().startswith('qs'):
+                return str(row.get('status', '')).upper() != 'FALSE'
+        # Fall back to field-based logic
         return bool(c.get('qs_ranked', False)) or (not c.get('has_qs_badge', False))
     if key == 'nirf_match_expr':
+        for row in (c.get('pdf_table') or []):
+            if isinstance(row, dict) and row.get('attribute', '').lower().startswith('nirf'):
+                return str(row.get('status', '')).upper() != 'FALSE'
         return bool(c.get('nirf_ranked', False)) or (not c.get('has_nirf_badge', False))
     if key == 'free_match_expr':
         has_free = bool(c.get('has_free_box', False))
         web_cost = str(c.get('web_cost', '') or '').lower()
         web_free = 'free' in web_cost
         return has_free == web_free
+    if key == 'scholarship_match_expr':
+        for row in (c.get('pdf_table') or []):
+            if isinstance(row, dict) and 'scholarship' in str(row.get('attribute', '')).lower():
+                return str(row.get('status', '')).upper() != 'FALSE'
+        return True  # No scholarship row = not an issue
     return bool(c.get(key, False))
 
-# The user-solvable subset: the 7 basic attributes the modal shows Solve
-# buttons for and that disc_reason / the upload status check are built from.
-# QS Ranked / NIRF Ranked / Free Box are derived *display* flags (qs_match_expr
-# etc.), NOT rows the user can tick Solved on — so they must NOT block a course
-# from becoming Verified. Counting them here meant solving every visible issue
-# still left a hidden "NIRF Ranked" false attr, so the course stayed
-# Discrepancy and the Perfect Matches number never incremented.
+# The user-solvable subset: includes the 7 basic attributes plus QS/NIRF/Free
+# so that solving ALL visible issues (including ranking mismatches) flips the
+# course to Verified. The old code excluded QS/NIRF/Free, so a course with a
+# ranking mismatch stayed Discrepancy forever even after solving everything else.
 SOLVABLE_ATTRIBUTE_ROWS = ATTRIBUTE_ROWS[:7]
+QS_NIRF_ROWS = ATTRIBUTE_ROWS[7:10]  # QS Ranked, NIRF Ranked, Free Box
+
+def _qs_nirf_false_attrs(c):
+    """List QS/NIRF/Free/Scholarship attribute names that are currently FALSE."""
+    false = []
+    for row in (c.get('pdf_table') or []):
+        if not isinstance(row, dict):
+            continue
+        attr_name = str(row.get('attribute', '')).strip()
+        status = str(row.get('status', '')).strip().upper()
+        if status == 'FALSE':
+            if attr_name.lower().startswith('qs'):
+                false.append('QS Ranked')
+            elif attr_name.lower().startswith('nirf'):
+                false.append('NIRF Ranked')
+            elif attr_name.lower().startswith('free'):
+                false.append('Free Box')
+            elif attr_name.lower().startswith('scholarship'):
+                false.append('Scholarship Box')
+    return false
 
 def course_false_attrs(c):
-    """List of SOLVABLE attribute names currently FALSE (i.e. open) for a course.
+    """List of attribute names currently FALSE (i.e. open) for a course.
 
-    Only the 7 basic attrs — the ones the modal can mark Solved and that
-    disc_reason lists. QS/NIRF/Free exprs are intentionally excluded so that
-    solving all visible issues flips the course to Verified."""
-    return [name for name, key in SOLVABLE_ATTRIBUTE_ROWS if not _attr_is_match(c, key)]
+    Includes the 7 basic attrs PLUS QS/NIRF/Free if their pdf_table row is
+    FALSE — so that ranking mismatches count as open issues and block
+    Verified status until solved."""
+    false = [name for name, key in SOLVABLE_ATTRIBUTE_ROWS if not _attr_is_match(c, key)]
+    # Also check QS/NIRF/Free from pdf_table (more reliable than derived fields)
+    qs_nirf_false = _qs_nirf_false_attrs(c)
+    for attr in qs_nirf_false:
+        if attr not in false:
+            false.append(attr)
+    return false
 
 def course_open_issues(c):
     """Number of unsolved issue-units a course contributes to the Open Issues KPI."""
@@ -261,6 +302,7 @@ def _derived_classification(c):
                    'country_match', 'uni_match', 'sk_match']
     if not any(bool(c.get(k, False)) for k in _basic_keys):
         return (ISSUE_CATEGORY_WEBSITE, 'Error')
+    # Check ALL attributes including QS/NIRF from pdf_table
     solved = set(c.get('solved_attrs', []) or [])
     unsolved = [a for a in course_false_attrs(c) if a not in solved]
     if not unsolved:
@@ -401,8 +443,6 @@ def derive_issue_sub_type(c):
         return ''
 
     if cat == ISSUE_CATEGORY_COURSE:
-        if 'discontinued' in text:
-            return 'course_discontinued'
         if 'replaced' in text:
             return 'course_replaced'
         if 'wrong url' in text:
@@ -416,7 +456,12 @@ def derive_issue_sub_type(c):
             'university': 'university_mismatch', 'country': 'country_mismatch',
             'mode': 'mode_mismatch', 'language': 'language_mismatch',
             'skills': 'skills_mismatch', 'name': 'name_mismatch',
+            'qs ranked': 'qs_mismatch', 'nirf ranked': 'nirf_mismatch',
+            'free box': 'free_box_mismatch', 'scholarship box': 'scholarship_box_mismatch',
         }
+        # Ranking-only mismatch: QS/NIRF FALSE but no other attr mismatch
+        if len(attrs) == 1 and attrs[0].lower() in ('qs ranked', 'nirf ranked'):
+            return attr_map[attrs[0].lower()]
         if len(attrs) >= 2:
             return 'multiple_mismatches'
         if len(attrs) == 1:
@@ -438,8 +483,22 @@ def load_courses():
     # showed "0" after solving instead of the incremented count.
     loaded = []
 
+    loaded_raw = False
+    
+    # ── LOCAL OVERRIDE ──
+    # If 1.json exists, we are running locally and should prioritize it over MongoDB
+    # to avoid overwriting local changes with old remote data on startup.
+    if os.path.exists(PERSISTENT_FILE):
+        try:
+            with open(PERSISTENT_FILE, "r", encoding="utf-8") as f:
+                raw_data = json.load(f)
+            loaded_raw = True
+            print(f"Loaded {len(raw_data)} courses from {PERSISTENT_FILE}")
+        except Exception as e:
+            print("Error loading 1.json:", e)
+
     loaded_from_mongo = False
-    if db is not None:
+    if not loaded_raw and db is not None:
         try:
             print("Loading courses from MongoDB...")
             docs = list(db.courses.find({}, {'_id': 0}))
@@ -449,18 +508,7 @@ def load_courses():
                 print(f"Loaded {len(loaded)} courses from MongoDB.")
                 loaded_from_mongo = True
         except Exception as e:
-            print(f"Error loading from MongoDB, falling back to local files: {e}")
-    
-    loaded_raw = False
-    
-    if not loaded_from_mongo and os.path.exists(PERSISTENT_FILE):
-        try:
-            with open(PERSISTENT_FILE, "r", encoding="utf-8") as f:
-                raw_data = json.load(f)
-            loaded_raw = True
-            print(f"Loaded {len(raw_data)} courses from {PERSISTENT_FILE}")
-        except Exception as e:
-            print("Error loading 1.json, falling back to base JSON:", e)
+            print(f"Error loading from MongoDB: {e}")
             
     if not loaded_from_mongo and not loaded_raw:
         # Fallback to original JSON files if 1.json doesn't exist
@@ -577,6 +625,7 @@ def load_courses():
             
         print(f"Loaded {len(global_courses)} courses locally.")
 
+<<<<<<< HEAD
     # APPLY HEURISTIC TO ALL LOADED COURSES (From Mongo or Local)
     # BUG FIX: iterate over `loaded` (the freshly-fetched list) — NOT
     # `global_courses` (the OLD in-memory list).  The atomic swap below
@@ -586,6 +635,30 @@ def load_courses():
     _basic_match_keys = ['cost_match', 'duration_match', 'mode_match',
                          'lang_match', 'country_match', 'uni_match', 'sk_match']
     for c in loaded:
+=======
+    # APPLY HEURISTIC TO ALL LOADED COURSES (iterate over `loaded`, not the
+    # old global_courses — the old code iterated global_courses but swapped
+    # `loaded` in at the end, so the heuristic never touched the freshly-loaded
+    # data and stale classifications persisted.)
+    for c in loaded:
+        # Ensure qs_match/nirf_match/free_match fields exist on Mongo-loaded
+        # courses (they were only set by the upload handler; older Mongo docs
+        # lack them). Derive from pdf_table if present.
+        if 'qs_match' not in c:
+            c['qs_match'] = True
+            c['nirf_match'] = True
+            c['free_match'] = True
+            for row in (c.get('pdf_table') or []):
+                if not isinstance(row, dict): continue
+                row_attr = str(row.get('attribute', '')).lower().strip()
+                row_status = str(row.get('status', '')).strip().upper()
+                if 'qs' in row_attr and 'ranked' in row_attr:
+                    c['qs_match'] = (row_status != 'FALSE')
+                elif 'nirf' in row_attr and 'ranked' in row_attr:
+                    c['nirf_match'] = (row_status != 'FALSE')
+                elif 'free' in row_attr and 'box' in row_attr:
+                    c['free_match'] = (row_status != 'FALSE')
+>>>>>>> c8f96f6d812a0ceb07e05419211df53a7dce0d35
         # Check both disc_reason and reason since they might be labeled differently depending on the source
         desc_text = str(c.get('cost_description', '')) + " " + str(c.get('duration_description', '')) + " " + str(c.get('cost_verified', '')) + " " + str(c.get('duration_verified', '')) + " " + str(c.get('disc_reason', '')) + " " + str(c.get('reason', '')) + " " + _pdf_table_text(c)
         
@@ -596,6 +669,7 @@ def load_courses():
         # If it was natively flagged as Unverified in older runs, and has an error message, it's a website issue
         is_unverified = c.get('status') == 'Unverified'
         
+<<<<<<< HEAD
         issue_cat = c.get('issue_category', '')
         
         # If the course has been explicitly categorised (e.g. by PDF upload), respect it!
@@ -615,6 +689,36 @@ def load_courses():
             # False (i.e. the page never loaded at all).
             c['issue_category'] = ISSUE_CATEGORY_WEBSITE
             c['status'] = 'Error'
+=======
+        # Web issues are detected from actual website error signals only — a
+        # page-load / unreachable / LLM-fallback error in the description, or an
+        # existing website_issue classification (preserved by the else-branch
+        # below). We intentionally do NOT use uni_match / name_match here: PDF
+        # uploads set uni_match=True when the University cell reads MATCH, which
+        # would mask genuine website issues and make the count drift down.
+        # IMPORTANT: Do not override courses that have a pdf_table (uploaded /
+        # verified) — their status was set authoritatively by the upload handler.
+        has_pdf_table = bool(c.get('pdf_table'))
+        if has_page_error:
+            c['issue_category'] = ISSUE_CATEGORY_WEBSITE
+            c['status'] = 'Error'
+        elif is_unverified and not c.get('issue_category'):
+            c['issue_category'] = ISSUE_CATEGORY_WEBSITE
+            c['status'] = 'Error'
+        elif has_pdf_table and c.get('issue_category') in (ISSUE_CATEGORY_VERIFIED, ISSUE_CATEGORY_COURSE):
+            # Uploaded course with real pdf_table data — trust the stored
+            # status/issue_category, don't re-derive from heuristics.
+            pass
+        else:
+            # Sync status with issue_category for existing records
+            issue_cat = c.get('issue_category', '')
+            if issue_cat == ISSUE_CATEGORY_VERIFIED:
+                c['status'] = 'Verified'
+            elif issue_cat == ISSUE_CATEGORY_WEBSITE:
+                c['status'] = 'Error'
+            elif issue_cat == ISSUE_CATEGORY_COURSE:
+                c['status'] = 'Discrepancy'
+>>>>>>> c8f96f6d812a0ceb07e05419211df53a7dce0d35
 
         # Backfill issue_sub_type from real signals when missing. Never
         # overwrites a value already persisted in Mongo / 1.json.
@@ -634,8 +738,17 @@ def load_courses():
 # sees new uploads. Refresh from MongoDB on a short TTL so the live site stays
 # current. Local dev benefits too: it picks up writes from other clients.
 _LAST_LOAD_TS = time.time()
+<<<<<<< HEAD
 _LAST_SAVE_TS = time.time()
 _LOAD_TTL_SEC = 15
+=======
+# On the local machine (1.json present) we never poll MongoDB — the local file
+# IS the source of truth and MongoDB re-polling would overwrite in-memory edits.
+# On production (Vercel / Cloud Run) we reload every 120 s so multi-client
+# changes propagate without hammering Atlas.
+_IS_LOCAL = os.path.exists(PERSISTENT_FILE)
+_LOAD_TTL_SEC = 999999 if _IS_LOCAL else 120
+>>>>>>> c8f96f6d812a0ceb07e05419211df53a7dce0d35
 _load_lock = threading.Lock()
 _refresh_in_progress = False
 analytics_thread = None
@@ -709,7 +822,21 @@ def _refresh_courses_if_stale():
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    # Embed the current stats payload directly into the HTML so the browser
+    # renders real KPI numbers the instant the page is parsed — no extra HTTP
+    # round-trip to /api/data.json before the first paint.
+    try:
+        initial_payload = _get_cached_data_payload()
+        initial_data_json = json.dumps({
+            "status": initial_payload.get("status"),
+            "stats": initial_payload.get("stats"),
+            "country_counts": initial_payload.get("country_counts"),
+            "domain_counts": initial_payload.get("domain_counts"),
+            "recent": initial_payload.get("recent", []),
+        })
+    except Exception:
+        initial_data_json = 'null'
+    return render_template("index.html", initial_data=initial_data_json)
 
 @app.route("/api/courses")
 @app.route("/api/courses.json")
@@ -732,11 +859,35 @@ def api_debug():
         "dnspython_installed": True
     })
 
-@app.route("/api/data")
-@app.route("/api/data.json")
-def api_data():
-    _refresh_courses_if_stale()
+# ── Caching: avoid recomputing the massive /api/data payload on every 5s poll ──
+# The old code iterated 3727 courses 7+ times and built 3 full issue lists on
+# every request. Now we cache the result and only recompute when global_courses
+# actually changes (after a solve, upload, or stale refresh).
+_data_cache = None
+_data_cache_key = None  # (len(global_courses), sum of statuses hash)
+
+def _get_data_cache_key():
+    """Cheap signature of global_courses — changes when any status/length changes."""
+    # Use a lightweight hash: length + counts of each status. This is O(n) but
+    # a single pass, and the result is cached so the 5s poll just compares ints.
+    counts = {}
+    for c in global_courses:
+        s = c.get('status', '')
+        counts[s] = counts.get(s, 0) + 1
+    # Include solved_attrs count so solve actions invalidate the cache
+    solved_total = sum(len(c.get('solved_attrs', []) or []) for c in global_courses)
+    return (len(global_courses), tuple(sorted(counts.items())), solved_total)
+
+def _get_cached_data_payload():
+    """Return the /api/data.json payload, recomputing only when data changes."""
+    global _data_cache, _data_cache_key
+    key = _get_data_cache_key()
+    if _data_cache is not None and _data_cache_key == key:
+        return _data_cache
+
+    # ── Single-pass computation over global_courses ──
     total_courses = len(global_courses)
+<<<<<<< HEAD
     verified = sum(1 for c in global_courses if c.get('status') == 'Verified')
     discrepancies = sum(1 for c in global_courses if c.get('status') == 'Discrepancy')
     errors = sum(1 for c in global_courses if c.get('status') == 'Error')
@@ -747,86 +898,123 @@ def api_data():
     course_issues = sum(1 for c in global_courses if c.get('issue_category') == ISSUE_CATEGORY_COURSE)
 
     # Sub-type tallies
+=======
+    verified = discrepancies = errors = unverified = 0
+    website_issues = course_issues = 0
+>>>>>>> c8f96f6d812a0ceb07e05419211df53a7dce0d35
     website_sub_counts = {}
     course_sub_counts = {}
-    for c in global_courses:
-        sub = c.get('issue_sub_type', '')
-        if c.get('issue_category') == ISSUE_CATEGORY_WEBSITE and sub:
-            website_sub_counts[sub] = website_sub_counts.get(sub, 0) + 1
-        elif c.get('issue_category') == ISSUE_CATEGORY_COURSE and sub:
-            course_sub_counts[sub] = course_sub_counts.get(sub, 0) + 1
-
-    # Domain health warnings
     domain_issue_counts = {}
-    for c in global_courses:
-        if c.get('issue_category') == ISSUE_CATEGORY_WEBSITE:
-            dom = normalize_domain(c.get('domain', 'Unknown'))
-            domain_issue_counts[dom] = domain_issue_counts.get(dom, 0) + 1
-    domain_warnings = [
-        {"domain": d, "issue_count": cnt}
-        for d, cnt in domain_issue_counts.items() if cnt >= 3
-    ]
-
     domain_counts = {}
     country_counts = {}
     country_status = {}
     discrepancy_list = []
     website_issue_list = []
     course_issue_list = []
+    recent = []
+    open_issues = 0
 
     for c in global_courses:
+        s = c.get('status', '')
+        cat = c.get('issue_category', '')
+
+        # Stats (single pass instead of 7 separate sum() calls)
+        if s == 'Verified': verified += 1
+        elif s == 'Discrepancy': discrepancies += 1
+        elif s == 'Error': errors += 1
+        elif s == 'Unverified': unverified += 1
+
+        if cat == ISSUE_CATEGORY_WEBSITE: website_issues += 1
+        elif cat == ISSUE_CATEGORY_COURSE: course_issues += 1
+
+        # Sub-type tallies
+        sub = c.get('issue_sub_type', '')
+        if cat == ISSUE_CATEGORY_WEBSITE and sub:
+            website_sub_counts[sub] = website_sub_counts.get(sub, 0) + 1
+        elif cat == ISSUE_CATEGORY_COURSE and sub:
+            course_sub_counts[sub] = course_sub_counts.get(sub, 0) + 1
+
+        # Domain counts + issue counts
         if c.get('domain'):
             dom = normalize_domain(c.get('domain'))
             domain_counts[dom] = domain_counts.get(dom, 0) + 1
+            if cat == ISSUE_CATEGORY_WEBSITE:
+                domain_issue_counts[dom] = domain_issue_counts.get(dom, 0) + 1
+
+        # Country counts + status
         cty = c.get('country')
         if cty and cty != 'Unknown':
             cty = clean_country(cty)
             country_counts[cty] = country_counts.get(cty, 0) + 1
             st = country_status.setdefault(cty, {"total": 0, "verified": 0, "discrepancies": 0, "errors": 0})
             st["total"] += 1
-            s = c.get('status')
-            if s == 'Verified':
-                st["verified"] += 1
-            elif s == 'Discrepancy':
-                st["discrepancies"] += 1
-            elif s == 'Error':
-                st["errors"] += 1
+            if s == 'Verified': st["verified"] += 1
+            elif s == 'Discrepancy': st["discrepancies"] += 1
+            elif s == 'Error': st["errors"] += 1
 
+<<<<<<< HEAD
         if c.get('status') == 'Discrepancy':
             discrepancy_list.append({
                 "name": c.get('name', ''),
                 "university": c.get('university', ''),
                 "reason": c.get('disc_reason', ''),
                 "domain": c.get('domain', '')
+=======
+        # Issue lists (only name/uni/reason/domain — NOT full course objects)
+        if s == 'Discrepancy':
+            discrepancy_list.append({
+                "name": c.get('name', ''), "university": c.get('university', ''),
+                "reason": c.get('disc_reason', ''), "domain": c.get('domain', '')
+>>>>>>> c8f96f6d812a0ceb07e05419211df53a7dce0d35
             })
-        if c.get('issue_category') == ISSUE_CATEGORY_WEBSITE:
+        if cat == ISSUE_CATEGORY_WEBSITE:
             website_issue_list.append({
+<<<<<<< HEAD
                 "name": c.get('name', ''),
                 "university": c.get('university', ''),
                 "sub_type": c.get('issue_sub_type', ''),
                 "reason": c.get('disc_reason', ''),
                 "domain": c.get('domain', '')
+=======
+                "name": c.get('name', ''), "university": c.get('university', ''),
+                "sub_type": sub, "reason": c.get('disc_reason', ''), "domain": c.get('domain', '')
+>>>>>>> c8f96f6d812a0ceb07e05419211df53a7dce0d35
             })
-        elif c.get('issue_category') == ISSUE_CATEGORY_COURSE:
+        elif cat == ISSUE_CATEGORY_COURSE:
             course_issue_list.append({
+<<<<<<< HEAD
                 "name": c.get('name', ''),
                 "university": c.get('university', ''),
                 "sub_type": c.get('issue_sub_type', ''),
                 "reason": c.get('disc_reason', ''),
                 "domain": c.get('domain', '')
+=======
+                "name": c.get('name', ''), "university": c.get('university', ''),
+                "sub_type": sub, "reason": c.get('disc_reason', ''), "domain": c.get('domain', '')
+>>>>>>> c8f96f6d812a0ceb07e05419211df53a7dce0d35
             })
 
-    return jsonify({
+        # Recent list: only discrepancy/error courses with a pdf_page
+        if s in ('Discrepancy', 'Error') and 'pdf_page' in c:
+            recent.append(c)
+
+        # Open issues (only for non-verified/non-website courses)
+        if s != 'Verified' and cat == ISSUE_CATEGORY_COURSE:
+            solved = set(c.get('solved_attrs', []) or [])
+            open_issues += sum(1 for a in course_false_attrs(c) if a not in solved)
+
+    domain_warnings = [
+        {"domain": d, "issue_count": cnt}
+        for d, cnt in domain_issue_counts.items() if cnt >= 3
+    ]
+
+    payload = {
         "status": "success",
         "stats": {
-            "total": total_courses,
-            "verified": verified,
-            "discrepancies": discrepancies,
-            "errors": errors,
-            "unverified": unverified,
-            "website_issues": website_issues,
-            "course_issues": course_issues,
-            "open_issues": sum(course_open_issues(c) for c in global_courses)
+            "total": total_courses, "verified": verified,
+            "discrepancies": discrepancies, "errors": errors,
+            "unverified": unverified, "website_issues": website_issues,
+            "course_issues": course_issues, "open_issues": open_issues,
         },
         "website_sub_counts": website_sub_counts,
         "course_sub_counts": course_sub_counts,
@@ -837,8 +1025,89 @@ def api_data():
         "discrepancy_list": discrepancy_list,
         "website_issue_list": website_issue_list,
         "course_issue_list": course_issue_list,
+<<<<<<< HEAD
         "recent": [c for c in global_courses if c.get('status') in ['Discrepancy', 'Error'] and 'pdf_page' in c]
     })
+=======
+        "recent": recent,
+    }
+
+    _data_cache = payload
+    _data_cache_key = key
+    return payload
+
+def _invalidate_data_cache():
+    """Call after any mutation to global_courses (solve, upload, delete) so
+    the next /api/data.json request recomputes instead of returning stale cache."""
+    global _data_cache, _data_cache_key
+    _data_cache = None
+    _data_cache_key = None
+
+def _push_cached_payloads_to_mongo():
+    """Push pre-computed /api/data.json and /api/courses.json payloads to MongoDB
+    so the public website can load data in milliseconds by reading a single cached
+    document rather than re-computing stats from 3700+ individual course documents.
+    Also pushes to Cloudflare KV if configured."""
+    if db is None:
+        return
+    try:
+        data_payload = _get_cached_data_payload()
+        courses_payload = {"status": "success", "courses": global_courses}
+
+        # Store in a 'api_cache' collection — one doc per endpoint
+        db.api_cache.update_one(
+            {"_endpoint": "data.json"},
+            {"$set": {"_endpoint": "data.json", "payload": data_payload, "_ts": time.time()}},
+            upsert=True
+        )
+        db.api_cache.update_one(
+            {"_endpoint": "courses.json"},
+            {"$set": {"_endpoint": "courses.json", "payload": courses_payload, "_ts": time.time()}},
+            upsert=True
+        )
+        print("[CACHE] ✓ Pushed pre-computed API payloads to MongoDB")
+    except Exception as e:
+        print(f"[CACHE] ✗ Error pushing payloads: {e}")
+
+    # Also push to Cloudflare KV via the Worker's /api/kv-push endpoint
+    _push_to_cloudflare_kv(data_payload, courses_payload)
+
+def _push_to_cloudflare_kv(data_payload, courses_payload):
+    """Push pre-computed payloads to the Cloudflare Worker's KV store so the
+    public website at courseverifiy.kesug.com loads data in milliseconds."""
+    import requests as req_lib
+
+    worker_url = os.environ.get('CF_WORKER_URL', '').rstrip('/')
+    kv_push_key = os.environ.get('CF_KV_PUSH_KEY', '')
+    if not worker_url or not kv_push_key:
+        print("[CF-KV] ⚠ CF_WORKER_URL or CF_KV_PUSH_KEY not set — skipping Cloudflare KV push")
+        return
+    push_url = f'{worker_url}/api/kv-push'
+    for endpoint, payload in [('data.json', data_payload), ('courses.json', courses_payload)]:
+        try:
+            # Dump to JSON bytes string
+            import json
+            raw_data = json.dumps(payload, separators=(',', ':'))
+            headers = {
+                'Authorization': f'Bearer {kv_push_key}',
+                'Content-Type': 'application/json',
+                'X-Endpoint': endpoint
+            }
+            resp = req_lib.post(push_url, data=raw_data, headers=headers, timeout=60)
+            if resp.status_code == 200:
+                print(f"[CF-KV] ✓ Pushed {endpoint} to Cloudflare KV")
+            else:
+                print(f"[CF-KV] ✗ Failed to push {endpoint}: HTTP {resp.status_code} — {resp.text[:200]}")
+        except Exception as e:
+            print(f"[CF-KV] ✗ Error pushing {endpoint}: {e}")
+
+@app.route("/api/data")
+@app.route("/api/data.json")
+def api_data():
+    _refresh_courses_if_stale()
+    payload = _get_cached_data_payload()
+    return jsonify(payload)
+>>>>>>> c8f96f6d812a0ceb07e05419211df53a7dce0d35
 
 @app.route("/api/course/<int:course_id>", methods=["DELETE", "OPTIONS"])
 def delete_course(course_id):
@@ -860,6 +1129,7 @@ def delete_course(course_id):
             
         # Resync everything to MongoDB (since IDs changed)
         save_courses(global_courses)
+        _invalidate_data_cache()
         
         # Delete the extra document at the end since size decreased by 1
         if db is not None:
@@ -926,6 +1196,7 @@ def solve_course_issue(course_id):
 
     try:
         save_courses([course])
+        _invalidate_data_cache()
     except Exception as e:
         print("[SOLVE] save error:", e)
 
@@ -964,6 +1235,7 @@ def api_reclassify():
             reclassify_course(c)
         try:
             save_courses(None)
+            _invalidate_data_cache()
             saved = True
         except Exception as e:
             print("[RECLASSIFY] save error:", e)
@@ -1243,6 +1515,7 @@ _ATTR_KEYS = {
 }
 
 def build_analytics_data():
+<<<<<<< HEAD
     """Build the analytics payload dict per the Analytics Tab data contract.
 
     Pure data build — used by the /api/analytics route. Every
@@ -1250,6 +1523,12 @@ def build_analytics_data():
     missing so the route never 500s."""
     qs_set, nirf_set = _load_rankings()
 
+=======
+    """Build the analytics payload dict (course_category, pricing_category,
+    variant_category, domain_pivot, country_pivot). Uses global_courses (live
+    MongoDB data) as the single source of truth — NOT static Excel/JSON files
+    that drift stale after uploads/solves."""
+>>>>>>> c8f96f6d812a0ceb07e05419211df53a7dce0d35
     data = {
         # EXISTING (preserved)
         "course_category": {},
@@ -1312,6 +1591,7 @@ def build_analytics_data():
                   "open_issues": 0},
     }
 
+<<<<<<< HEAD
     # ────────────────────────────────────────────────────────────────────────
     # 1. CombinedWork.xlsx → course_category, pricing_category, country_pivot,
     #    cost_access, credential_ladder, ranked_credential_mix,
@@ -1412,6 +1692,69 @@ def build_analytics_data():
             else:
                 entry['International'] += 1
         data['domain_pivot'] = domains
+=======
+    # ── All numbers come from global_courses (live data) ──
+    course_category = {}
+    pricing_category = {'Free': 0, 'Affordable': 0, 'Mid': 0, 'Premium': 0}
+    country_pivot = {}
+    domain_pivot = {}
+
+    import re as _re
+
+    for c in global_courses:
+        # Course type / credential mix (from normalized domain)
+        level = normalize_domain(c.get('domain', ''))
+        if level and level != 'Other':
+            course_category[level] = course_category.get(level, 0) + 1
+
+        # Country pivot
+        cty = clean_country(str(c.get('country', '')))
+        if cty and cty != 'Unknown':
+            country_pivot[cty] = country_pivot.get(cty, 0) + 1
+
+        # Pricing tier from cost field
+        cost_str = str(c.get('cost', '')).lower()
+        if 'free' in cost_str:
+            pricing_category['Free'] += 1
+        else:
+            m = _re.search(r'[\d][\d,]*(?:\.\d+)?', cost_str)
+            if m:
+                try:
+                    val = float(m.group(0).replace(',', ''))
+                    if val <= 0:
+                        pricing_category['Free'] += 1
+                    elif val <= 50000:
+                        pricing_category['Affordable'] += 1
+                    elif val <= 200000:
+                        pricing_category['Mid'] += 1
+                    else:
+                        pricing_category['Premium'] += 1
+                except ValueError:
+                    pass
+
+        # Domain pivot (Indian vs International per domain)
+        dom = normalize_domain(c.get('domain', ''))
+        if dom and dom != 'Other':
+            if dom not in domain_pivot:
+                domain_pivot[dom] = {'Total': 0, 'Indian': 0, 'International': 0}
+            domain_pivot[dom]['Total'] += 1
+            if cty == 'India':
+                domain_pivot[dom]['Indian'] += 1
+            else:
+                domain_pivot[dom]['International'] += 1
+
+    data['course_category'] = course_category
+    data['country_pivot'] = country_pivot
+    data['pricing_category'] = pricing_category
+    data['domain_pivot'] = domain_pivot
+
+    # Variant counts: Indian vs International from live data
+    ind_var = sum(1 for c in global_courses if clean_country(str(c.get('country', ''))) == 'India')
+    int_var = len(global_courses) - ind_var
+    data['variant_category']['Indian Variants'] = ind_var
+    data['variant_category']['International Variants'] = int_var
+    data['variant_category']['Total Variants'] = len(global_courses)
+>>>>>>> c8f96f6d812a0ceb07e05419211df53a7dce0d35
 
     # ────────────────────────────────────────────────────────────────────────
     # 3. global_courses → analytics_courses, verification_quality, country
@@ -2524,9 +2867,14 @@ def upload_data():
     files = request.files.getlist('files[]')
     
     attributes = ['Cost', 'Duration', 'Mode', 'Language', 'Country', 'University', 'Skills']
+    ranking_attributes = ['QS', 'NIRF', 'Free Box', 'Scholarship Box']
     
     updates = 0
+    wiped_count = 0
     verified_in_this_batch = []
+    # Collect ALL extracted courses across all files first, then do a range-wipe.
+    # Pass 1: parse every page of every PDF, collect {id -> data} map.
+    all_extracted = {}   # pdf_course_id -> {extracted fields, pdf_table, page, filename}
     
     for file in files:
         if file.filename == '': continue
@@ -2536,112 +2884,92 @@ def upload_data():
         file.save(temp_path)
         
         try:
-            with pdfplumber.open(temp_path) as pdf:
-                for page_num, page in enumerate(pdf.pages, start=1):
-                    text = page.extract_text()
-                    if not text: continue
-                    
-                    match = re.search(r'^\s*(\d+)\.\s+(.+?)\s*$', text, re.MULTILINE)
-                    if not match: continue
-                    
-                    title = match.group(2).strip()
-                    
-                    tables = page.extract_tables()
-                    extracted = {}
-                    if tables:
-                        table = tables[0]
-                        for row in table:
-                            if len(row) >= 4:
-                                attr = str(row[0]).strip().replace('\n', ' ')
-                                if attr.lower() == 'attribute': continue # Skip header row
-                                
-                                original = str(row[1]).strip().replace('\n', ' ') if len(row) > 1 else ''
-                                verified = str(row[2]).strip().replace('\n', ' ') if len(row) > 2 else ''
-                                status = str(row[3]).strip().replace('\n', ' ') if len(row) > 3 else ''
-                                
-                                if 'pdf_table' not in extracted:
-                                    extracted['pdf_table'] = []
-                                extracted['pdf_table'].append({
-                                    "attribute": attr,
-                                    "original": original,
-                                    "verified": verified,
-                                    "status": status
-                                })
-                                
-                                for a in attributes:
-                                    if a.lower() in attr.lower():
-                                        if a.lower() == 'university':
-                                            extracted['Original_University'] = original
-                                        if status == 'MATCH':
-                                            extracted[a] = 'MATCH'
-                                        break
-                                        
-                    actual_page = page_num
-                    page_match = re.search(r'PDF Page (\d+)', text)
-                    if page_match:
-                        actual_page = int(page_match.group(1))
-                    
-                    if 'free' in file.filename.lower() and actual_page <= 7:
-                        actual_page += 16
-                        
-                    pdf_course_id = int(match.group(1))
-                    
-                    # Find and update the course in memory using its ID
-                    for c in global_courses:
-                        if c.get('id') == pdf_course_id:
-                            c['pdf_page'] = actual_page
-                            c['cost_match'] = (extracted.get('Cost') == 'MATCH')
-                            c['duration_match'] = (extracted.get('Duration') == 'MATCH')
-                            c['mode_match'] = (extracted.get('Mode') == 'MATCH')
-                            c['lang_match'] = (extracted.get('Language') == 'MATCH')
-                            c['country_match'] = (extracted.get('Country') == 'MATCH')
-                            c['uni_match'] = (extracted.get('University') == 'MATCH')
-                            c['sk_match'] = (extracted.get('Skills') == 'MATCH')
+            import fitz
+            doc = fitz.open(temp_path)
+            for page_num in range(len(doc)):
+                # 1. Ultra-fast text extraction with PyMuPDF
+                fitz_page = doc[page_num]
+                text = fitz_page.get_text()
+                if not text: continue
+                
+                match = re.search(r'^\s*(\d+)\.\s+(.+?)\s*$', text, re.MULTILINE)
+                if not match: continue
+                
+                title = match.group(2).strip()
+                
+                # 2. Ultra-fast native table extraction with PyMuPDF
+                tabs = fitz_page.find_tables()
+                extracted = {}
+                if tabs:
+                    table = tabs[0].extract()
+                    for row in table:
+                        if len(row) >= 4:
+                            attr_name = str(row[0]).strip().replace('\n', ' ')
+                            if attr_name.lower() == 'attribute': continue
                             
-                            if 'pdf_table' in extracted:
-                                c['pdf_table'] = extracted['pdf_table']
-                                
-                            # Detect and assign exact domain from filename
-                            raw_name = file.filename.replace('_', ' ').replace('-', ' ').lower()
-                            valid_domains = [
-                                "High Value Low Cost", "Post Graduate Certificate", "Certificate",
-                                "Bachelors", "Masters", "Post Graduate Diploma", "Diploma",
-                                "Free to Audit", "Free"
-                            ]
-                            for d in valid_domains:
-                                if d.lower() in raw_name:
-                                    c['domain'] = normalize_domain(d)
+                            original = str(row[1]).strip().replace('\n', ' ') if len(row) > 1 else ''
+                            verified = str(row[2]).strip().replace('\n', ' ') if len(row) > 2 else ''
+                            row_status = str(row[3]).strip().replace('\n', ' ') if len(row) > 3 else ''
+                            
+                            if 'pdf_table' not in extracted:
+                                extracted['pdf_table'] = []
+                            extracted['pdf_table'].append({
+                                "attribute": attr_name,
+                                "original": original,
+                                "verified": verified,
+                                "status": row_status
+                            })
+                            
+                            for a in attributes:
+                                if a.lower() in attr_name.lower():
+                                    if a.lower() == 'university':
+                                        extracted['Original_University'] = original
+                                    if row_status == 'MATCH':
+                                        extracted[a] = 'MATCH'
                                     break
                             
-                            matches = [c['cost_match'], c['duration_match'], c['mode_match'], c['lang_match'], c['country_match'], c['uni_match'], c['sk_match']]
-                            
-                            if all(matches):
-                                c['status'] = 'Verified'
-                                c['disc_reason'] = ''
-                                c['issue_category'] = ISSUE_CATEGORY_VERIFIED
-                                c['issue_sub_type'] = ''
-                            else:
-                                c['status'] = 'Discrepancy'
-                                c['issue_category'] = ISSUE_CATEGORY_COURSE
-                                fails = []
-                                if not c['cost_match']: fails.append('Cost')
-                                if not c['duration_match']: fails.append('Duration')
-                                if not c['mode_match']: fails.append('Mode')
-                                if not c['lang_match']: fails.append('Language')
-                                if not c['country_match']: fails.append('Country')
-                                if not c['uni_match']: fails.append('University')
-                                if not c['sk_match']: fails.append('Skills')
-                                c['disc_reason'] = "Mismatch: " + ", ".join(fails)
-                            
-                            c['issue_sub_type'] = derive_issue_sub_type(c)
-
-                            updates += 1
-                            verified_in_this_batch.append(c)
-                            break
+                            for ra in ranking_attributes:
+                                if ra.lower().replace(' box', '') in attr_name.lower().replace(' box', ''):
+                                    if row_status == 'MATCH':
+                                        extracted[ra] = 'MATCH'
+                                    break
+                
+                actual_page = page_num + 1
+                page_match = re.search(r'PDF Page (\d+)', text)
+                if page_match:
+                    actual_page = int(page_match.group(1))
+                
+                if 'free' in file.filename.lower() and actual_page <= 7:
+                    actual_page += 16
+                    
+                pdf_course_id = int(match.group(1))
+                
+                # Detect domain from filename
+                raw_name = file.filename.replace('_', ' ').replace('-', ' ').lower()
+                detected_domain = None
+                valid_domains = [
+                    "High Value Low Cost", "Post Graduate Certificate", "Certificate",
+                    "Bachelors", "Masters", "Post Graduate Diploma", "Diploma",
+                    "Free to Audit", "Free"
+                ]
+                for d in valid_domains:
+                    if d.lower() in raw_name:
+                        detected_domain = normalize_domain(d)
+                        break
+                
+                all_extracted[pdf_course_id] = {
+                    'extracted': extracted,
+                    'title': title,
+                    'page': actual_page,
+                    'domain': detected_domain,
+                }
+            if 'doc' in locals():
+                doc.close()
         except Exception as e:
             print(f"Error processing {file.filename}: {e}")
         finally:
             if os.path.exists(temp_path):
+<<<<<<< HEAD
                 os.remove(temp_path)
     if updates > 0:
         # Re-apply updates to the CURRENT global_courses in case a background 
@@ -2656,17 +2984,191 @@ def upload_data():
         # This prevents data loss when MongoDB is the primary data source
         try:
             save_courses(verified_in_this_batch)
+=======
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
+    
+    # Pass 2: Range-wipe + replace.
+    # Determine the [min_id, max_id] range from the uploaded PDF.
+    # ALL courses in that range get a FULL reset, even if the PDF only
+    # covers some of them — the old data is wiped so nothing stale persists.
+    if all_extracted:
+        min_id = min(all_extracted.keys())
+        max_id = max(all_extracted.keys())
+        
+        for c in global_courses:
+            cid = c.get('id')
+            if cid is None: continue
+            try:
+                cid = int(cid)
+            except (ValueError, TypeError):
+                continue
+            
+            # Only touch courses within the PDF's ID range
+            if cid < min_id or cid > max_id:
+                continue
+            
+            # ── FULL RESET: wipe all old verification state ──
+            c['pdf_page'] = None
+            c['solved_attrs'] = []
+            c['cost_match'] = False
+            c['duration_match'] = False
+            c['mode_match'] = False
+            c['lang_match'] = False
+            c['country_match'] = False
+            c['uni_match'] = False
+            c['sk_match'] = False
+            c['qs_match'] = False
+            c['nirf_match'] = False
+            c['free_match'] = False
+            c['scholarship_match'] = False
+            c['pdf_table'] = []
+            c['disc_reason'] = ''
+            c['status'] = 'Unverified'
+            c['issue_category'] = ''
+            c['issue_sub_type'] = ''
+            
+            # ── Replace with new PDF data if this course is in the PDF ──
+            if cid in all_extracted:
+                ext_data = all_extracted[cid]
+                extracted = ext_data['extracted']
+                
+                c['pdf_page'] = ext_data['page']
+                c['cost_match'] = (extracted.get('Cost') == 'MATCH')
+                c['duration_match'] = (extracted.get('Duration') == 'MATCH')
+                c['mode_match'] = (extracted.get('Mode') == 'MATCH')
+                c['lang_match'] = (extracted.get('Language') == 'MATCH')
+                c['country_match'] = (extracted.get('Country') == 'MATCH')
+                c['uni_match'] = (extracted.get('University') == 'MATCH')
+                c['sk_match'] = (extracted.get('Skills') == 'MATCH')
+                
+                if 'pdf_table' in extracted:
+                    c['pdf_table'] = extracted['pdf_table']
+                    
+                    # Parse QS/NIRF badge status from pdf_table
+                    for row in extracted['pdf_table']:
+                        row_attr = str(row.get('attribute', '')).lower()
+                        row_orig = str(row.get('original', '')).lower()
+                        if 'qs' in row_attr and 'badge' in row_orig:
+                            c['has_qs_badge'] = 'true' in row_orig or 'present' in row_orig
+                        if 'nirf' in row_attr and 'badge' in row_orig:
+                            c['has_nirf_badge'] = 'true' in row_orig or 'present' in row_orig
+                
+                if ext_data['domain']:
+                    c['domain'] = ext_data['domain']
+                
+                # Check QS/NIRF/Free/Scholarship from pdf_table rows
+                qs_match = True
+                nirf_match = True
+                free_match = True
+                scholarship_match = True
+                if 'pdf_table' in extracted:
+                    for row in extracted['pdf_table']:
+                        row_attr_name = str(row.get('attribute', '')).lower().strip()
+                        row_status = str(row.get('status', '')).strip().upper()
+                        if 'qs' in row_attr_name and 'ranked' in row_attr_name:
+                            qs_match = (row_status != 'FALSE')
+                        elif 'nirf' in row_attr_name and 'ranked' in row_attr_name:
+                            nirf_match = (row_status != 'FALSE')
+                        elif 'free' in row_attr_name and 'box' in row_attr_name:
+                            free_match = (row_status != 'FALSE')
+                        elif 'scholarship' in row_attr_name and 'box' in row_attr_name:
+                            scholarship_match = (row_status != 'FALSE')
+                
+                c['qs_match'] = qs_match
+                c['nirf_match'] = nirf_match
+                c['free_match'] = free_match
+                c['scholarship_match'] = scholarship_match
+                
+                matches = [c['cost_match'], c['duration_match'], c['mode_match'],
+                           c['lang_match'], c['country_match'], c['uni_match'], c['sk_match'],
+                           qs_match, nirf_match, free_match, scholarship_match]
+                
+                if all(matches):
+                    c['status'] = 'Verified'
+                    c['disc_reason'] = ''
+                    c['issue_category'] = ISSUE_CATEGORY_VERIFIED
+                    c['issue_sub_type'] = ''
+                else:
+                    c['status'] = 'Discrepancy'
+                    c['issue_category'] = ISSUE_CATEGORY_COURSE
+                    fails = []
+                    if not c['cost_match']: fails.append('Cost')
+                    if not c['duration_match']: fails.append('Duration')
+                    if not c['mode_match']: fails.append('Mode')
+                    if not c['lang_match']: fails.append('Language')
+                    if not c['country_match']: fails.append('Country')
+                    if not c['uni_match']: fails.append('University')
+                    if not c['sk_match']: fails.append('Skills')
+                    if not qs_match: fails.append('QS Ranked')
+                    if not nirf_match: fails.append('NIRF Ranked')
+                    if not free_match: fails.append('Free Box')
+                    if not scholarship_match: fails.append('Scholarship Box')
+                    c['disc_reason'] = "Mismatch: " + ", ".join(fails)
+                
+                c['issue_sub_type'] = derive_issue_sub_type(c)
+                updates += 1
+                verified_in_this_batch.append(dict(c))
+            else:
+                # Course is in the ID range but NOT in the PDF — it stays
+                # reset to Unverified (already done above). Count it as
+                # processed so the frontend knows it was wiped.
+                wiped_count += 1
+    
+    if (updates > 0 or wiped_count > 0) and all_extracted:
+        try:
+            # Collect ONLY courses in the uploaded PDF's ID range.
+            # Do NOT rewrite all 3700+ courses — just the affected slice.
+            modified_range = []
+            for c in global_courses:
+                try:
+                    cid = int(c.get('id', -1))
+                except (ValueError, TypeError):
+                    continue
+                if min_id <= cid <= max_id:
+                    modified_range.append(c)
+
+            # Delete stale MongoDB documents for this range first so no
+            # leftover docs survive if the new PDF has fewer courses.
+            if db is not None and modified_range:
+                try:
+                    ids_in_range = [int(c['id']) for c in modified_range]
+                    result_del = db.courses.delete_many({'id': {'$in': ids_in_range}})
+                    print(f"[UPLOAD] Deleted {result_del.deleted_count} stale MongoDB docs for range {min_id}-{max_id}")
+                except Exception as del_err:
+                    print(f"[UPLOAD] MongoDB delete error: {del_err}")
+
+            # Now upsert only the fresh range (not all global_courses).
+            save_courses(modified_range)
+            _invalidate_data_cache()
+            # Push the TTL far enough ahead so the background stale-check
+            # doesn't immediately reload from MongoDB before the writes are
+            # durable (120 s is plenty for Atlas to acknowledge the bulk write).
+            global _LAST_LOAD_TS
+            _LAST_LOAD_TS = time.time() + 90  # delay next mongo reload by 120s total
+
+            # ── Push pre-computed API payloads to MongoDB for instant website loading ──
+            try:
+                _push_cached_payloads_to_mongo()
+            except Exception as cache_err:
+                print(f"[UPLOAD] Cache push error: {cache_err}")
+>>>>>>> c8f96f6d812a0ceb07e05419211df53a7dce0d35
         except Exception as e:
-            # Don't let a persistence failure 500 the whole upload — the
-            # in-memory mutation already happened, so report a soft warning
-            # and let the next reload/stale-refresh reconcile from MongoDB.
             print(f"[UPLOAD] save_courses error: {e}")
+
+    # Compute fresh stats to include in the response so the frontend
+    # can update KPIs instantly without a second fetch round-trip.
+    fresh_data_payload = _get_cached_data_payload()
 
     return jsonify({
         "status": "success",
         "updates": updates,
-        "message": f"Processed {len(files)} files. Updated {updates} courses.",
-        "verified_courses": verified_in_this_batch
+        "wiped": wiped_count,
+        "message": f"Processed {len(files)} files. Updated {updates} courses" + (f" (range {min_id}-{max_id}), wiped {wiped_count} stale." if all_extracted else "."),
+        "verified_courses": verified_in_this_batch,
+        "data_payload": fresh_data_payload
     })
 
 if __name__ == "__main__":

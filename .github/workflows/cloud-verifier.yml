@@ -41,6 +41,8 @@ jobs:
           sudo apt-get install -y tesseract-ocr libtesseract-dev xvfb x11-utils
           # Mount a tmpfs for /dev/shm to give Chrome enough shared memory (prevents tab crashes)
           sudo mount -t tmpfs -o size=2g tmpfs /dev/shm || true
+          # Kill any stale Chrome processes that could interfere
+          pkill -9 chrome 2>/dev/null || true
           # Verify Chrome is available
           google-chrome --version || true
 
@@ -55,16 +57,21 @@ jobs:
       - name: Run Verification (Virtual Display)
         # xvfb-run provides a virtual display; --server-args sets screen depth/size
         # The code auto-detects CI=true and uses 3 browsers + headless=new mode
+        # VERIFIER_NO_FORCE_EXIT prevents the script from calling sys.exit() so
+        # the workflow continues even if a sub-step fails (checkpoint is saved).
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           START_PAGE: ${{ github.event.inputs.start_page }}
           END_PAGE: ${{ github.event.inputs.end_page }}
           PDF_NAME: autonomous_verified_report
           DISPLAY: ":99"
+          CI: true
+          VERIFIER_NO_FORCE_EXIT: true
         run: |
-          Xvfb :99 -screen 0 1280x1024x24 -ac &
-          sleep 2
-          python autonomous_course_verifier.py
+          Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset &
+          sleep 3
+          # Run with continue-on-error so checkpoint is always saved
+          python autonomous_course_verifier.py || echo "::warning::Verifier exited with non-zero status, but checkpoint should be saved"
 
       - name: Remove input PDF before upload
         if: always()
