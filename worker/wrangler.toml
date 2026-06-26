@@ -1,11 +1,7 @@
 name = "course-verifier-api"
-main = "src/index.js"
+main = "index.js"
 compatibility_date = "2024-01-01"
 
 [[kv_namespaces]]
-binding = "COURSE_DATA"
-id = "442cd0c9c38e447a8758662a4828cd94"
-
-[vars]
-ALLOWED_ORIGINS = "https://courseverifiy.kesug.com,http://courseverifiy.kesug.com,http://localhost:5000"
-KV_PUSH_KEY = "courseverify_secure_push_key_2026"
+binding = "COURSE_CACHE"
+id = "eef4c644239941a4b155eb9a7958c080"
