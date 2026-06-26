@@ -28,16 +28,9 @@ master_dashboard_results.json
 verification_screenshots/
 *.pdf
 !1.json
-# ── Firebase cache ────────────────────────────────────────────────────────────
-.firebase/
-
-# ── Kiro / agent internals ────────────────────────────────────────────────────
-.agents/
-skills-lock.json
 
 # ── Misc ──────────────────────────────────────────────────────────────────────
 .gcloudignore
-
 
 # MongoDB Connection
 mongo_uri.txt

@@ -45,7 +45,7 @@ function json(body, status = 200) {
 }
 
 export default {
-    async fetch(request, env) {
+    async fetch(request, env, ctx) {
         const url = new URL(request.url);
         const path = url.pathname;
 
@@ -63,7 +63,7 @@ export default {
                     // We must return { documents: [...] } for the frontend
                     return json({ documents: parsed.courses || [] });
                 } else {
-                    // Fallback to MongoDB if KV is empty
+                    // Fallback to MongoDB if KV is empty, and automatically cache it
                     const data = await mongoRequest(env, 'find', {
                         projection: {
                             _id: 0, id: 1, name: 1, university: 1, country: 1,
@@ -73,6 +73,11 @@ export default {
                         sort: { id: 1 },
                         limit: 5000,
                     });
+                    
+                    // Cache the fresh data in KV for 1 hour (3600 seconds)
+                    const payloadToCache = JSON.stringify({ status: "success", courses: data.documents });
+                    ctx.waitUntil(env.COURSE_CACHE.put('courses.json', payloadToCache, { expirationTtl: 3600 }));
+                    
                     return json({ documents: data.documents });
                 }
             }
@@ -114,6 +119,10 @@ export default {
                     filter: { id: { $in: [parseInt(courseId), String(courseId)] } },
                     update: { $set: setData },
                 });
+                
+                // INVALDITATE CACHE so the next get_courses request fetches fresh data from MongoDB
+                ctx.waitUntil(env.COURSE_CACHE.delete('courses.json'));
+                
                 return json({ matched_count: data.matchedCount, modified_count: data.modifiedCount });
             }
 
