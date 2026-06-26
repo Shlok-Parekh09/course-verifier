@@ -7,15 +7,15 @@
 
 // ── Domain Ranges (fixed by course ID) ───────────────────────────
 const DOMAIN_RANGES = [
-    { label: 'Free',                   min: 1,    max: 25   },
-    { label: 'Free to Audit',          min: 26,   max: 48   },
-    { label: 'High Value Low Cost',    min: 49,   max: 100  },
-    { label: 'Foundational',           min: 101,  max: 601  },
-    { label: 'Network Infrastructure', min: 602,  max: 1585 },
-    { label: 'System & Endpoint',      min: 1586, max: 1890 },
-    { label: 'Cyber Forensics',        min: 1891, max: 2634 },
-    { label: 'Data & Application',     min: 2635, max: 2965 },
-    { label: 'Legal & Ethical',        min: 2966, max: 3727 },
+    { label: 'Free', min: 1, max: 25 },
+    { label: 'Free to Audit', min: 26, max: 48 },
+    { label: 'High Value Low Cost', min: 49, max: 100 },
+    { label: 'Foundational', min: 101, max: 601 },
+    { label: 'Network Infrastructure', min: 602, max: 1585 },
+    { label: 'System & Endpoint', min: 1586, max: 1890 },
+    { label: 'Cyber Forensics', min: 1891, max: 2634 },
+    { label: 'Data & Application', min: 2635, max: 2965 },
+    { label: 'Legal & Ethical', min: 2966, max: 3727 },
 ];
 
 function getDomainLabel(id) {
@@ -88,13 +88,13 @@ function setLoaderSub(text) {
 }
 
 function setConnStatus(state) {
-    const dot   = document.getElementById('conn-dot');
+    const dot = document.getElementById('conn-dot');
     const label = document.getElementById('conn-label');
     if (!dot || !label) return;
     dot.className = 'status-dot ' + state;
     label.textContent = state === 'connected' ? 'Connected'
-                      : state === 'error'     ? 'Error'
-                      : 'Connecting';
+        : state === 'error' ? 'Error'
+            : 'Connecting';
 }
 
 // ── INIT ──────────────────────────────────────────────────────────
@@ -110,7 +110,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         setConnStatus('connected');
 
         document.getElementById('loading-screen').style.display = 'none';
-        document.getElementById('main-page').style.display      = 'block';
+        document.getElementById('main-page').style.display = 'block';
 
         // Populate dropdowns
         populateFilters();
@@ -174,7 +174,7 @@ function initTabs() {
 
 function populateFilters() {
     const countries = [...new Set(allCourses.map(c => c.country).filter(Boolean))].sort();
-    const domains   = DOMAIN_RANGES.map(r => r.label);
+    const domains = DOMAIN_RANGES.map(r => r.label);
 
     ['vf-country', 'cf-country'].forEach(id => {
         const sel = document.getElementById(id);
@@ -211,9 +211,9 @@ function initFilters() {
     document.getElementById('vf-reset').addEventListener('click', () => {
         vfFilter = { search: '', status: 'issues', country: 'all', domain: 'all' };
         document.getElementById('vf-search').value = '';
-        document.getElementById('vf-status').value  = 'issues';
+        document.getElementById('vf-status').value = 'issues';
         document.getElementById('vf-country').value = 'all';
-        document.getElementById('vf-domain').value  = 'all';
+        document.getElementById('vf-domain').value = 'all';
         vfPage = 1;
         renderVerificationTab();
     });
@@ -229,11 +229,11 @@ function initFilters() {
     document.getElementById('cf-qs').addEventListener('change', e => { cfFilter.qs = e.target.value; cfPage = 1; renderCoursesTab(); });
     document.getElementById('cf-reset').addEventListener('click', () => {
         cfFilter = { search: '', status: 'all', country: 'all', domain: 'all', qs: 'any' };
-        document.getElementById('cf-search').value  = '';
-        document.getElementById('cf-status').value  = 'all';
+        document.getElementById('cf-search').value = '';
+        document.getElementById('cf-status').value = 'all';
         document.getElementById('cf-country').value = 'all';
-        document.getElementById('cf-domain').value  = 'all';
-        document.getElementById('cf-qs').value      = 'any';
+        document.getElementById('cf-domain').value = 'all';
+        document.getElementById('cf-qs').value = 'any';
         cfPage = 1;
         renderCoursesTab();
     });
@@ -276,15 +276,15 @@ function initKpiClickThrough() {
 function renderDashboard() {
     const total = allCourses.length;
     const verified = allCourses.filter(c => c.status === 'Verified').length;
-    const disc     = allCourses.filter(c => c.status === 'Discrepancy').length;
-    const err      = allCourses.filter(c => c.status === 'Error').length;
-    const pct      = total ? Math.round((verified / total) * 100) : 0;
+    const disc = allCourses.filter(c => c.status === 'Discrepancy').length;
+    const err = allCourses.filter(c => c.status === 'Error').length;
+    const pct = total ? Math.round((verified / total) * 100) : 0;
 
-    setText('kpi-total',       total.toLocaleString());
-    setText('kpi-verified',    verified.toLocaleString());
+    setText('kpi-total', total.toLocaleString());
+    setText('kpi-verified', verified.toLocaleString());
     setText('kpi-verified-pct', `${pct}% of total`);
-    setText('kpi-disc',        disc.toLocaleString());
-    setText('kpi-err',         err.toLocaleString());
+    setText('kpi-disc', disc.toLocaleString());
+    setText('kpi-err', err.toLocaleString());
 
     renderDomainChart();
     renderStatusDonut(verified, disc, err);
@@ -300,7 +300,7 @@ function renderDomainChart() {
     });
 
     const labels = Object.keys(counts);
-    const data   = Object.values(counts);
+    const data = Object.values(counts);
     const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
     const textCol = isDark ? '#94a3b8' : '#64748b';
     const gridCol = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
@@ -315,7 +315,7 @@ function renderDomainChart() {
             datasets: [{
                 data,
                 backgroundColor: 'rgba(99,102,241,0.6)',
-                borderColor:     'rgba(99,102,241,1)',
+                borderColor: 'rgba(99,102,241,1)',
                 borderWidth: 1,
                 borderRadius: 6,
                 hoverBackgroundColor: 'rgba(99,102,241,0.85)',
@@ -345,7 +345,7 @@ function renderStatusDonut(verified, disc, err) {
             datasets: [{
                 data: [verified, disc, err],
                 backgroundColor: ['rgba(34,197,94,0.75)', 'rgba(245,158,11,0.75)', 'rgba(239,68,68,0.75)'],
-                borderColor:     ['#22c55e', '#f59e0b', '#ef4444'],
+                borderColor: ['#22c55e', '#f59e0b', '#ef4444'],
                 borderWidth: 2,
                 hoverOffset: 8,
             }],
@@ -359,15 +359,15 @@ function renderStatusDonut(verified, disc, err) {
 
     // Custom legend
     const legend = document.getElementById('donut-legend');
-    const total  = verified + disc + err;
+    const total = verified + disc + err;
     legend.innerHTML = [
-        { label: 'Verified',     color: '#22c55e', val: verified },
-        { label: 'Discrepancy',  color: '#f59e0b', val: disc     },
-        { label: 'Error',        color: '#ef4444', val: err      },
+        { label: 'Verified', color: '#22c55e', val: verified },
+        { label: 'Discrepancy', color: '#f59e0b', val: disc },
+        { label: 'Error', color: '#ef4444', val: err },
     ].map(i => `
         <div class="donut-legend-item">
             <div class="donut-dot" style="background:${i.color}"></div>
-            ${i.label} — ${i.val.toLocaleString()} (${total ? Math.round((i.val/total)*100) : 0}%)
+            ${i.label} — ${i.val.toLocaleString()} (${total ? Math.round((i.val / total) * 100) : 0}%)
         </div>
     `).join('');
 }
@@ -401,7 +401,7 @@ function applyVfFilter(courses) {
         if (status === 'issues') { if (c.status === 'Verified') return false; }
         else if (status !== 'all') { if (c.status !== status) return false; }
         if (country !== 'all' && c.country !== country) return false;
-        if (domain  !== 'all' && getDomainLabel(c.id) !== domain) return false;
+        if (domain !== 'all' && getDomainLabel(c.id) !== domain) return false;
         if (search) {
             const hay = `${c.name} ${c.university} ${c.country} ${c.disc_reason}`.toLowerCase();
             if (!hay.includes(search)) return false;
@@ -412,16 +412,16 @@ function applyVfFilter(courses) {
 
 function renderVerificationTab() {
     const filtered = applyVfFilter(allCourses);
-    const total    = filtered.length;
+    const total = filtered.length;
     const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
     if (vfPage > totalPages) vfPage = totalPages;
     const slice = filtered.slice((vfPage - 1) * PAGE_SIZE, vfPage * PAGE_SIZE);
 
     // KPI strip
     setText('vfs-total', total.toLocaleString());
-    setText('vfs-disc',  allCourses.filter(c => c.status === 'Discrepancy').length.toLocaleString());
-    setText('vfs-err',   allCourses.filter(c => c.status === 'Error').length.toLocaleString());
-    setText('vfs-ver',   allCourses.filter(c => c.status === 'Verified').length.toLocaleString());
+    setText('vfs-disc', allCourses.filter(c => c.status === 'Discrepancy').length.toLocaleString());
+    setText('vfs-err', allCourses.filter(c => c.status === 'Error').length.toLocaleString());
+    setText('vfs-ver', allCourses.filter(c => c.status === 'Verified').length.toLocaleString());
 
     // Table
     const tbody = document.getElementById('vf-tbody');
@@ -454,9 +454,9 @@ function applyCfFilter(courses) {
     return courses.filter(c => {
         if (status !== 'all' && c.status !== status) return false;
         if (country !== 'all' && c.country !== country) return false;
-        if (domain  !== 'all' && getDomainLabel(c.id) !== domain) return false;
+        if (domain !== 'all' && getDomainLabel(c.id) !== domain) return false;
         if (qs === 'yes' && !c.has_qs_badge) return false;
-        if (qs === 'no'  &&  c.has_qs_badge) return false;
+        if (qs === 'no' && c.has_qs_badge) return false;
         if (search) {
             const hay = `${c.name} ${c.university} ${c.country} ${c.skills || ''}`.toLowerCase();
             if (!hay.includes(search)) return false;
@@ -466,8 +466,8 @@ function applyCfFilter(courses) {
 }
 
 function renderCoursesTab() {
-    const filtered   = applyCfFilter(allCourses);
-    const total      = filtered.length;
+    const filtered = applyCfFilter(allCourses);
+    const total = filtered.length;
     const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
     if (cfPage > totalPages) cfPage = totalPages;
     const slice = filtered.slice((cfPage - 1) * PAGE_SIZE, cfPage * PAGE_SIZE);
@@ -507,7 +507,7 @@ function initModal() {
 async function openModal(courseId) {
     const cBase = allCourses.find(x => x.id == courseId);
     if (!cBase) return;
-    
+
     // Show loading state while fetching heavy details
     setText('modal-title', cBase.name || '—');
     setText('modal-sub', 'Fetching details from database...');
@@ -515,19 +515,11 @@ async function openModal(courseId) {
     document.getElementById('modal-tbody').innerHTML = '<tr><td colspan="5" class="empty-state">Loading comparison data...</td></tr>';
     document.getElementById('course-modal').classList.add('open');
 
-    // Fetch full course data (lazy load) from Vercel API
     try {
-        const res = await fetch(`/api/get_course_details?id=${courseId}`);
-        if (!res.ok) {
-            const err = await res.text();
-            throw new Error(`API error ${res.status}: ${err}`);
-        }
-        const data = await res.json();
-        const c = data.document;
-        if (!c) throw new Error('Course not found');
+        const c = cBase;
         modalCourse = c;
 
-        setText('modal-sub',   `${c.university || '—'}  ·  ${c.country || '—'}  ·  Page ${c.pdf_page || '?'}`);
+        setText('modal-sub', `${c.university || '—'}  ·  ${c.country || '—'}  ·  Page ${c.pdf_page || '?'}`);
 
         // Badge
         const badge = document.getElementById('modal-badge');
@@ -536,26 +528,26 @@ async function openModal(courseId) {
 
         // Meta chips
         document.getElementById('modal-meta').innerHTML = [
-            ['Cost',     c.cost],
+            ['Cost', c.cost],
             ['Duration', c.duration],
-            ['Mode',     c.mode],
-            ['Domain',   getDomainLabel(c.id)],
-            ['QS',       c.has_qs_badge ? '✓ Ranked' : '—'],
-            ['NIRF',     c.has_nirf_badge ? '✓ Ranked' : '—'],
+            ['Mode', c.mode],
+            ['Domain', getDomainLabel(c.id)],
+            ['QS', c.has_qs_badge ? '✓ Ranked' : '—'],
+            ['NIRF', c.has_nirf_badge ? '✓ Ranked' : '—'],
         ].map(([k, v]) => `<div class="meta-chip"><strong>${k}:</strong> ${escHtml(String(v || '—'))}</div>`).join('');
 
         // Comparison table
-        const rows     = c.pdf_table || [];
-        const solved   = c.solved_attrs || [];
+        const rows = c.pdf_table || [];
+        const solved = c.solved_attrs || [];
         const hasMismatch = rows.some(r => r.original !== r.verified);
 
         if (!rows.length) {
             document.getElementById('modal-tbody').innerHTML = '<tr><td colspan="5" class="empty-state">No comparison data available.</td></tr>';
         } else {
             document.getElementById('modal-tbody').innerHTML = rows.map(r => {
-                const isSolved  = solved.includes(r.attribute?.toLowerCase());
+                const isSolved = solved.includes(r.attribute?.toLowerCase());
                 const isMismatch = r.status ? (r.status.toUpperCase() !== 'MATCH') : (r.original !== r.verified);
-                const rowClass  = isSolved ? 'solved-row' : isMismatch ? 'mismatch-row' : '';
+                const rowClass = isSolved ? 'solved-row' : isMismatch ? 'mismatch-row' : '';
                 const matchIcon = isMismatch
                     ? '<span class="match-icon match-no">✕</span>'
                     : '<span class="match-icon match-yes">✓</span>';
@@ -568,8 +560,8 @@ async function openModal(courseId) {
                     : '<span style="color:var(--text-dim); font-size:0.78rem;">OK</span>';
                 return `<tr class="${rowClass}">
                     <td>${escHtml(r.attribute || '—')}</td>
-                    <td>${escHtml(r.original  || '—')}</td>
-                    <td>${escHtml(r.verified  || '—')}</td>
+                    <td>${escHtml(r.original || '—')}</td>
+                    <td>${escHtml(r.verified || '—')}</td>
                     <td>${matchIcon}</td>
                     <td>${btn}</td>
                 </tr>`;
@@ -584,7 +576,7 @@ async function openModal(courseId) {
         document.getElementById('modal-hint').textContent = c.disc_reason || '';
         const solveAllBtn = document.getElementById('modal-solve-all');
         solveAllBtn.style.display = (hasMismatch && c.status !== 'Verified') ? 'inline-flex' : 'none';
-        solveAllBtn.textContent   = allSolved ? '✓ All Resolved' : '✓ Mark All Resolved';
+        solveAllBtn.textContent = allSolved ? '✓ All Resolved' : '✓ Mark All Resolved';
 
     } catch (err) {
         document.getElementById('modal-tbody').innerHTML = `<tr><td colspan="5" class="empty-state" style="color:var(--red)">Error loading details: ${err.message}</td></tr>`;
@@ -603,7 +595,7 @@ async function solveAttr(courseId, attr, isSolved) {
     if (!c) return;
 
     let solved = [...(c.solved_attrs || [])];
-    const key  = attr.toLowerCase();
+    const key = attr.toLowerCase();
 
     if (isSolved) {
         // Undo: remove from solved list
@@ -620,12 +612,12 @@ async function solveAttr(courseId, attr, isSolved) {
         .map(r => r.attribute?.toLowerCase());
     const allSolved = mismatchAttrs.every(a => solved.includes(a));
 
-    const newStatus   = allSolved ? 'Verified'    : c.status;
-    const newCategory = allSolved ? 'verified'    : c.issue_category;
+    const newStatus = allSolved ? 'Verified' : c.status;
+    const newCategory = allSolved ? 'verified' : c.issue_category;
 
     const update = {
-        solved_attrs:   solved,
-        status:         newStatus,
+        solved_attrs: solved,
+        status: newStatus,
         issue_category: newCategory,
     };
 
@@ -641,13 +633,13 @@ async function solveAttr(courseId, attr, isSolved) {
         renderCoursesTab();
         // Refresh dashboard KPIs
         const verified = allCourses.filter(x => x.status === 'Verified').length;
-        const disc     = allCourses.filter(x => x.status === 'Discrepancy').length;
-        const err      = allCourses.filter(x => x.status === 'Error').length;
-        const total    = allCourses.length;
+        const disc = allCourses.filter(x => x.status === 'Discrepancy').length;
+        const err = allCourses.filter(x => x.status === 'Error').length;
+        const total = allCourses.length;
         setText('kpi-verified', verified.toLocaleString());
-        setText('kpi-verified-pct', `${Math.round((verified/total)*100)}% of total`);
+        setText('kpi-verified-pct', `${Math.round((verified / total) * 100)}% of total`);
         setText('kpi-disc', disc.toLocaleString());
-        setText('kpi-err',  err.toLocaleString());
+        setText('kpi-err', err.toLocaleString());
         renderStatusDonut(verified, disc, err);
     } catch (err) {
         // Revert optimistic update on failure
@@ -658,13 +650,13 @@ async function solveAttr(courseId, attr, isSolved) {
 
 async function solveAll() {
     if (!modalCourse) return;
-    const c    = modalCourse;
+    const c = modalCourse;
     const rows = c.pdf_table || [];
     const solved = rows.map(r => r.attribute?.toLowerCase()).filter(Boolean);
 
     const update = {
-        solved_attrs:   solved,
-        status:         'Verified',
+        solved_attrs: solved,
+        status: 'Verified',
         issue_category: 'verified',
     };
     Object.assign(c, update);
@@ -698,9 +690,9 @@ function escJs(str) {
 
 function badgeHtml(status) {
     const cls = {
-        Verified:    'badge-verified',
+        Verified: 'badge-verified',
         Discrepancy: 'badge-discrepancy',
-        Error:       'badge-error',
+        Error: 'badge-error',
     }[status] || 'badge-error';
     return `<span class="badge ${cls}">${escHtml(status || '—')}</span>`;
 }
