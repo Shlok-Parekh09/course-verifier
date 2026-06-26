@@ -73,7 +73,7 @@ export default {
                         projection: {
                             _id: 0, id: 1, name: 1, university: 1, country: 1,
                             status: 1, issue_category: 1, issue_sub_type: 1,
-                            disc_reason: 1, has_qs_badge: 1, has_nirf_badge: 1, skills: 1,
+                            disc_reason: 1, has_qs_badge: 1, has_nirf_badge: 1, skills: 1, domain: 1,
                         },
                         sort: { id: 1 },
                         limit: 5000,
