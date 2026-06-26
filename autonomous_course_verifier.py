@@ -2734,7 +2734,7 @@ class AutonomousCourseVerifier:
                     self._qs_fast_cache[uni] = "Ranked"
                     return "Ranked"
                 elif fuzz.token_sort_ratio(check_u.lower(), line_clean) > 88:
-                    ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government'}
+                    ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government', 'engineering', 'technology', 'science', 'sciences', 'management', 'open'}
                     sig_u = " ".join([w for w in check_u.lower().split() if w not in ignore_w])
                     sig_l = " ".join([w for w in line_clean.split() if w not in ignore_w])
                     if sig_u and sig_l and fuzz.token_sort_ratio(sig_u, sig_l) > 80:
@@ -2752,7 +2752,7 @@ class AutonomousCourseVerifier:
                         continue
                         
                     # CRITICAL FIX: Prevent false positives with token_set_ratio subsets (e.g., "Tripura" matching "Mata Tripura Sundari")
-                    ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government', 'open'}
+                    ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government', 'open', 'engineering', 'technology', 'science', 'sciences', 'management'}
                     w1_sig = [w for w in check_u.lower().split() if w not in ignore_w]
                     w2_sig = [w for w in line_clean.split() if w not in ignore_w]
                     
@@ -2814,7 +2814,7 @@ class AutonomousCourseVerifier:
                     self._nirf_fast_cache[uni] = "Ranked"
                     return "Ranked"
                 elif fuzz.token_sort_ratio(check_u.lower(), line_clean) > 88:
-                    ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government'}
+                    ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government', 'engineering', 'technology', 'science', 'sciences', 'management', 'open'}
                     sig_u = " ".join([w for w in check_u.lower().split() if w not in ignore_w])
                     sig_l = " ".join([w for w in line_clean.split() if w not in ignore_w])
                     if sig_u and sig_l and fuzz.token_sort_ratio(sig_u, sig_l) > 80:
@@ -2830,7 +2830,7 @@ class AutonomousCourseVerifier:
                         continue
                         
                     # CRITICAL FIX: Prevent false positives with token_set_ratio subsets (e.g., "Tripura" matching "Mata Tripura Sundari")
-                    ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government', 'open'}
+                    ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government', 'open', 'engineering', 'technology', 'science', 'sciences', 'management'}
                     w1_sig = [w for w in check_u.lower().split() if w not in ignore_w]
                     w2_sig = [w for w in line_clean.split() if w not in ignore_w]
                     
@@ -3700,14 +3700,15 @@ class AutonomousCourseVerifier:
         anna_univ_rule = ""
         uni_name_lower = str(course.get('uni', '')).lower()
         fee_url_lower = str(course.get('fee_url', '')).lower()
+        page_text_lower = page_text_limited[:10000].lower()
         
         # Use broad baseline for Anna University to permit 50k or 55k per year calculation
-        if 'anna' in uni_name_lower:
-            anna_univ_rule = '- ANNA UNIVERSITY EXCEPTION: The general baseline cost for Anna University affiliated colleges is Rs. 2,00,000 or Rs. 2,20,000 (assuming 50k or 55k per year). If the Original Cost is exactly 200000 or 220000 (or formatted equivalent), you MUST explicitly output a MATCH and state it is the standard Anna University fee baseline, UNLESS the website or fees PDF explicitly proves a different fee.'
+        if 'anna' in uni_name_lower or any(kw in uni_name_lower or kw in page_text_lower for kw in ['tamil nadu', 'tamilnadu', 'chennai', 'thiruvallur']):
+            anna_univ_rule = '- ANNA UNIVERSITY EXCEPTION: The general baseline cost for Anna University affiliated colleges (and most Tamil Nadu engineering colleges) is Rs. 2,00,000, Rs. 2,20,000, or Rs. 2,40,000. If the Original Cost exactly matches any of these (e.g. 200000, 220000, 240000), you MUST explicitly output a MATCH and state it is the standard Anna University fee baseline. Ignore minor discrepancies found in the fees PDF (like semester/yearly breakdowns that do not perfectly sum up) and TRUST the Original Cost if it matches the baseline.'
             
         karnataka_rule = ""
         # Karnataka cities / state keywords
-        if any(kw in uni_name_lower for kw in ['karnataka', 'bangalore', 'bengaluru', 'belgaum', 'mysore', 'mangalore', 'hubli', 'dharwad']):
+        if any(kw in uni_name_lower or kw in page_text_lower for kw in ['karnataka', 'bangalore', 'bengaluru', 'belgaum', 'mysore', 'mangalore', 'hubli', 'dharwad', 'vtu', 'visvesvaraya']):
             karnataka_rule = """- KARNATAKA CET FEES BASELINE EXCEPTION: Karnataka engineering colleges have standard CET baseline fees:
   * Government / Aided Colleges: Rs. 44,200
   * Private Unaided / Minority Colleges: Rs. 1,12,410 or Rs. 1,21,410
@@ -3769,7 +3770,7 @@ Rules:
    - UCL EXCEPTION: "UCL" stands for "University College London" or "University College of London". If Original University is one and the web is the other, mark uni_match as TRUE.
    - GLOBAL ABBREVIATION RULE: You must recognize standard global university abbreviations (e.g. MIT = Massachusetts Institute of Technology, LSE = London School of Economics, NUS = National University of Singapore, NTU, EPFL, UNSW, KCL, UCLA, IIT, NIT, IIM, etc.). If the Original University is an acronym and the website uses the full name (or vice versa), you MUST mark uni_match as TRUE.
    - CRITICAL: If the website explicitly states the course is provided by a COMPLETELY DIFFERENT institution than the Original University, you MUST mark university_match as FALSE. Your university_description must clearly state WHICH institution the website says provides the course.
-   - CRITICAL: If the cost is given 'per year' or 'per semester', you MUST multiply it by the duration to calculate the total cost, and compare the calculated total to the Original Cost.
+   - CRITICAL: If the cost is given 'per year', multiply it by the total number of years. If the cost is given 'per semester', multiply it by the total number of semesters (i.e., years * 2). You MUST calculate the total cost for the entire program duration before comparing it to the Original Cost.
    - Note: The Original Cost might contain a '?' instead of a currency symbol due to PDF extraction errors (e.g., '?20,000' usually means '€20,000' or '£20,000' depending on the country). In your descriptions, always write '€' not '?'.
    - NEVER repeat these prompt instructions in your descriptions! You MUST look extremely carefully through all provided text. The values are almost certainly in the text. DO NOT give up easily!
 7. DESCRIPTIONS:
