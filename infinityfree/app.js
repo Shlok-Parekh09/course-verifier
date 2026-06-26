@@ -36,8 +36,8 @@ let vfPage = 1;                // Verification tab pagination
 let cfPage = 1;                // All Courses tab pagination
 const PAGE_SIZE = 100;
 
-let vfFilter = { search: '', status: 'issues', country: 'all', domain: 'all' };
-let cfFilter = { search: '', status: 'all', country: 'all', domain: 'all', qs: 'any' };
+let vfFilter = { search: '', status: 'issues', country: 'all', domain: 'all', courseType: 'all' };
+let cfFilter = { search: '', status: 'all', country: 'all', domain: 'all', qs: 'any', courseType: 'all' };
 
 let modalCourse = null;        // Currently open course in modal
 
@@ -72,6 +72,9 @@ function sortCourses(list, state) {
         if (state.col === 'domain') {
             vA = getDomainLabel(a.id);
             vB = getDomainLabel(b.id);
+        } else if (state.col === 'courseType') {
+            vA = (a.domain || 'Uncategorised').toLowerCase();
+            vB = (b.domain || 'Uncategorised').toLowerCase();
         } else if (state.col === 'name') {
             vA = (vA || '').toLowerCase();
             vB = (vB || '').toLowerCase();
@@ -259,6 +262,7 @@ function initSorting() {
 function populateFilters() {
     const countries = [...new Set(allCourses.map(c => c.country).filter(Boolean))].sort();
     const domains = DOMAIN_RANGES.map(r => r.label);
+    const courseTypes = [...new Set(allCourses.map(c => c.domain).filter(Boolean))].sort();
 
     ['vf-country', 'cf-country'].forEach(id => {
         const sel = document.getElementById(id);
@@ -272,6 +276,15 @@ function populateFilters() {
     ['vf-domain', 'cf-domain'].forEach(id => {
         const sel = document.getElementById(id);
         domains.forEach(d => {
+            const opt = document.createElement('option');
+            opt.value = d; opt.textContent = d;
+            sel.appendChild(opt);
+        });
+    });
+    
+    ['vf-courseType', 'cf-courseType'].forEach(id => {
+        const sel = document.getElementById(id);
+        courseTypes.forEach(d => {
             const opt = document.createElement('option');
             opt.value = d; opt.textContent = d;
             sel.appendChild(opt);
@@ -292,12 +305,14 @@ function initFilters() {
     document.getElementById('vf-status').addEventListener('change', e => { vfFilter.status = e.target.value; vfPage = 1; renderVerificationTab(); });
     document.getElementById('vf-country').addEventListener('change', e => { vfFilter.country = e.target.value; vfPage = 1; renderVerificationTab(); });
     document.getElementById('vf-domain').addEventListener('change', e => { vfFilter.domain = e.target.value; vfPage = 1; renderVerificationTab(); });
+    document.getElementById('vf-courseType').addEventListener('change', e => { vfFilter.courseType = e.target.value; vfPage = 1; renderVerificationTab(); });
     document.getElementById('vf-reset').addEventListener('click', () => {
-        vfFilter = { search: '', status: 'issues', country: 'all', domain: 'all' };
+        vfFilter = { search: '', status: 'issues', country: 'all', domain: 'all', courseType: 'all' };
         document.getElementById('vf-search').value = '';
         document.getElementById('vf-status').value = 'issues';
         document.getElementById('vf-country').value = 'all';
         document.getElementById('vf-domain').value = 'all';
+        document.getElementById('vf-courseType').value = 'all';
         vfPage = 1;
         renderVerificationTab();
     });
@@ -310,13 +325,15 @@ function initFilters() {
     document.getElementById('cf-status').addEventListener('change', e => { cfFilter.status = e.target.value; cfPage = 1; renderCoursesTab(); });
     document.getElementById('cf-country').addEventListener('change', e => { cfFilter.country = e.target.value; cfPage = 1; renderCoursesTab(); });
     document.getElementById('cf-domain').addEventListener('change', e => { cfFilter.domain = e.target.value; cfPage = 1; renderCoursesTab(); });
+    document.getElementById('cf-courseType').addEventListener('change', e => { cfFilter.courseType = e.target.value; cfPage = 1; renderCoursesTab(); });
     document.getElementById('cf-qs').addEventListener('change', e => { cfFilter.qs = e.target.value; cfPage = 1; renderCoursesTab(); });
     document.getElementById('cf-reset').addEventListener('click', () => {
-        cfFilter = { search: '', status: 'all', country: 'all', domain: 'all', qs: 'any' };
+        cfFilter = { search: '', status: 'all', country: 'all', domain: 'all', qs: 'any', courseType: 'all' };
         document.getElementById('cf-search').value = '';
         document.getElementById('cf-status').value = 'all';
         document.getElementById('cf-country').value = 'all';
         document.getElementById('cf-domain').value = 'all';
+        document.getElementById('cf-courseType').value = 'all';
         document.getElementById('cf-qs').value = 'any';
         cfPage = 1;
         renderCoursesTab();
@@ -495,12 +512,13 @@ function renderCountryList() {
 // ── VERIFICATION TAB ──────────────────────────────────────────────
 
 function applyVfFilter(courses) {
-    const { search, status, country, domain } = vfFilter;
+    const { search, status, country, domain, courseType } = vfFilter;
     return courses.filter(c => {
         if (status === 'issues') { if (c.status === 'Verified') return false; }
         else if (status !== 'all') { if (c.status !== status) return false; }
         if (country !== 'all' && c.country !== country) return false;
         if (domain !== 'all' && getDomainLabel(c.id) !== domain) return false;
+        if (courseType && courseType !== 'all' && (c.domain || 'Uncategorised') !== courseType) return false;
         if (search) {
             const hay = `${c.name} ${c.university} ${c.country} ${c.disc_reason}`.toLowerCase();
             if (!hay.includes(search)) return false;
@@ -534,6 +552,7 @@ function renderVerificationTab() {
                 <td title="${escHtml(c.university)}">${escHtml(c.university || '—')}</td>
                 <td>${escHtml(c.country || '—')}</td>
                 <td><span style="font-size:0.78rem; color:var(--text-muted);">${getDomainLabel(c.id)}</span></td>
+                <td><span style="font-size:0.78rem; color:var(--text-muted);">${escHtml(c.domain || 'Uncategorised')}</span></td>
                 <td>${badgeHtml(c.status)}</td>
                 <td style="font-size:0.78rem; color:var(--text-muted); max-width:200px; overflow:hidden; text-overflow:ellipsis;" title="${escHtml(c.disc_reason || c.issue_sub_type || '')}">${escHtml(c.disc_reason || c.issue_sub_type || '—')}</td>
             </tr>
@@ -549,11 +568,12 @@ function renderVerificationTab() {
 // ── ALL COURSES TAB ───────────────────────────────────────────────
 
 function applyCfFilter(courses) {
-    const { search, status, country, domain, qs } = cfFilter;
+    const { search, status, country, domain, qs, courseType } = cfFilter;
     return courses.filter(c => {
         if (status !== 'all' && c.status !== status) return false;
         if (country !== 'all' && c.country !== country) return false;
         if (domain !== 'all' && getDomainLabel(c.id) !== domain) return false;
+        if (courseType && courseType !== 'all' && (c.domain || 'Uncategorised') !== courseType) return false;
         if (qs === 'yes' && !c.has_qs_badge) return false;
         if (qs === 'no' && c.has_qs_badge) return false;
         if (search) {
@@ -614,6 +634,7 @@ function renderSolvedTab() {
             <td>${escHtml(c.university)}</td>
             <td>${escHtml(c.country || '—')}</td>
             <td><span class="badge-domain">${domLabel}</span></td>
+            <td><span style="font-size:0.78rem; color:var(--text-muted);">${escHtml(c.domain || 'Uncategorised')}</span></td>
             <td>${escHtml(c.mode || '—')}</td>
             <td>${statBadge}</td>
         `;
@@ -639,6 +660,7 @@ function renderCoursesTab() {
                 <td title="${escHtml(c.university)}">${escHtml(c.university || '—')}</td>
                 <td>${escHtml(c.country || '—')}</td>
                 <td><span style="font-size:0.78rem; color:var(--text-muted);">${getDomainLabel(c.id)}</span></td>
+                <td><span style="font-size:0.78rem; color:var(--text-muted);">${escHtml(c.domain || 'Uncategorised')}</span></td>
                 <td>${c.has_qs_badge ? '<span class="badge" style="background:var(--blue-bg);color:var(--blue);border:1px solid rgba(59,130,246,0.25);">QS ✓</span>' : '—'}</td>
                 <td>${badgeHtml(c.status)}</td>
             </tr>
