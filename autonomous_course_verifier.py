@@ -2937,6 +2937,13 @@ class AutonomousCourseVerifier:
                 pass # removed local import re
                 uni_lower = uni.lower()
                 is_college = any(word in uni_lower for word in ['college', 'institute', 'school', 'academy', 'technology', 'engineering', 'svcet', 'saet', 's.a.'])
+                # Exclude premium institutes which contain "institute" but are universities themselves
+                if any(kw in uni_lower.replace('-', ' ') for kw in ['iit ', 'iiit ', 'nit ', 'svnit', 'bits ', 'indian institute of technology', 'national institute of technology', 'birla institute of technology', 'indian institute of management', 'iim ']):
+                    is_college = False
+                
+                # Also exclude if it perfectly matches "IIT <City>" etc
+                if re.match(r'^(iit|iiit|nit|iim)\s+[a-z]+$', uni_lower.replace('-', ' ').strip()):
+                    is_college = False
                 
                 is_indian_college = False
                 indian_keywords = ['india', 'bharat']
@@ -3696,7 +3703,15 @@ class AutonomousCourseVerifier:
         
         # Use broad baseline for Anna University to permit 50k or 55k per year calculation
         if 'anna' in uni_name_lower:
-            anna_univ_rule = '- ANNA UNIVERSITY EXCEPTION: B.E./B.Tech fees for Anna University affiliated colleges are typically Rs. 50,000 or Rs. 55,000 per year. For a 4-year duration, the total is either Rs. 2,00,000 or Rs. 2,20,000. If the Original Cost is either 200000, 220000 (or formatted) and the website provides ANY fee table or PDF that supports this 50k/55k calculation, you MUST explicitly output a MATCH and calculate it in the description.'
+            anna_univ_rule = '- ANNA UNIVERSITY EXCEPTION: The general baseline cost for Anna University affiliated colleges is Rs. 2,00,000 or Rs. 2,20,000 (assuming 50k or 55k per year). If the Original Cost is exactly 200000 or 220000 (or formatted equivalent), you MUST explicitly output a MATCH and state it is the standard Anna University fee baseline, UNLESS the website or fees PDF explicitly proves a different fee.'
+            
+        karnataka_rule = ""
+        # Karnataka cities / state keywords
+        if any(kw in uni_name_lower for kw in ['karnataka', 'bangalore', 'bengaluru', 'belgaum', 'mysore', 'mangalore', 'hubli', 'dharwad']):
+            karnataka_rule = """- KARNATAKA CET FEES BASELINE EXCEPTION: Karnataka engineering colleges have standard CET baseline fees:
+  * Government / Aided Colleges: Rs. 44,311
+  * Private Unaided / Minority Colleges: Rs. 1,13,205 or Rs. 1,22,300
+  If the college is in Karnataka, determine its type from the text (Government vs Private). If the Original Cost exactly matches these baselines (e.g. 44311, 113205, 122300) OR their 4-year totals, you MUST explicitly output a MATCH and state it is the standard Karnataka CET fee baseline in the description, UNLESS the website explicitly proves a different fee."""
         
         prompt = f"""
 Strictly verify the course details against the webpage text. Output ONLY valid JSON.
@@ -3730,6 +3745,7 @@ Rules:
    - If the exact Original Cost amount (e.g. 48,000 or 60,000) appears ANYWHERE in the provided text, YOU MUST MATCH IT and output it! Do NOT say it's not listed if the number is right there!
    - If cost_match is FALSE because the price is different, you MUST explicitly state the ACTUAL cost you found on the website in your cost_description. Also populate found_cost with the actual cost you found, or 'Not Found'.
    {anna_univ_rule}
+   {karnataka_rule}
 2. DURATION:
    - DURATION OPTIONS RULE: If the Original Duration specifies multiple options (e.g., "1/3/6 M" or "3/6/9 Months"), this implies a choice was available. If the website no longer offers those choices and only lists a single duration (e.g., "4 weeks" or "1 month"), you MUST mark duration_match as FALSE because the exact multi-duration offering is no longer available. Explicitly state the single option you found.
    - If not stated in text, do NOT output "not found". You MUST logically infer and describe it: B.E./B.Tech = 4 Years, M.E./M.Tech = 2 Years, B.Sc/BCA = 3 Years, M.Sc/MCA = 2 Years (e.g., "B.Tech programs in India typically last 4 years.").
