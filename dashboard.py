@@ -821,7 +821,7 @@ _LAST_LOAD_TS = time.time()
 # On production (Vercel / Cloud Run) we reload every 120 s so multi-client
 # changes propagate without hammering Atlas.
 _IS_LOCAL = os.path.exists(PERSISTENT_FILE)
-_LOAD_TTL_SEC = 999999 if _IS_LOCAL else 120
+_LOAD_TTL_SEC = 999999 # Disabled continuous polling as requested
 _load_lock = threading.Lock()
 
 def _refresh_courses_if_stale():
