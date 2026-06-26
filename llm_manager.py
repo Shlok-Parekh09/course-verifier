@@ -17,6 +17,23 @@ class LLMManager:
         self.groq_keys = [os.environ.get(f"GROQ_API_KEY_{i}") for i in range(1, 7) if os.environ.get(f"GROQ_API_KEY_{i}")] or ([os.environ.get("GROQ_API_KEY")] if os.environ.get("GROQ_API_KEY") else [])
         self.mistral_keys = [os.environ.get(f"MISTRAL_API_KEY_{i}") for i in range(1, 7) if os.environ.get(f"MISTRAL_API_KEY_{i}")] or ([os.environ.get("MISTRAL_API_KEY")] if os.environ.get("MISTRAL_API_KEY") else [])
         self.sambanova_keys = [os.environ.get(f"SAMBANOVA_API_KEY_{i}") for i in range(1, 7) if os.environ.get(f"SAMBANOVA_API_KEY_{i}")] or ([os.environ.get("SAMBANOVA_API_KEY")] if os.environ.get("SAMBANOVA_API_KEY") else [])
+
+        # ── Single-name env var fallbacks ──
+        # If numbered keys aren't found, fall back to common single-name env vars
+        # (e.g. GEMINI_API_KEY instead of GEMINI_KEY_1)
+        if not self.gemini_keys:
+            self.gemini_keys = [k for k in [os.environ.get("GEMINI_API_KEY"), os.environ.get("GEMINI_KEY")] if k]
+        if not self.nvidia_keys:
+            self.nvidia_keys = [k for k in [os.environ.get("NVIDIA_API_KEY"), os.environ.get("NVIDIA_KEY")] if k]
+        if not self.openrouter_keys:
+            self.openrouter_keys = [k for k in [os.environ.get("OPENROUTER_API_KEY"), os.environ.get("OPENROUTER_KEY")] if k]
+        if not self.groq_keys:
+            self.groq_keys = [k for k in [os.environ.get("GROQ_API_KEY"), os.environ.get("GROQ_KEY")] if k]
+        if not self.mistral_keys:
+            self.mistral_keys = [k for k in [os.environ.get("MISTRAL_API_KEY"), os.environ.get("MISTRAL_KEY")] if k]
+        if not self.sambanova_keys:
+            self.sambanova_keys = [k for k in [os.environ.get("SAMBANOVA_API_KEY"), os.environ.get("SAMBANOVA_KEY")] if k]
+
         # Cloud/remote Ollama - must be explicitly set via env vars
         self.cloud_ollama_url = os.environ.get("OLLAMA_API_URL")
         self.cloud_ollama_model = os.environ.get("OLLAMA_MODEL")
@@ -37,6 +54,13 @@ class LLMManager:
         # Track last call time per key to enforce rate limits individually
         self.last_call = {}
         self.lock = threading.Lock()
+
+        # ── Diagnostic logging ──
+        print(f"[LLM Manager] Keys loaded: Mistral={len(self.mistral_keys)}, NVIDIA={len(self.nvidia_keys)}, "
+              f"Gemini={len(self.gemini_keys)}, OpenRouter={len(self.openrouter_keys)}, "
+              f"Groq={len(self.groq_keys)}, SambaNova={len(self.sambanova_keys)}")
+        if not any([self.mistral_keys, self.nvidia_keys, self.gemini_keys, self.openrouter_keys]):
+            print("[LLM Manager] ⚠ WARNING: No text-generation API keys found! All LLM calls will return None.")
 
     def _rate_limit(self, key_identifier: str, min_interval: float = 4.29):
         """Enforces a minimum interval (in seconds) between API calls for a given key."""

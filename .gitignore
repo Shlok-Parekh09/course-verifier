@@ -27,6 +27,7 @@ chrome_profile_fallback_*/
 master_dashboard_results.json
 verification_screenshots/
 *.pdf
+!1.json
 # ── Firebase cache ────────────────────────────────────────────────────────────
 .firebase/
 

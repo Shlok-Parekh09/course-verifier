@@ -2936,7 +2936,7 @@ class AutonomousCourseVerifier:
             def check_ranking_via_search(ranking_type):
                 pass # removed local import re
                 uni_lower = uni.lower()
-                is_college = any(word in uni_lower for word in ['college', 'institute', 'school', 'academy', 'technology', 'engineering'])
+                is_college = any(word in uni_lower for word in ['college', 'institute', 'school', 'academy', 'technology', 'engineering', 'svcet', 'saet', 's.a.'])
                 
                 is_indian_college = False
                 indian_keywords = ['india', 'bharat']
@@ -2967,7 +2967,16 @@ class AutonomousCourseVerifier:
                             known_norm = re.sub(r'[^a-z0-9 ]', ' ', known_base.lower()).strip()
                             if not known_norm:
                                 continue
-                            if _fuzz.token_set_ratio(college_norm, known_norm) > 75:
+                            if _fuzz.token_set_ratio(college_norm, known_norm) > 85:
+                                # Ensure at least 2 significant words overlap to prevent false positives
+                                # (e.g. "University College of Engg Villupuram" vs "Govt Engg College Champaran (Bihar)")
+                                ignore_w = {'university', 'college', 'institute', 'school', 'engineering', 'technology', 'of', 'and', 'for', 'the', 'govt', 'government'}
+                                w1_sig = [w for w in college_norm.split() if w not in ignore_w]
+                                w2_sig = [w for w in known_norm.split() if w not in ignore_w]
+                                overlap = set(w1_sig).intersection(set(w2_sig))
+                                if len(overlap) < 1 and len(w1_sig) > 0 and len(w2_sig) > 0:
+                                    continue # Require at least 1 significant non-generic word to match
+
                                 knw_brackets = re.findall(r'\(([^)]+)', known)
                                 for kb in knw_brackets:
                                     kb_s = kb.strip()
@@ -3847,21 +3856,24 @@ Output JSON format:
                 res = {}
                 keys_pattern = r"(?:cost|duration|mode|language|country|university|skills)_(?:description|match)"
                 pass # removed local import re
-                for field in ['cost', 'duration', 'mode', 'language', 'country', 'university', 'skills']:
-                    # Use a non-greedy match that stops at the next likely key or the end of the text
-                    desc_match = re.search(rf"\"?`?{field}_description`?\"?\s*(?::|=>?|\-)\s*\"?(.*?)\"?(?=\s*\*?\s*\"?`?{keys_pattern}`?\"?\s*(?::|=>?|\-)|$)", res_str, flags=re.IGNORECASE | re.DOTALL)
-                    bool_match = re.search(rf"\"?`?{field}_match`?\"?\s*(?::|=>?|\-)\s*\"?(true|false)\"?", res_str, flags=re.IGNORECASE)
-                    
-                    if desc_match:
-                        cleaned = desc_match.group(1).strip()
-                        # Clean up trailing json syntax if present
-                        if cleaned.endswith(","): cleaned = cleaned[:-1]
-                        if cleaned.endswith("\""): cleaned = cleaned[:-1]
-                        # Clean up any stray bullet points at the end of the sentence
-                        cleaned = cleaned.rstrip('*').strip()
-                        res[f'{field}_description'] = cleaned
-                    if bool_match:
-                        res[f'{field}_match'] = (bool_match.group(1).lower() == 'true')
+                
+                # Only run regex if we actually have text from the LLM, otherwise res stays empty
+                if res_str and isinstance(res_str, str):
+                    for field in ['cost', 'duration', 'mode', 'language', 'country', 'university', 'skills']:
+                        # Use a non-greedy match that stops at the next likely key or the end of the text
+                        desc_match = re.search(rf"\"?`?{field}_description`?\"?\s*(?::|=>?|\-)\s*\"?(.*?)\"?(?=\s*\*?\s*\"?`?{keys_pattern}`?\"?\s*(?::|=>?|\-)|$)", res_str, flags=re.IGNORECASE | re.DOTALL)
+                        bool_match = re.search(rf"\"?`?{field}_match`?\"?\s*(?::|=>?|\-)\s*\"?(true|false)\"?", res_str, flags=re.IGNORECASE)
+                        
+                        if desc_match:
+                            cleaned = desc_match.group(1).strip()
+                            # Clean up trailing json syntax if present
+                            if cleaned.endswith(","): cleaned = cleaned[:-1]
+                            if cleaned.endswith("\""): cleaned = cleaned[:-1]
+                            # Clean up any stray bullet points at the end of the sentence
+                            cleaned = cleaned.rstrip('*').strip()
+                            res[f'{field}_description'] = cleaned
+                        if bool_match:
+                            res[f'{field}_match'] = (bool_match.group(1).lower() == 'true')
             
             if isinstance(res, list) and len(res) > 0:
                 res = res[0]

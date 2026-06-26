@@ -4,13 +4,13 @@ on:
   workflow_dispatch: # Allows manual trigger from GitHub UI
     inputs:
       start_page:
-        description: 'Start Page Number (Leave blank to resume from checkpoint)'
+        description: "Start Page Number (Leave blank to resume from checkpoint)"
         required: false
-        default: ''
+        default: ""
       end_page:
-        description: 'End Page Number (Leave blank for all remaining)'
+        description: "End Page Number (Leave blank for all remaining)"
         required: false
-        default: ''
+        default: ""
 
 jobs:
   verify:
@@ -77,6 +77,9 @@ jobs:
         if: always()
         run: |
           rm -f link_compile.pdf
+          rm -f fees.xlsx
+          rm -f CombinedWork.xlsx
+          rm -f rankings.db
 
       - name: Upload Results as Zip
         if: always()
@@ -87,6 +90,3 @@ jobs:
             *.pdf
             autonomous_verified_*.json
             master_dashboard_results.json
-            CombinedWork.xlsx
-            fees.xlsx
-            rankings.db
