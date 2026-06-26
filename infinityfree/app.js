@@ -120,6 +120,23 @@ async function fetchAllCourses() {
         }
     }
 
+    // Normalize Course Types
+    for (const c of docs) {
+        if (c.domain) {
+            let t = c.domain.toLowerCase().trim();
+            if (t.includes("bachelor")) c.domain = "Bachelor's Degree";
+            else if (t.includes("master")) c.domain = "Master's Degree";
+            else if (t === 'diploma') c.domain = "Diploma";
+            else if (t === 'post graduate diploma') c.domain = "Post Graduate Diploma";
+            else if (t === 'post graduate certificate') c.domain = "Post Graduate Certificate";
+            else if (t === 'certificate') c.domain = "Certificate";
+            else if (t === 'free to audit') c.domain = "Free to Audit";
+            else if (t === 'free') c.domain = "Free";
+            else if (t === 'high value low cost') c.domain = "High Value Low Cost";
+            else c.domain = c.domain.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+        }
+    }
+
     setLoaderSub(`Loaded ${docs.length} courses…`);
     return docs;
 }
