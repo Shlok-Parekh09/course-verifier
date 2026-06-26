@@ -42,9 +42,8 @@ let cfFilter = { search: '', status: 'all', country: 'all', domain: 'all', qs: '
 let modalCourse = null;        // Currently open course in modal
 
 // ── API Base URL (Cloudflare Worker) ─────────────────────────────
-// TODO: Replace this with your actual deployed Cloudflare Worker URL
-// Example: 'https://course-verifier-api.YOUR-NAME.workers.dev'
-const API_BASE_URL = 'https://course-verifier-api.YOUR-NAME.workers.dev';
+// The actual deployed Cloudflare Worker URL
+const API_BASE_URL = 'https://course-verifier-api.shlokparekh08.workers.dev';
 
 // ── API Fetchers (Cloudflare Worker) ─────────────────────────────
 
