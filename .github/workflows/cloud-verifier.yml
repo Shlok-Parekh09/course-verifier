@@ -60,7 +60,6 @@ jobs:
         # VERIFIER_NO_FORCE_EXIT prevents the script from calling sys.exit() so
         # the workflow continues even if a sub-step fails (checkpoint is saved).
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           START_PAGE: ${{ github.event.inputs.start_page }}
           END_PAGE: ${{ github.event.inputs.end_page }}
           PDF_NAME: autonomous_verified_report
@@ -77,9 +76,6 @@ jobs:
         if: always()
         run: |
           rm -f link_compile.pdf
-          rm -f fees.xlsx
-          rm -f CombinedWork.xlsx
-          rm -f rankings.db
 
       - name: Upload Results as Zip
         if: always()
@@ -89,5 +85,3 @@ jobs:
           path: |
             *.pdf
             autonomous_verified_*.json
-            affiliation_db.json
-            master_dashboard_results.json
