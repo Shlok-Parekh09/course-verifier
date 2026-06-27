@@ -699,8 +699,11 @@
      this script block so the browser paints real KPI numbers immediately
      without waiting for the /api/data.json round-trip. app.js reads this
      before its first fetch and updates the UI synchronously on DOMContentLoaded. -->
+<script type="application/json" id="initial-data">
+  {{ initial_data | safe }}
+</script>
 <script>
-  window.__INITIAL_DATA__ = {{ initial_data | safe }};
+  window.__INITIAL_DATA__ = JSON.parse(document.getElementById('initial-data').textContent);
 </script>
 <script src="/static/app.js?v=14"></script>
 </body>

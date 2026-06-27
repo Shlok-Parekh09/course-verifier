@@ -2882,6 +2882,58 @@ class AutonomousCourseVerifier:
         try: doc.close()
         except: pass
 
+    def _search_affiliated_uni(self, driver, course_name, college_name):
+        import time
+        from bs4 import BeautifulSoup
+        import requests
+        from llm_manager import get_llm_manager
+
+        query = f"{course_name} for this particular course to which university is {college_name} affiliated to"
+        url = f"https://www.google.com/search?q={requests.utils.quote(query)}&hl=en"
+        
+        snippets = ""
+        try:
+            driver.get(url)
+            time.sleep(2.5) # natural delay for bypassing captchas
+            soup = BeautifulSoup(driver.page_source, 'html.parser')
+            # Look for common Google search snippet classes
+            blocks = soup.find_all('div', class_=['BNeawe', 'VwiC3b', 'IsZvec'])
+            snippets = " ".join([b.get_text(separator=' ', strip=True) for b in blocks])[:1500]
+        except Exception as e:
+            print(f"      -> Google search failed: {e}")
+
+        # Fallback to DuckDuckGo if Google blocks us entirely
+        if len(snippets) < 20:
+            print(f"      -> Google blocked/empty, falling back to DuckDuckGo for affiliation...")
+            try:
+                url_ddg = f"https://html.duckduckgo.com/html/?q={requests.utils.quote(query)}"
+                r = requests.get(url_ddg, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+                soup = BeautifulSoup(r.text, 'html.parser')
+                blocks = soup.find_all('a', class_='result__snippet')
+                snippets = " ".join([b.get_text(separator=' ', strip=True) for b in blocks])[:1500]
+            except Exception as e:
+                print(f"      -> DuckDuckGo fallback failed: {e}")
+
+        if not snippets:
+            return "NOT FOUND"
+
+        prompt = f"""Based on the following search results for the query "{query}", what is the exact name of the parent university that the college '{college_name}' is affiliated with for the course '{course_name}'?
+CRITICAL RULES:
+1. Respond with ONLY the exact name of the affiliated university and nothing else. Do not use quotes or explanations.
+2. If the results clearly show that '{college_name}' is an autonomous/independent university itself and not affiliated to any other university, output "NOT FOUND".
+3. If the affiliation cannot be reliably determined from the snippets, output "NOT FOUND". Do not hallucinate or guess.
+
+Search Results:
+{snippets}"""
+        
+        try:
+            res = get_llm_manager().generate(prompt, temperature=0.0).strip()
+            if len(res) > 50 or "based on" in res.lower() or "the search" in res.lower():
+                return "NOT FOUND"
+            return res.title()
+        except:
+            return "NOT FOUND"
+
     def verify_rankings(self, start_idx=0, end_idx=None):
         """Check QS World/Regional and NIRF rankings for each university."""
         print(f"\n[*] Step 2/4: Verifying QS World/Regional and NIRF rankings via Search & Text Analysis...")
@@ -2890,9 +2942,63 @@ class AutonomousCourseVerifier:
         self._offline_qs_lookup("trigger_cache")
         self._offline_nirf_lookup("trigger_cache")
 
-        # Collect unique universities and their countries
-        uni_map = {}
         end_limit = end_idx if end_idx is not None else len(self.courses)
+
+        # ── PER-COURSE AFFILIATION LOOKUP FOR INDIAN COLLEGES ──
+        print(f"    -> Determining dynamic affiliations for Indian colleges...")
+        affiliation_cache = {}
+        driver = None
+
+        for c in self.courses[start_idx:end_limit]:
+            uni = c.get('uni', 'Unknown')
+            course_name = c.get('course_name', '')
+            country = str(c.get('country', '')).lower()
+            
+            if uni == 'Unknown' or not uni:
+                continue
+
+            uni_lower = uni.lower()
+            is_college = any(word in uni_lower for word in ['college', 'institute', 'school', 'academy', 'technology', 'engineering', 'svcet', 'saet', 's.a.'])
+            if any(kw in uni_lower.replace('-', ' ') for kw in ['iit ', 'iiit ', 'nit ', 'svnit', 'bits ', 'indian institute of technology', 'national institute of technology', 'birla institute of technology', 'indian institute of management', 'iim ']):
+                is_college = False
+            if __import__('re').match(r'^(iit|iiit|nit|iim)\s+[a-z]+$', uni_lower.replace('-', ' ').strip()):
+                is_college = False
+            
+            is_indian_college = False
+            if any(k in country for k in ['india', 'bharat']):
+                is_indian_college = True
+            elif not country or country == 'unknown':
+                indian_name_keywords = ['indian', 'iit', 'iim', 'nit', 'delhi', 'mumbai', 'bangalore', 'chennai', 'kanpur', 'roorkee', 'amity', 'symbiosis', 'jindal', 'bits', 'thapar', 'manipal', 'nmims', 'spjimr', 'xlri', 'punjab', 'maharashtra', 'gujarat', 'kerala', 'tamil nadu', 'karnataka']
+                if any(k in uni_lower for k in indian_name_keywords):
+                    is_indian_college = True
+
+            if is_college and is_indian_college:
+                cache_key = (course_name, uni)
+                if cache_key in affiliation_cache:
+                    c['affiliated_uni'] = affiliation_cache[cache_key]
+                else:
+                    if driver is None:
+                        import undetected_chromedriver as uc
+                        options = uc.ChromeOptions()
+                        options.add_argument("--headless=new")
+                        options.add_argument("--disable-gpu")
+                        options.add_argument("--no-sandbox")
+                        options.add_argument("--disable-dev-shm-usage")
+                        print(f"      -> Initializing headless Chrome for affiliation lookup...")
+                        driver = uc.Chrome(options=options, version_main=__import__('__main__').get_chrome_main_version())
+                    
+                    print(f"      -> Searching affiliation for '{course_name}' at '{uni}'...")
+                    aff_uni = self._search_affiliated_uni(driver, course_name, uni)
+                    affiliation_cache[cache_key] = aff_uni
+                    c['affiliated_uni'] = aff_uni
+                    print(f"         Result: {aff_uni}")
+
+        if driver is not None:
+            try: driver.quit()
+            except: pass
+
+        # Collect unique universities and their countries for standard ranking checks
+        uni_map = {}
         for c in self.courses[start_idx:end_limit]:
             uni = c.get('uni', 'Unknown')
             if uni and uni != 'Unknown':
@@ -3087,12 +3193,49 @@ class AutonomousCourseVerifier:
         # Apply results to courses
         for c in self.courses:
             uni = c.get('uni', 'Unknown')
-            if uni in qs_results:
-                c['qs_detail'] = qs_results[uni]
-                c['qs_ranked'] = qs_results[uni] != "Not Ranked"
-            if uni in nirf_results:
-                c['nirf_detail'] = nirf_results[uni]
-                c['nirf_ranked'] = nirf_results[uni] != "Not Ranked"
+            aff_uni = c.get('affiliated_uni', 'NOT FOUND')
+            
+            c['qs_detail'] = "Not Ranked"
+            c['qs_ranked'] = False
+            c['nirf_detail'] = "Not Ranked"
+            c['nirf_ranked'] = False
+
+            if aff_uni != 'NOT FOUND':
+                # Bracket verification logic
+                uni_lower = uni.lower()
+                bracket_unis = [b.strip() for b in __import__('re').findall(r'\((.*?)\)', uni)]
+                affiliated_match = __import__('re').search(r'affiliated to (.*)', uni, flags=__import__('re').IGNORECASE)
+                if affiliated_match:
+                    bracket_unis.append(affiliated_match.group(1).strip())
+                
+                bracket_status = ""
+                if bracket_unis:
+                    from rapidfuzz import fuzz as _fuzz
+                    match_bracket = any(_fuzz.token_set_ratio(aff_uni.lower(), b.lower()) > 85 for b in bracket_unis)
+                    if not match_bracket:
+                        mismatch_msg = f"The bracketed university does not match the actual affiliated university ({aff_uni}) found via web search. Mismatch."
+                        c['qs_detail'] = mismatch_msg
+                        c['nirf_detail'] = mismatch_msg
+                    else:
+                        bracket_status = " The bracketed university was verified against the dynamic affiliation."
+                
+                if "Mismatch." not in c['qs_detail']:
+                    # QS check
+                    if self._offline_qs_lookup(aff_uni) == "Ranked":
+                        c['qs_detail'] = f"The university to which college is affiliated ({aff_uni}) is ranked in QS hence matched.{bracket_status}"
+                        c['qs_ranked'] = True
+                    # NIRF check
+                    if self._offline_nirf_lookup(aff_uni) == "Ranked":
+                        c['nirf_detail'] = f"The university to which college is affiliated ({aff_uni}) is ranked in NIRF hence matched.{bracket_status}"
+                        c['nirf_ranked'] = True
+            else:
+                # Fallback to standard university lookups
+                if uni in qs_results:
+                    c['qs_detail'] = qs_results[uni]
+                    c['qs_ranked'] = qs_results[uni] != "Not Ranked"
+                if uni in nirf_results:
+                    c['nirf_detail'] = nirf_results[uni]
+                    c['nirf_ranked'] = nirf_results[uni] != "Not Ranked"
                 
             # If the ranking logic determined a match via an affiliated university, force a match status
             if 'hence matched' in str(c.get('qs_detail', '')) or 'hence matched' in str(c.get('nirf_detail', '')):
