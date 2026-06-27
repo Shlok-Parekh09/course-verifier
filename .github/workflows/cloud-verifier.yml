@@ -89,4 +89,5 @@ jobs:
           path: |
             *.pdf
             autonomous_verified_*.json
+            affiliation_db.json
             master_dashboard_results.json
