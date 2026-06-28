@@ -8062,7 +8062,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 new_options.add_argument('--disable-dev-shm-usage')
                                 new_options.add_argument('--no-sandbox')
                                 ud_dir = os.path.join(tempfile.gettempdir(), f"uc_profile_rec_{random.randint(1000, 9999)}")
-                                driver = uc.Chrome(options=new_options, user_data_dir=ud_dir, version_main=get_chrome_main_version())
+                                with browser_init_lock:
+                                    driver = uc.Chrome(options=new_options, user_data_dir=ud_dir, version_main=get_chrome_main_version())
                                 driver.set_page_load_timeout(90)
                                 driver.set_script_timeout(30)
                                 try:
