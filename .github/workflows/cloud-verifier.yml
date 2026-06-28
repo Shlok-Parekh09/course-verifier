@@ -22,7 +22,7 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Load All API Keys
         env:
@@ -31,7 +31,7 @@ jobs:
           echo "$ENV_FILE" > .env
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
@@ -49,7 +49,6 @@ jobs:
       - name: Install Python Dependencies
         run: |
           pip install -r requirements-verifier.txt python-dotenv gdown
-y
       - name: Download PDF from Google Drive
         run: |
           gdown "1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd" -O link_compile.pdf
@@ -66,12 +65,6 @@ y
           DISPLAY: ":99"
           CI: true
           VERIFIER_NO_FORCE_EXIT: true
-          MISTRAL_API_KEYS: ${{ secrets.MISTRAL_API_KEYS }}
-          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
-          GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
-          OPENROUTER_API_KEYS: ${{ secrets.OPENROUTER_API_KEYS }}
-          NVIDIA_API_KEYS: ${{ secrets.NVIDIA_API_KEYS }}
-          SAMBANOVA_API_KEYS: ${{ secrets.SAMBANOVA_API_KEYS }}
         run: |
           Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset &
           sleep 3
