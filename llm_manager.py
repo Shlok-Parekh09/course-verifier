@@ -56,7 +56,7 @@ class LLMManager:
         if num_keys == 0: return []
         return [worker_id % num_keys]
 
-    def generate(self, prompt: str, system: Optional[str] = None, format: str = "text", temperature: float = 0.0, provider: str = "auto", worker_id: int = None, model_name: str = None) -> Optional[str]:
+    def generate(self, prompt: str, system: Optional[str] = None, format: str = "text", temperature: float = 0.0, provider: str = "auto", worker_id: int = None, model_name: str = None, **kwargs) -> Optional[str]:
         # Text Generation: NVIDIA -> Mistral -> Gemini -> OpenRouter
 
         if worker_id is not None:
