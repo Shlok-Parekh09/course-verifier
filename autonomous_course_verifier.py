@@ -3257,8 +3257,11 @@ CRITICAL RULES:
                 return val.strip()
 
         # 3. Plain-text URL in the data cell
-        if cell_data and cell_data.value and isinstance(cell_data.value, str) and cell_data.value.strip().startswith("http"):
-            return cell_data.value.strip()
+        if cell_data and cell_data.value and isinstance(cell_data.value, str):
+            import re
+            match = re.search(r'(https?://[^\s]+)', str(cell_data.value))
+            if match:
+                return match.group(1).strip()
 
         return None
 
@@ -3828,12 +3831,12 @@ CRITICAL RULES:
         page_text_lower = page_text_limited[:10000].lower()
         
         # Strictly only use provided text values for Anna Univ, ignoring Management Quota (85k/87k).
-        if 'anna' in uni_name_lower or any(kw in uni_name_lower or kw in page_text_lower for kw in ['tamil nadu', 'tamilnadu', 'chennai', 'thiruvallur']):
-            anna_univ_rule = '- ANNA UNIVERSITY EXCEPTION: NEVER use or extract \"Management Quota\" fees (which are typically 85,000 or 87,000 per year). If you see 85,000 or 87,000, you MUST entirely IGNORE THEM. ONLY use the exact non-management fee values provided in the text (such as Government Quota). If the Original Cost exactly matches the provided non-management values, output a MATCH.'
+        if 'anna ' in uni_name_lower or any(kw in uni_name_lower for kw in ['tamil nadu', 'tamilnadu', 'chennai', 'thiruvallur']):
+            anna_univ_rule = '- ANNA UNIVERSITY EXCEPTION: NEVER use or extract "Management Quota" fees (which are typically 85,000 or 87,000 per year). If you see 85,000 or 87,000, you MUST entirely IGNORE THEM. ONLY use the exact non-management fee values provided in the text (such as Government Quota). If the Original Cost exactly matches the provided non-management values, output a MATCH.'
             
         karnataka_rule = ""
         # Karnataka cities / state keywords
-        if any(kw in uni_name_lower or kw in page_text_lower for kw in ['karnataka', 'bangalore', 'bengaluru', 'belgaum', 'mysore', 'mangalore', 'hubli', 'dharwad', 'vtu', 'visvesvaraya']):
+        if any(kw in uni_name_lower for kw in ['karnataka', 'bangalore', 'bengaluru', 'belgaum', 'mysore', 'mangalore', 'hubli', 'dharwad', 'vtu', 'visvesvaraya']):
             karnataka_rule = """- KARNATAKA CET FEES BASELINE EXCEPTION: Karnataka engineering colleges have standard CET baseline fees:
   * Government / Aided Colleges: Rs. 44,200
   * Private Unaided / Minority Colleges: Rs. 1,12,410 or Rs. 1,21,410

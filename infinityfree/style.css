@@ -348,7 +348,6 @@ button { cursor: pointer; font-family: inherit; }
 .data-table td {
     padding: 11px 14px;
     vertical-align: middle;
-    max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .data-table td:first-child { color: var(--text-dim); font-size: 0.8rem; }
 .data-table .mismatch-row { background: var(--red-bg); }
