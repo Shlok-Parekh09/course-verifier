@@ -28,6 +28,7 @@ master_dashboard_results.json
 verification_screenshots/
 *.pdf
 !1.json
+!affiliation_db.json
 
 # ── Misc ──────────────────────────────────────────────────────────────────────
 .gcloudignore
