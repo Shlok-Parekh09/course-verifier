@@ -3468,7 +3468,12 @@ CRITICAL RULES:
                     res = requests.get(new_url, headers=headers, timeout=20, verify=False, allow_redirects=True)
             
             if res.status_code in [403, 405, 406, 429, 500, 503]:
-                raise Exception(f"HTTP Error {res.status_code} - Website blocked direct request")
+                import cloudscraper
+                print(f"    -> [Fee Browser] HTTP Error {res.status_code}. Attempting to bypass advanced protection with cloudscraper...")
+                scraper = cloudscraper.create_scraper()
+                res = scraper.get(url, headers=headers, timeout=20, allow_redirects=True)
+                if res.status_code in [403, 405, 406, 429, 500, 503]:
+                    raise Exception(f"HTTP Error {res.status_code} - Website blocked direct request even with cloudscraper")
             
             is_pdf = False
             is_image = False
@@ -3820,10 +3825,10 @@ CRITICAL RULES:
                 web_part = parts[0]
                 excel_part = "\n--- EXCEL FEES DATA ---\n" + parts[1] + excel_part
                 
-            allowed_web_len = max(0, 1000000 - len(excel_part))
+            allowed_web_len = max(0, 800000 - len(excel_part))
             page_text_limited = web_part[:allowed_web_len] + excel_part
         else:
-            page_text_limited = page_text[:1000000]
+            page_text_limited = page_text[:800000]
             
         anna_univ_rule = ""
         uni_name_lower = str(course.get('uni', '')).lower()
@@ -3834,6 +3839,7 @@ CRITICAL RULES:
         if 'anna ' in uni_name_lower or any(kw in uni_name_lower for kw in ['tamil nadu', 'tamilnadu', 'chennai', 'thiruvallur']):
             anna_univ_rule = '- ANNA UNIVERSITY EXCEPTION: NEVER use or extract "Management Quota" fees (which are typically 85,000 or 87,000 per year). If you see 85,000 or 87,000, you MUST entirely IGNORE THEM. ONLY use the exact non-management fee values provided in the text (such as Government Quota). If the Original Cost exactly matches the provided non-management values, output a MATCH.'
             
+        complex_fee_rule = '- COMPLEX FEE TABLES: If the text contains per-semester or per-year fees (common for Graphic Era, Asansol, Girideepam, etc.), you MUST calculate the total fee for the entire duration of the course (e.g., sum all 8 semesters for a 4-year course, or sum all 1st, 2nd, 3rd, 4th year payments). If your calculated total matches the Original Cost (or is within 5% of it), you MUST output MATCH for Cost.'
         karnataka_rule = ""
         # Karnataka cities / state keywords
         if any(kw in uni_name_lower for kw in ['karnataka', 'bangalore', 'bengaluru', 'belgaum', 'mysore', 'mangalore', 'hubli', 'dharwad', 'vtu', 'visvesvaraya']):
@@ -3875,6 +3881,7 @@ Rules:
    - If cost_match is FALSE because the price is different, you MUST explicitly state the ACTUAL cost you found on the website in your cost_description. Also populate found_cost with the actual cost you found, or 'Not Found'.
    {anna_univ_rule}
    {karnataka_rule}
+   {complex_fee_rule}
 2. DURATION:
    - DURATION OPTIONS RULE: If the Original Duration specifies multiple options (e.g., "1/3/6 M" or "3/6/9 Months"), this implies a choice was available. If the website no longer offers those choices and only lists a single duration (e.g., "4 weeks" or "1 month"), you MUST mark duration_match as FALSE because the exact multi-duration offering is no longer available. Explicitly state the single option you found.
    - If not stated in text, do NOT output "not found". You MUST logically infer and describe it: B.E./B.Tech = 4 Years, M.E./M.Tech = 2 Years, B.Sc/BCA = 3 Years, M.Sc/MCA = 2 Years (e.g., "B.Tech programs in India typically last 4 years.").
@@ -3938,7 +3945,19 @@ Output JSON format:
         
         try:
             llm = get_llm_manager()
-            res_str = llm.generate(prompt, worker_id=worker_id, format="json")
+            
+            # If text is extremely large, route to NVIDIA with higher timeout
+            is_huge_prompt = len(prompt) > 200000
+            target_provider = "nvidia" if is_huge_prompt else "auto"
+            target_timeout = 300 if is_huge_prompt else 120
+            
+            res_str = llm.generate(
+                prompt, 
+                worker_id=worker_id, 
+                format="json", 
+                provider=target_provider, 
+                timeout=target_timeout
+            )
             print(f"DEBUG LLM OUTPUT:\n{res_str}\n")
             
             try:
@@ -7798,7 +7817,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             lang_match = True
                             web_language = "English"
 
-                    if not country_match and ("not explicitly" in str(web_country).lower() or "not found" in str(web_country).lower() or str(web_country) in ['N/A', '', 'Not found', 'information not explicitly mentioned', 'None']):
+                    if not country_match and ("not explicitly" in str(web_country).lower() or "not found" in str(web_country).lower() or "not specified" in str(web_country).lower() or str(web_country) in ['N/A', '', 'Not found', 'information not explicitly mentioned', 'None', 'Not specified']):
                         pdf_country = str(course.get('country', '')).strip().lower()
                         if pdf_country in ['india', 'in', 'ind', 'bharat']:
                             country_match = True

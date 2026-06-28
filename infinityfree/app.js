@@ -545,7 +545,8 @@ function applyVfFilter(courses) {
 }
 
 function renderVerificationTab() {
-    const filtered = applyVfFilter(allCourses);
+    let filtered = applyVfFilter(allCourses);
+    filtered = sortCourses(filtered, sortState.vf);
     const total = filtered.length;
     const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
     if (vfPage > totalPages) vfPage = totalPages;
@@ -565,13 +566,14 @@ function renderVerificationTab() {
         tbody.innerHTML = slice.map((c, i) => `
             <tr onclick="openModal(${c.id})" title="Click to view details">
                 <td>${(vfPage - 1) * PAGE_SIZE + i + 1}</td>
-                <td title="${escHtml(c.name)}" style="max-width:260px;">${escHtml(c.name)}</td>
+                <td title="${escHtml(c.name)}">${escHtml(c.name)}</td>
                 <td title="${escHtml(c.university)}">${escHtml(c.university || '—')}</td>
                 <td>${escHtml(c.country || '—')}</td>
                 <td><span style="font-size:0.78rem; color:var(--text-muted);">${getDomainLabel(c.id)}</span></td>
                 <td><span style="font-size:0.78rem; color:var(--text-muted);">${escHtml(c.domain || 'Uncategorised')}</span></td>
+                <td>${escHtml(c.mode || '—')}</td>
                 <td>${badgeHtml(c.status)}</td>
-                <td style="font-size:0.78rem; color:var(--text-muted); max-width:200px; overflow:hidden; text-overflow:ellipsis;" title="${escHtml(c.disc_reason || c.issue_sub_type || '')}">${escHtml(c.disc_reason || c.issue_sub_type || '—')}</td>
+                <td style="font-size:0.78rem; color:var(--text-muted);" title="${escHtml(c.disc_reason || c.issue_sub_type || '')}">${escHtml(c.disc_reason || c.issue_sub_type || '—')}</td>
             </tr>
         `).join('');
     }
@@ -660,7 +662,8 @@ function renderSolvedTab() {
 }
 
 function renderCoursesTab() {
-    const filtered = applyCfFilter(allCourses);
+    let filtered = applyCfFilter(allCourses);
+    filtered = sortCourses(filtered, sortState.cf);
     const total = filtered.length;
     const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
     if (cfPage > totalPages) cfPage = totalPages;
