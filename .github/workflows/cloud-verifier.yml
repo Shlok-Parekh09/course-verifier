@@ -18,20 +18,17 @@ jobs:
     permissions:
       contents: write
     env:
-      CI: 'true'
+      CI: true
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
 
       - name: Load All API Keys
+        env:
+          ENV_FILE: ${{ secrets.ENV_FILE }}
         run: |
-          if [ -f ENV_FILE ]; then
-            cp ENV_FILE .env
-            echo "Loaded API keys from ENV_FILE."
-          else
-            echo "Warning: ENV_FILE not found!"
-          fi
+          echo "$ENV_FILE" > .env
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -52,7 +49,7 @@ jobs:
       - name: Install Python Dependencies
         run: |
           pip install -r requirements-verifier.txt python-dotenv gdown
-
+y
       - name: Download PDF from Google Drive
         run: |
           gdown "1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd" -O link_compile.pdf
@@ -67,8 +64,14 @@ jobs:
           END_PAGE: ${{ github.event.inputs.end_page }}
           PDF_NAME: autonomous_verified_report
           DISPLAY: ":99"
-          CI: 'true'
-          VERIFIER_NO_FORCE_EXIT: 'true'
+          CI: true
+          VERIFIER_NO_FORCE_EXIT: true
+          MISTRAL_API_KEYS: ${{ secrets.MISTRAL_API_KEYS }}
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+          GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
+          OPENROUTER_API_KEYS: ${{ secrets.OPENROUTER_API_KEYS }}
+          NVIDIA_API_KEYS: ${{ secrets.NVIDIA_API_KEYS }}
+          SAMBANOVA_API_KEYS: ${{ secrets.SAMBANOVA_API_KEYS }}
         run: |
           Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset &
           sleep 3
@@ -105,4 +108,3 @@ jobs:
           git add *.xlsx || true
           git commit -m "chore: update verification results [skip ci]" || echo "No changes to commit"
           git push || echo "Push failed, continuing"
-

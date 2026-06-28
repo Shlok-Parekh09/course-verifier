@@ -29,6 +29,7 @@ verification_screenshots/
 *.pdf
 !1.json
 !affiliation_db.json
+!university_abbreviations.json
 
 # ── Misc ──────────────────────────────────────────────────────────────────────
 .gcloudignore
