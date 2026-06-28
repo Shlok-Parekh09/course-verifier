@@ -311,6 +311,9 @@ button { cursor: pointer; font-family: inherit; }
     font-size: 0.82rem; color: var(--text); font-family: inherit;
     outline: none; cursor: pointer;
     transition: border-color var(--transition);
+    touch-action: manipulation;
+    -webkit-appearance: auto;
+    appearance: auto;
 }
 .filter-select:focus { border-color: var(--accent); }
 

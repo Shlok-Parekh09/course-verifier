@@ -1756,6 +1756,9 @@ tr.solved-row td { opacity: 0.62; }
     outline: none;
     transition: var(--transition);
     cursor: pointer;
+    touch-action: manipulation;
+    -webkit-appearance: auto;
+    appearance: auto;
 }
 .filter-input { flex: 1 1 220px; min-width: 180px; cursor: text; }
 .filter-select { flex: 0 0 auto; }

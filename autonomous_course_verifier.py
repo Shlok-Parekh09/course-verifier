@@ -3827,9 +3827,9 @@ CRITICAL RULES:
         fee_url_lower = str(course.get('fee_url', '')).lower()
         page_text_lower = page_text_limited[:10000].lower()
         
-        # Use broad baseline for Anna University to permit 50k or 55k per year calculation
+        # Strictly only use provided text values for Anna Univ, ignoring Management Quota (85k/87k).
         if 'anna' in uni_name_lower or any(kw in uni_name_lower or kw in page_text_lower for kw in ['tamil nadu', 'tamilnadu', 'chennai', 'thiruvallur']):
-            anna_univ_rule = '- ANNA UNIVERSITY EXCEPTION: The general baseline cost for Anna University affiliated colleges (and most Tamil Nadu engineering colleges) is Rs. 2,00,000, Rs. 2,20,000, or Rs. 2,40,000. If the Original Cost exactly matches any of these (e.g. 200000, 220000, 240000), you MUST explicitly output a MATCH and state it is the standard Anna University fee baseline. Ignore minor discrepancies found in the fees PDF (like semester/yearly breakdowns that do not perfectly sum up) and TRUST the Original Cost if it matches the baseline.'
+            anna_univ_rule = '- ANNA UNIVERSITY EXCEPTION: NEVER use or extract \"Management Quota\" fees (which are typically 85,000 or 87,000 per year). If you see 85,000 or 87,000, you MUST entirely IGNORE THEM. ONLY use the exact non-management fee values provided in the text (such as Government Quota). If the Original Cost exactly matches the provided non-management values, output a MATCH.'
             
         karnataka_rule = ""
         # Karnataka cities / state keywords
@@ -3837,8 +3837,7 @@ CRITICAL RULES:
             karnataka_rule = """- KARNATAKA CET FEES BASELINE EXCEPTION: Karnataka engineering colleges have standard CET baseline fees:
   * Government / Aided Colleges: Rs. 44,200
   * Private Unaided / Minority Colleges: Rs. 1,12,410 or Rs. 1,21,410
-  * SNQ Quota: Rs. 20,610 or Rs. 30,610
-  If the college is in Karnataka, determine its type from the text (Government vs Private). If the Original Cost exactly matches these baselines (e.g. 44200, 112410, 121410, 20610, 30610) OR their 4-year totals, you MUST explicitly output a MATCH and state it is the standard Karnataka CET fee baseline in the description, UNLESS the website explicitly proves a different fee."""
+  If the college is in Karnataka, determine its type from the text (Government vs Private). If the Original Cost exactly matches these baselines (e.g. 44200, 112410, 121410) OR their 4-year totals, you MUST explicitly output a MATCH and state it is the standard Karnataka CET fee baseline in the description, UNLESS the website explicitly proves a different fee."""
         
         prompt = f"""
 Strictly verify the course details against the webpage text. Output ONLY valid JSON.
