@@ -92,3 +92,14 @@ jobs:
         with:
           name: affiliation-db
           path: affiliation_db.json
+
+      - name: Commit and Push Changes
+        if: always()
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add autonomous_verified_*.json affiliation_db.json || true
+          git add *.xlsx || true
+          git commit -m "chore: update verification results [skip ci]" || echo "No changes to commit"
+          git push || echo "Push failed, continuing"
+
