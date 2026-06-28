@@ -27,16 +27,10 @@ chrome_profile_fallback_*/
 master_dashboard_results.json
 verification_screenshots/
 *.pdf
-# ── Firebase cache ────────────────────────────────────────────────────────────
-.firebase/
-
-# ── Kiro / agent internals ────────────────────────────────────────────────────
-.agents/
-skills-lock.json
+!1.json
 
 # ── Misc ──────────────────────────────────────────────────────────────────────
 .gcloudignore
-
 
 # MongoDB Connection
 mongo_uri.txt

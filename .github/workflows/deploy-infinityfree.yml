@@ -1,0 +1,25 @@
+name: Deploy to InfinityFree
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'infinityfree/**'
+
+jobs:
+  web-deploy:
+    name: Deploy to InfinityFree FTP
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Sync files via FTP
+      uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+      with:
+        server: ${{ secrets.FTP_SERVER }}
+        username: ${{ secrets.FTP_USERNAME }}
+        password: ${{ secrets.FTP_PASSWORD }}
+        local-dir: ./infinityfree/
+        server-dir: /htdocs/

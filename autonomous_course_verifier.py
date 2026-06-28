@@ -2734,7 +2734,7 @@ class AutonomousCourseVerifier:
                     self._qs_fast_cache[uni] = "Ranked"
                     return "Ranked"
                 elif fuzz.token_sort_ratio(check_u.lower(), line_clean) > 88:
-                    ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government'}
+                    ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government', 'engineering', 'technology', 'science', 'sciences', 'management', 'open'}
                     sig_u = " ".join([w for w in check_u.lower().split() if w not in ignore_w])
                     sig_l = " ".join([w for w in line_clean.split() if w not in ignore_w])
                     if sig_u and sig_l and fuzz.token_sort_ratio(sig_u, sig_l) > 80:
@@ -2752,7 +2752,7 @@ class AutonomousCourseVerifier:
                         continue
                         
                     # CRITICAL FIX: Prevent false positives with token_set_ratio subsets (e.g., "Tripura" matching "Mata Tripura Sundari")
-                    ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government', 'open'}
+                    ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government', 'open', 'engineering', 'technology', 'science', 'sciences', 'management'}
                     w1_sig = [w for w in check_u.lower().split() if w not in ignore_w]
                     w2_sig = [w for w in line_clean.split() if w not in ignore_w]
                     
@@ -2814,7 +2814,7 @@ class AutonomousCourseVerifier:
                     self._nirf_fast_cache[uni] = "Ranked"
                     return "Ranked"
                 elif fuzz.token_sort_ratio(check_u.lower(), line_clean) > 88:
-                    ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government'}
+                    ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government', 'engineering', 'technology', 'science', 'sciences', 'management', 'open'}
                     sig_u = " ".join([w for w in check_u.lower().split() if w not in ignore_w])
                     sig_l = " ".join([w for w in line_clean.split() if w not in ignore_w])
                     if sig_u and sig_l and fuzz.token_sort_ratio(sig_u, sig_l) > 80:
@@ -2830,7 +2830,7 @@ class AutonomousCourseVerifier:
                         continue
                         
                     # CRITICAL FIX: Prevent false positives with token_set_ratio subsets (e.g., "Tripura" matching "Mata Tripura Sundari")
-                    ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government', 'open'}
+                    ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government', 'open', 'engineering', 'technology', 'science', 'sciences', 'management'}
                     w1_sig = [w for w in check_u.lower().split() if w not in ignore_w]
                     w2_sig = [w for w in line_clean.split() if w not in ignore_w]
                     
@@ -2882,6 +2882,31 @@ class AutonomousCourseVerifier:
         try: doc.close()
         except: pass
 
+    def _get_affiliated_uni_from_ai(self, course_name, college_name):
+        from llm_manager import get_llm_manager
+        import re
+        
+        # Remove any bracketed text from the college name so the AI doesn't just parrot it back
+        clean_college = re.sub(r'\(.*?\)', '', college_name).strip()
+        
+        print(f"      -> Asking AI Agent for affiliation (Fast)...")
+        prompt = f"""What is the exact name of the parent university that the college '{clean_college}' is affiliated with for the course '{course_name}'?
+
+CRITICAL RULES:
+1. Respond with ONLY the exact name of the affiliated university and nothing else (e.g., Anna University, Visvesvaraya Technological University, Savitribai Phule Pune University). Do not use quotes or explanations.
+2. If '{college_name}' is an autonomous/independent university itself and not affiliated to any other university, output "NOT FOUND".
+3. If you do not know the affiliation or are unsure, output "NOT FOUND". Do not hallucinate or guess.
+"""
+        
+        try:
+            res = get_llm_manager().generate(prompt, temperature=0.0).strip()
+            if len(res) > 80 or "based on" in res.lower() or "the search" in res.lower() or "not found" in res.lower():
+                return "NOT FOUND"
+            return res.title()
+        except Exception as e:
+            print(f"      -> AI Agent failed: {e}")
+            return "NOT FOUND"
+
     def verify_rankings(self, start_idx=0, end_idx=None):
         """Check QS World/Regional and NIRF rankings for each university."""
         print(f"\n[*] Step 2/4: Verifying QS World/Regional and NIRF rankings via Search & Text Analysis...")
@@ -2890,9 +2915,72 @@ class AutonomousCourseVerifier:
         self._offline_qs_lookup("trigger_cache")
         self._offline_nirf_lookup("trigger_cache")
 
-        # Collect unique universities and their countries
-        uni_map = {}
         end_limit = end_idx if end_idx is not None else len(self.courses)
+
+        # ── PER-COURSE AFFILIATION LOOKUP FOR INDIAN COLLEGES ──
+        print(f"    -> Determining dynamic affiliations for Indian colleges via AI...")
+        import os, json
+        db_path = 'affiliation_db.json'
+        affiliation_cache = {}
+        if os.path.exists(db_path):
+            try:
+                with open(db_path, 'r', encoding='utf-8') as f:
+                    # JSON keys are strings, convert tuple to string representation
+                    loaded_cache = json.load(f)
+                    for k, v in loaded_cache.items():
+                        parts = k.split('|||')
+                        if len(parts) == 2:
+                            affiliation_cache[(parts[0], parts[1])] = v
+            except:
+                pass
+        
+        cache_updated = False
+
+        for c in self.courses[start_idx:end_limit]:
+            uni = c.get('uni', 'Unknown')
+            course_name = c.get('name', '')  # BUGFIX: The key is 'name', not 'course_name'
+            country = str(c.get('country', '')).lower()
+            
+            if uni == 'Unknown' or not uni:
+                continue
+
+            uni_lower = uni.lower()
+            is_college = any(word in uni_lower for word in ['college', 'institute', 'school', 'academy', 'technology', 'engineering', 'svcet', 'saet', 's.a.', 'tech', 'campus'])
+            if any(kw in uni_lower.replace('-', ' ') for kw in ['iit ', 'iiit ', 'nit ', 'svnit', 'bits ', 'indian institute of technology', 'national institute of technology', 'birla institute of technology', 'indian institute of management', 'iim ', 'kiit', 'siksha o anusandhan', 'siksha o anusadhan', 'srm', 'vit ', 'vits']):
+                is_college = False
+            if __import__('re').match(r'^(iit|iiit|nit|iim)\s+[a-z]+$', uni_lower.replace('-', ' ').strip()):
+                is_college = False
+            
+            is_indian_college = False
+            if any(k in country for k in ['india', 'bharat']):
+                is_indian_college = True
+            elif not country or country == 'unknown':
+                indian_name_keywords = ['indian', 'iit', 'iim', 'nit', 'delhi', 'mumbai', 'bangalore', 'chennai', 'kanpur', 'roorkee', 'amity', 'symbiosis', 'jindal', 'bits', 'thapar', 'manipal', 'nmims', 'spjimr', 'xlri', 'punjab', 'maharashtra', 'gujarat', 'kerala', 'tamil nadu', 'karnataka']
+                if any(k in uni_lower for k in indian_name_keywords):
+                    is_indian_college = True
+
+            if is_college and is_indian_college:
+                cache_key = (course_name, uni)
+                if cache_key in affiliation_cache:
+                    c['affiliated_uni'] = affiliation_cache[cache_key]
+                else:
+                    print(f"      -> Identifying affiliation for '{course_name}' at '{uni}'...")
+                    aff_uni = self._get_affiliated_uni_from_ai(course_name, uni)
+                    affiliation_cache[cache_key] = aff_uni
+                    c['affiliated_uni'] = aff_uni
+                    cache_updated = True
+                    print(f"         Result: {aff_uni}")
+
+        if cache_updated:
+            try:
+                with open(db_path, 'w', encoding='utf-8') as f:
+                    save_cache = {f"{k[0]}|||{k[1]}": v for k, v in affiliation_cache.items()}
+                    json.dump(save_cache, f, indent=4)
+            except Exception as e:
+                print(f"      -> Failed to save affiliation_db.json: {e}")
+
+        # Collect unique universities and their countries for standard ranking checks
+        uni_map = {}
         for c in self.courses[start_idx:end_limit]:
             uni = c.get('uni', 'Unknown')
             if uni and uni != 'Unknown':
@@ -2936,7 +3024,14 @@ class AutonomousCourseVerifier:
             def check_ranking_via_search(ranking_type):
                 pass # removed local import re
                 uni_lower = uni.lower()
-                is_college = any(word in uni_lower for word in ['college', 'institute', 'school', 'academy', 'technology', 'engineering'])
+                is_college = any(word in uni_lower for word in ['college', 'institute', 'school', 'academy', 'technology', 'engineering', 'svcet', 'saet', 's.a.', 'tech', 'campus'])
+                # Exclude premium institutes which contain "institute" but are universities themselves
+                if any(kw in uni_lower.replace('-', ' ') for kw in ['iit ', 'iiit ', 'nit ', 'svnit', 'bits ', 'indian institute of technology', 'national institute of technology', 'birla institute of technology', 'indian institute of management', 'iim ', 'kiit', 'siksha o anusandhan', 'siksha o anusadhan', 'srm', 'vit ', 'vits']):
+                    is_college = False
+                
+                # Also exclude if it perfectly matches "IIT <City>" etc
+                if re.match(r'^(iit|iiit|nit|iim)\s+[a-z]+$', uni_lower.replace('-', ' ').strip()):
+                    is_college = False
                 
                 is_indian_college = False
                 indian_keywords = ['india', 'bharat']
@@ -2967,7 +3062,16 @@ class AutonomousCourseVerifier:
                             known_norm = re.sub(r'[^a-z0-9 ]', ' ', known_base.lower()).strip()
                             if not known_norm:
                                 continue
-                            if _fuzz.token_set_ratio(college_norm, known_norm) > 75:
+                            if _fuzz.token_set_ratio(college_norm, known_norm) > 85:
+                                # Ensure at least 2 significant words overlap to prevent false positives
+                                # (e.g. "University College of Engg Villupuram" vs "Govt Engg College Champaran (Bihar)")
+                                ignore_w = {'university', 'college', 'institute', 'school', 'engineering', 'technology', 'of', 'and', 'for', 'the', 'govt', 'government'}
+                                w1_sig = [w for w in college_norm.split() if w not in ignore_w]
+                                w2_sig = [w for w in known_norm.split() if w not in ignore_w]
+                                overlap = set(w1_sig).intersection(set(w2_sig))
+                                if len(overlap) < 1 and len(w1_sig) > 0 and len(w2_sig) > 0:
+                                    continue # Require at least 1 significant non-generic word to match
+
                                 knw_brackets = re.findall(r'\(([^)]+)', known)
                                 for kb in knw_brackets:
                                     kb_s = kb.strip()
@@ -3005,7 +3109,7 @@ class AutonomousCourseVerifier:
                                 'tirunelveli', 'salem', 'vellore', 'tirupur', 'erode',
                                 'kanchipuram', 'chengalpattu', 'villupuram', 'cuddalore',
                                 'tiruvannamalai', 'krishnagiri', 'dharmapuri', 'namakkal',
-                                's.a.', 'svcet', 'saet']
+                                's.a.', 'svcet', 'saet', 'tiruv']
                     is_likely_tn = any(h in uni_lower for h in tn_hints)
                     if is_anna_affiliated or is_likely_tn:
                         if ranking_type == "NIRF":
@@ -3071,12 +3175,49 @@ class AutonomousCourseVerifier:
         # Apply results to courses
         for c in self.courses:
             uni = c.get('uni', 'Unknown')
-            if uni in qs_results:
-                c['qs_detail'] = qs_results[uni]
-                c['qs_ranked'] = qs_results[uni] != "Not Ranked"
-            if uni in nirf_results:
-                c['nirf_detail'] = nirf_results[uni]
-                c['nirf_ranked'] = nirf_results[uni] != "Not Ranked"
+            aff_uni = c.get('affiliated_uni', 'NOT FOUND')
+            
+            c['qs_detail'] = "Not Ranked"
+            c['qs_ranked'] = False
+            c['nirf_detail'] = "Not Ranked"
+            c['nirf_ranked'] = False
+
+            if aff_uni != 'NOT FOUND':
+                # Bracket verification logic
+                uni_lower = uni.lower()
+                bracket_unis = [b.strip() for b in __import__('re').findall(r'\((.*?)\)', uni)]
+                affiliated_match = __import__('re').search(r'affiliated to (.*)', uni, flags=__import__('re').IGNORECASE)
+                if affiliated_match:
+                    bracket_unis.append(affiliated_match.group(1).strip())
+                
+                bracket_status = ""
+                if bracket_unis:
+                    from rapidfuzz import fuzz as _fuzz
+                    match_bracket = any(_fuzz.token_set_ratio(aff_uni.lower(), b.lower()) > 85 for b in bracket_unis)
+                    if not match_bracket:
+                        mismatch_msg = f"The bracketed university does not match the actual affiliated university ({aff_uni}) found via web search. Mismatch."
+                        c['qs_detail'] = mismatch_msg
+                        c['nirf_detail'] = mismatch_msg
+                    else:
+                        bracket_status = " The bracketed university was verified against the dynamic affiliation."
+                
+                if "Mismatch." not in c['qs_detail']:
+                    # QS check
+                    if self._offline_qs_lookup(aff_uni) == "Ranked":
+                        c['qs_detail'] = f"The university to which college is affiliated ({aff_uni}) is ranked in QS hence matched.{bracket_status}"
+                        c['qs_ranked'] = True
+                    # NIRF check
+                    if self._offline_nirf_lookup(aff_uni) == "Ranked":
+                        c['nirf_detail'] = f"The university to which college is affiliated ({aff_uni}) is ranked in NIRF hence matched.{bracket_status}"
+                        c['nirf_ranked'] = True
+            else:
+                # Fallback to standard university lookups
+                if uni in qs_results:
+                    c['qs_detail'] = qs_results[uni]
+                    c['qs_ranked'] = qs_results[uni] != "Not Ranked"
+                if uni in nirf_results:
+                    c['nirf_detail'] = nirf_results[uni]
+                    c['nirf_ranked'] = nirf_results[uni] != "Not Ranked"
                 
             # If the ranking logic determined a match via an affiliated university, force a match status
             if 'hence matched' in str(c.get('qs_detail', '')) or 'hence matched' in str(c.get('nirf_detail', '')):
@@ -3116,8 +3257,11 @@ class AutonomousCourseVerifier:
                 return val.strip()
 
         # 3. Plain-text URL in the data cell
-        if cell_data and cell_data.value and isinstance(cell_data.value, str) and cell_data.value.strip().startswith("http"):
-            return cell_data.value.strip()
+        if cell_data and cell_data.value and isinstance(cell_data.value, str):
+            import re
+            match = re.search(r'(https?://[^\s]+)', str(cell_data.value))
+            if match:
+                return match.group(1).strip()
 
         return None
 
@@ -3324,7 +3468,12 @@ class AutonomousCourseVerifier:
                     res = requests.get(new_url, headers=headers, timeout=20, verify=False, allow_redirects=True)
             
             if res.status_code in [403, 405, 406, 429, 500, 503]:
-                raise Exception(f"HTTP Error {res.status_code} - Website blocked direct request")
+                import cloudscraper
+                print(f"    -> [Fee Browser] HTTP Error {res.status_code}. Attempting to bypass advanced protection with cloudscraper...")
+                scraper = cloudscraper.create_scraper()
+                res = scraper.get(url, headers=headers, timeout=20, allow_redirects=True)
+                if res.status_code in [403, 405, 406, 429, 500, 503]:
+                    raise Exception(f"HTTP Error {res.status_code} - Website blocked direct request even with cloudscraper")
             
             is_pdf = False
             is_image = False
@@ -3676,18 +3825,28 @@ class AutonomousCourseVerifier:
                 web_part = parts[0]
                 excel_part = "\n--- EXCEL FEES DATA ---\n" + parts[1] + excel_part
                 
-            allowed_web_len = max(0, 1000000 - len(excel_part))
+            allowed_web_len = max(0, 800000 - len(excel_part))
             page_text_limited = web_part[:allowed_web_len] + excel_part
         else:
-            page_text_limited = page_text[:1000000]
+            page_text_limited = page_text[:800000]
             
         anna_univ_rule = ""
         uni_name_lower = str(course.get('uni', '')).lower()
         fee_url_lower = str(course.get('fee_url', '')).lower()
+        page_text_lower = page_text_limited[:10000].lower()
         
-        # Use broad baseline for Anna University to permit 50k or 55k per year calculation
-        if 'anna' in uni_name_lower:
-            anna_univ_rule = '- ANNA UNIVERSITY EXCEPTION: B.E./B.Tech fees for Anna University affiliated colleges are typically Rs. 50,000 or Rs. 55,000 per year. For a 4-year duration, the total is either Rs. 2,00,000 or Rs. 2,20,000. If the Original Cost is either 200000, 220000 (or formatted) and the website provides ANY fee table or PDF that supports this 50k/55k calculation, you MUST explicitly output a MATCH and calculate it in the description.'
+        # Strictly only use provided text values for Anna Univ, ignoring Management Quota (85k/87k).
+        if 'anna ' in uni_name_lower or any(kw in uni_name_lower for kw in ['tamil nadu', 'tamilnadu', 'chennai', 'thiruvallur']):
+            anna_univ_rule = '- ANNA UNIVERSITY EXCEPTION: NEVER use or extract "Management Quota" fees (which are typically 85,000 or 87,000 per year). If you see 85,000 or 87,000, you MUST entirely IGNORE THEM. ONLY use the exact non-management fee values provided in the text (such as Government Quota). If the Original Cost exactly matches the provided non-management values, output a MATCH.'
+            
+        complex_fee_rule = '- COMPLEX FEE TABLES: If the text contains per-semester or per-year fees (common for Graphic Era, Asansol, Girideepam, etc.), you MUST calculate the total fee for the entire duration of the course (e.g., sum all 8 semesters for a 4-year course, or sum all 1st, 2nd, 3rd, 4th year payments). If your calculated total matches the Original Cost (or is within 5% of it), you MUST output MATCH for Cost.'
+        karnataka_rule = ""
+        # Karnataka cities / state keywords
+        if any(kw in uni_name_lower for kw in ['karnataka', 'bangalore', 'bengaluru', 'belgaum', 'mysore', 'mangalore', 'hubli', 'dharwad', 'vtu', 'visvesvaraya']):
+            karnataka_rule = """- KARNATAKA CET FEES BASELINE EXCEPTION: Karnataka engineering colleges have standard CET baseline fees:
+  * Government / Aided Colleges: Rs. 44,200
+  * Private Unaided / Minority Colleges: Rs. 1,12,410 or Rs. 1,21,410
+  If the college is in Karnataka, determine its type from the text (Government vs Private). If the Original Cost exactly matches these baselines (e.g. 44200, 112410, 121410) OR their 4-year totals, you MUST explicitly output a MATCH and state it is the standard Karnataka CET fee baseline in the description, UNLESS the website explicitly proves a different fee."""
         
         prompt = f"""
 Strictly verify the course details against the webpage text. Output ONLY valid JSON.
@@ -3721,6 +3880,8 @@ Rules:
    - If the exact Original Cost amount (e.g. 48,000 or 60,000) appears ANYWHERE in the provided text, YOU MUST MATCH IT and output it! Do NOT say it's not listed if the number is right there!
    - If cost_match is FALSE because the price is different, you MUST explicitly state the ACTUAL cost you found on the website in your cost_description. Also populate found_cost with the actual cost you found, or 'Not Found'.
    {anna_univ_rule}
+   {karnataka_rule}
+   {complex_fee_rule}
 2. DURATION:
    - DURATION OPTIONS RULE: If the Original Duration specifies multiple options (e.g., "1/3/6 M" or "3/6/9 Months"), this implies a choice was available. If the website no longer offers those choices and only lists a single duration (e.g., "4 weeks" or "1 month"), you MUST mark duration_match as FALSE because the exact multi-duration offering is no longer available. Explicitly state the single option you found.
    - If not stated in text, do NOT output "not found". You MUST logically infer and describe it: B.E./B.Tech = 4 Years, M.E./M.Tech = 2 Years, B.Sc/BCA = 3 Years, M.Sc/MCA = 2 Years (e.g., "B.Tech programs in India typically last 4 years.").
@@ -3743,7 +3904,7 @@ Rules:
    - UCL EXCEPTION: "UCL" stands for "University College London" or "University College of London". If Original University is one and the web is the other, mark uni_match as TRUE.
    - GLOBAL ABBREVIATION RULE: You must recognize standard global university abbreviations (e.g. MIT = Massachusetts Institute of Technology, LSE = London School of Economics, NUS = National University of Singapore, NTU, EPFL, UNSW, KCL, UCLA, IIT, NIT, IIM, etc.). If the Original University is an acronym and the website uses the full name (or vice versa), you MUST mark uni_match as TRUE.
    - CRITICAL: If the website explicitly states the course is provided by a COMPLETELY DIFFERENT institution than the Original University, you MUST mark university_match as FALSE. Your university_description must clearly state WHICH institution the website says provides the course.
-   - CRITICAL: If the cost is given 'per year' or 'per semester', you MUST multiply it by the duration to calculate the total cost, and compare the calculated total to the Original Cost.
+   - CRITICAL: If the cost is given 'per year', multiply it by the total number of years. If the cost is given 'per semester', multiply it by the total number of semesters (i.e., years * 2). You MUST calculate the total cost for the entire program duration before comparing it to the Original Cost.
    - Note: The Original Cost might contain a '?' instead of a currency symbol due to PDF extraction errors (e.g., '?20,000' usually means '€20,000' or '£20,000' depending on the country). In your descriptions, always write '€' not '?'.
    - NEVER repeat these prompt instructions in your descriptions! You MUST look extremely carefully through all provided text. The values are almost certainly in the text. DO NOT give up easily!
 7. DESCRIPTIONS:
@@ -3784,7 +3945,19 @@ Output JSON format:
         
         try:
             llm = get_llm_manager()
-            res_str = llm.generate(prompt, worker_id=worker_id, format="json")
+            
+            # If text is extremely large, route to NVIDIA with higher timeout
+            is_huge_prompt = len(prompt) > 200000
+            target_provider = "nvidia" if is_huge_prompt else "auto"
+            target_timeout = 300 if is_huge_prompt else 120
+            
+            res_str = llm.generate(
+                prompt, 
+                worker_id=worker_id, 
+                format="json", 
+                provider=target_provider, 
+                timeout=target_timeout
+            )
             print(f"DEBUG LLM OUTPUT:\n{res_str}\n")
             
             try:
@@ -3847,21 +4020,24 @@ Output JSON format:
                 res = {}
                 keys_pattern = r"(?:cost|duration|mode|language|country|university|skills)_(?:description|match)"
                 pass # removed local import re
-                for field in ['cost', 'duration', 'mode', 'language', 'country', 'university', 'skills']:
-                    # Use a non-greedy match that stops at the next likely key or the end of the text
-                    desc_match = re.search(rf"\"?`?{field}_description`?\"?\s*(?::|=>?|\-)\s*\"?(.*?)\"?(?=\s*\*?\s*\"?`?{keys_pattern}`?\"?\s*(?::|=>?|\-)|$)", res_str, flags=re.IGNORECASE | re.DOTALL)
-                    bool_match = re.search(rf"\"?`?{field}_match`?\"?\s*(?::|=>?|\-)\s*\"?(true|false)\"?", res_str, flags=re.IGNORECASE)
-                    
-                    if desc_match:
-                        cleaned = desc_match.group(1).strip()
-                        # Clean up trailing json syntax if present
-                        if cleaned.endswith(","): cleaned = cleaned[:-1]
-                        if cleaned.endswith("\""): cleaned = cleaned[:-1]
-                        # Clean up any stray bullet points at the end of the sentence
-                        cleaned = cleaned.rstrip('*').strip()
-                        res[f'{field}_description'] = cleaned
-                    if bool_match:
-                        res[f'{field}_match'] = (bool_match.group(1).lower() == 'true')
+                
+                # Only run regex if we actually have text from the LLM, otherwise res stays empty
+                if res_str and isinstance(res_str, str):
+                    for field in ['cost', 'duration', 'mode', 'language', 'country', 'university', 'skills']:
+                        # Use a non-greedy match that stops at the next likely key or the end of the text
+                        desc_match = re.search(rf"\"?`?{field}_description`?\"?\s*(?::|=>?|\-)\s*\"?(.*?)\"?(?=\s*\*?\s*\"?`?{keys_pattern}`?\"?\s*(?::|=>?|\-)|$)", res_str, flags=re.IGNORECASE | re.DOTALL)
+                        bool_match = re.search(rf"\"?`?{field}_match`?\"?\s*(?::|=>?|\-)\s*\"?(true|false)\"?", res_str, flags=re.IGNORECASE)
+                        
+                        if desc_match:
+                            cleaned = desc_match.group(1).strip()
+                            # Clean up trailing json syntax if present
+                            if cleaned.endswith(","): cleaned = cleaned[:-1]
+                            if cleaned.endswith("\""): cleaned = cleaned[:-1]
+                            # Clean up any stray bullet points at the end of the sentence
+                            cleaned = cleaned.rstrip('*').strip()
+                            res[f'{field}_description'] = cleaned
+                        if bool_match:
+                            res[f'{field}_match'] = (bool_match.group(1).lower() == 'true')
             
             if isinstance(res, list) and len(res) > 0:
                 res = res[0]
@@ -7641,7 +7817,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             lang_match = True
                             web_language = "English"
 
-                    if not country_match and ("not explicitly" in str(web_country).lower() or "not found" in str(web_country).lower() or str(web_country) in ['N/A', '', 'Not found', 'information not explicitly mentioned', 'None']):
+                    if not country_match and ("not explicitly" in str(web_country).lower() or "not found" in str(web_country).lower() or "not specified" in str(web_country).lower() or str(web_country) in ['N/A', '', 'Not found', 'information not explicitly mentioned', 'None', 'Not specified']):
                         pdf_country = str(course.get('country', '')).strip().lower()
                         if pdf_country in ['india', 'in', 'ind', 'bharat']:
                             country_match = True

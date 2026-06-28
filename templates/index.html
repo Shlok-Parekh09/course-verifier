@@ -1039,8 +1039,9 @@
                 <button id="close-modal" class="modal-close">✕</button>
             </div>
         </div>
-        <table style="width:100%; border-collapse:collapse;" id="modal-table">
-            <thead>
+        <div style="overflow-x: auto; width: 100%; -webkit-overflow-scrolling: touch;">
+            <table style="width:100%; border-collapse:collapse; min-width:600px;" id="modal-table">
+                <thead>
                 <tr style="border-bottom:1px solid var(--border);">
                     <th style="padding:10px 12px; text-align:left; font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--text-3);">Attribute</th>
                     <th style="padding:10px 12px; text-align:left; font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--text-3);">Original (PDF)</th>
@@ -1050,7 +1051,8 @@
                 </tr>
             </thead>
             <tbody id="modal-table-body"></tbody>
-        </table>
+            </table>
+        </div>
     </div>
 </div>
 
@@ -1072,8 +1074,11 @@
      this script block so the browser paints real KPI numbers immediately
      without waiting for the /api/data.json round-trip. app.js reads this
      before its first fetch and updates the UI synchronously on DOMContentLoaded. -->
+<script type="application/json" id="initial-data">
+  {{ initial_data | safe }}
+</script>
 <script>
-  window.__INITIAL_DATA__ = {{ initial_data | safe }};
+  window.__INITIAL_DATA__ = JSON.parse(document.getElementById('initial-data').textContent);
 </script>
 >>>>>>> c8f96f6d812a0ceb07e05419211df53a7dce0d35
 <script src="/static/app.js?v=14"></script>

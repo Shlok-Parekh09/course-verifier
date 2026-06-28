@@ -4,13 +4,13 @@ on:
   workflow_dispatch: # Allows manual trigger from GitHub UI
     inputs:
       start_page:
-        description: 'Start Page Number (Leave blank to resume from checkpoint)'
+        description: "Start Page Number (Leave blank to resume from checkpoint)"
         required: false
-        default: ''
+        default: ""
       end_page:
-        description: 'End Page Number (Leave blank for all remaining)'
+        description: "End Page Number (Leave blank for all remaining)"
         required: false
-        default: ''
+        default: ""
 
 jobs:
   verify:
@@ -60,7 +60,6 @@ jobs:
         # VERIFIER_NO_FORCE_EXIT prevents the script from calling sys.exit() so
         # the workflow continues even if a sub-step fails (checkpoint is saved).
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           START_PAGE: ${{ github.event.inputs.start_page }}
           END_PAGE: ${{ github.event.inputs.end_page }}
           PDF_NAME: autonomous_verified_report
@@ -86,7 +85,10 @@ jobs:
           path: |
             *.pdf
             autonomous_verified_*.json
-            master_dashboard_results.json
-            CombinedWork.xlsx
-            fees.xlsx
-            rankings.db
+
+      - name: Upload Affiliation DB
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: affiliation-db
+          path: affiliation_db.json
