@@ -283,7 +283,7 @@ class LLMManager:
         if system: messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
         
-        payload = {"model": "nvidia/llama-3.1-nemotron-70b-instruct:free", "messages": messages, "temperature": temperature}
+        payload = {"model": "nvidia/llama-3.1-nemotron-70b-instruct", "messages": messages, "temperature": temperature}
         if format == "json": payload["response_format"] = {"type": "json_object"}
             
         try:
@@ -303,7 +303,7 @@ class LLMManager:
         if system: messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
         
-        payload = {"model": "nvidia/nemotron-3-super-120b-a12b", "messages": messages, "temperature": temperature, "max_tokens": 4096}
+        payload = {"model": "nvidia/llama-3.1-nemotron-70b-instruct", "messages": messages, "temperature": temperature, "max_tokens": 4096}
         if format == "json": payload["response_format"] = {"type": "json_object"}
             
         try:

@@ -4044,8 +4044,8 @@ Output JSON format:
             llm = get_llm_manager()
             
             # Default to auto, allowing fallback sequence (Mistral -> Groq -> OpenRouter -> NVIDIA)
-            is_huge_prompt = len(prompt) > 200000
-            target_provider = "auto"
+            is_huge_prompt = len(prompt) > 35000
+            target_provider = "nvidia" if is_huge_prompt else "auto"
             target_timeout = 300 if is_huge_prompt else 120
             
             res_str = llm.generate(
