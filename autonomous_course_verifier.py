@@ -50,20 +50,26 @@ _orig_head = requests.head
 
 def _safe_timeout_get(*args, **kwargs):
     t = kwargs.get('timeout')
-    if t is None or isinstance(t, (int, float)):
+    if t is None:
         kwargs['timeout'] = (15, 15)
+    elif isinstance(t, (int, float)):
+        kwargs['timeout'] = (t, t)
     return _orig_get(*args, **kwargs)
 
 def _safe_timeout_post(*args, **kwargs):
     t = kwargs.get('timeout')
-    if t is None or isinstance(t, (int, float)):
+    if t is None:
         kwargs['timeout'] = (15, 15)
+    elif isinstance(t, (int, float)):
+        kwargs['timeout'] = (t, t)
     return _orig_post(*args, **kwargs)
 
 def _safe_timeout_head(*args, **kwargs):
     t = kwargs.get('timeout')
-    if t is None or isinstance(t, (int, float)):
+    if t is None:
         kwargs['timeout'] = (15, 15)
+    elif isinstance(t, (int, float)):
+        kwargs['timeout'] = (t, t)
     return _orig_head(*args, **kwargs)
 
 requests.get = _safe_timeout_get
