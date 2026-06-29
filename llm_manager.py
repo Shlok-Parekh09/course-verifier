@@ -173,6 +173,24 @@ class LLMManager:
 
 
 
+        # Provider 4: SAMBANOVA
+        if provider in ["auto", "sambanova"]:
+            for idx, key in enumerate(self.sambanova_keys):
+                print(f"      -> [LLM Manager] Trying SambaNova Key {idx+1}/{len(self.sambanova_keys)} (Gemma)...")
+                self._rate_limit(f"sambanova_{idx}", min_interval=1.0)
+                result = self._call_sambanova(key, prompt, system, format, 0.0)
+                if result: return result
+                print(f"      -> [LLM Manager] SambaNova Key {idx+1} failed. Failing over...")
+                
+        # Provider 5: GEMINI
+        if provider in ["auto", "gemini"]:
+            for idx, key in enumerate(self.gemini_keys):
+                print(f"      -> [LLM Manager] Trying Gemini Key {idx+1}/{len(self.gemini_keys)}...")
+                self._rate_limit(f"gemini_{idx}", min_interval=1.0)
+                result = self._call_gemini(key, prompt, system, format, 0.0)
+                if result: return result
+                print(f"      -> [LLM Manager] Gemini Key {idx+1} failed. Failing over...")
+
         print("      -> [LLM Manager] CRITICAL ERROR: All API keys for Mistral, Groq, OpenRouter, and NVIDIA failed!")
         return None
 
@@ -283,7 +301,7 @@ class LLMManager:
         if system: messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
         
-        payload = {"model": "nvidia/llama-3.1-nemotron-70b-instruct", "messages": messages, "temperature": temperature}
+        payload = {"model": "meta-llama/llama-3.3-70b-instruct:free", "messages": messages, "temperature": temperature}
         if format == "json": payload["response_format"] = {"type": "json_object"}
             
         try:
@@ -303,7 +321,7 @@ class LLMManager:
         if system: messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
         
-        payload = {"model": "nvidia/llama-3.1-nemotron-70b-instruct", "messages": messages, "temperature": temperature, "max_tokens": 4096}
+        payload = {"model": "meta/llama-3.1-70b-instruct", "messages": messages, "temperature": temperature, "max_tokens": 4096}
         if format == "json": payload["response_format"] = {"type": "json_object"}
             
         try:
@@ -370,7 +388,7 @@ class LLMManager:
         messages.append({"role": "user", "content": prompt})
         
         payload = {
-            "model": "gemma-4-31b-it",
+            "model": "gemma-2-27b-it",
             "messages": messages,
             "temperature": temperature
         }
