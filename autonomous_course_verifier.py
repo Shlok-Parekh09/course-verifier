@@ -1865,7 +1865,7 @@ class AutonomousCourseVerifier:
                 
                 if resp.status_code == 200:
                     # Remove all <script> tags to prevent React/NextJS from re-hydrating and forcing a redirect again
-                    safe_html = re.sub(r'<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>', '', resp.content.decode('utf-8', errors='ignore'), flags=re.IGNORECASE)
+                    safe_html = re.sub(r'<script\b.*?</script>', '', resp.content.decode('utf-8', errors='ignore'), flags=re.IGNORECASE | re.DOTALL)
                     b64_html = base64.b64encode(safe_html.encode('utf-8')).decode('utf-8')
                     
                     driver.execute_script(f"document.open(); document.write(decodeURIComponent(escape(atob('{b64_html}')))); document.close();")
