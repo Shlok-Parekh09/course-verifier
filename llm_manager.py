@@ -42,6 +42,9 @@ class LLMManager:
         # Default to ollama.com if API key is present, else local
         default_url = "https://ollama.com" if self.ollama_api_key else "http://localhost:11434"
         raw_ollama_url = os.environ.get("OLLAMA_API_URL", default_url)
+        import threading
+        self.vision_call_counter = 0
+        self._vision_lock = threading.Lock()
         if raw_ollama_url.endswith("/api/generate"):
             raw_ollama_url = raw_ollama_url[:-13]
         elif raw_ollama_url.endswith("/api"):
@@ -175,25 +178,57 @@ class LLMManager:
 
     def generate_with_image(self, prompt: str, base64_image: str, system: Optional[str] = None, worker_id: int = None) -> Optional[str]:
         """Method for Vision extraction using Mistral, Gemini, and SambaNova"""
+        import threading
         
-        if worker_id is not None:
-            # DEDICATED KEY LOGIC for Multithreading Vision
-            # Chain: Gemini (with keys per provider)
-            
+        with self._vision_lock:
+            current_call_idx = self.vision_call_counter
+            self.vision_call_counter += 1
 
+        print(f"      -> [LLM Manager] Vision call index: {current_call_idx}")
 
-            if self.gemini_keys:
-                for idx in self._get_key_sequence(worker_id, len(self.gemini_keys)):
-                    g_key = self.gemini_keys[idx]
-                    key_id = f"gemini_vision_{idx}"
-                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying Gemini Vision Key {idx+1}...")
-                    self._rate_limit(key_id, min_interval=4.0) # 15 RPM
-                    res = self._call_gemini_vision(g_key, prompt, base64_image, system)
-                    if res: return res
-                print(f"      -> [LLM Manager] Worker {worker_id+1}'s Gemini Vision keys failed.")
-            
-
+        max_g = len(self.gemini_keys)
+        max_m = len(self.mistral_keys)
+        max_s = len(self.sambanova_keys)
+        max_keys = max(max_g, max_m, max_s)
+        
+        if max_keys == 0:
+            print("      -> [LLM Manager] CRITICAL ERROR: No API keys for Vision!")
             return None
+
+        start_key_idx = current_call_idx % max_keys
+        
+        for offset in range(max_keys):
+            key_idx = (start_key_idx + offset) % max_keys
+            
+            if key_idx < max_g:
+                key = self.gemini_keys[key_idx]
+                key_id = f"gemini_vision_{key_idx}"
+                print(f"      -> [LLM Manager] Trying Gemini Vision Key {key_idx+1}/{max_g}...")
+                self._rate_limit(key_id, min_interval=4.0)
+                result = self._call_gemini_vision(key, prompt, base64_image, system)
+                if result: return result
+                print(f"      -> [LLM Manager] Gemini Vision Key {key_idx+1} failed.")
+                
+            if key_idx < max_m:
+                key = self.mistral_keys[key_idx]
+                key_id = f"mistral_vision_{key_idx}"
+                print(f"      -> [LLM Manager] Trying Mistral Vision Key {key_idx+1}/{max_m}...")
+                self._rate_limit(key_id, min_interval=4.0)
+                result = self._call_mistral_vision(key, prompt, base64_image, system)
+                if result: return result
+                print(f"      -> [LLM Manager] Mistral Vision Key {key_idx+1} failed.")
+                
+            if key_idx < max_s:
+                key = self.sambanova_keys[key_idx]
+                key_id = f"sambanova_vision_{key_idx}"
+                print(f"      -> [LLM Manager] Trying SambaNova Vision Key {key_idx+1}/{max_s}...")
+                self._rate_limit(key_id, min_interval=4.0)
+                result = self._call_sambanova_vision(key, prompt, base64_image, system)
+                if result: return result
+                print(f"      -> [LLM Manager] SambaNova Vision Key {key_idx+1} failed.")
+                
+        print("      -> [LLM Manager] CRITICAL ERROR: All vision keys failed!")
+        return None
         
         max_keys = len(self.gemini_keys)
         
@@ -335,7 +370,7 @@ class LLMManager:
         messages.append({"role": "user", "content": prompt})
         
         payload = {
-            "model": "gemma-4-31b-it",
+            "model": "Llama-3.2-11B-Vision-Instruct",
             "messages": messages,
             "temperature": temperature
         }
@@ -431,7 +466,7 @@ class LLMManager:
         if system: messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": [
             {"type": "text", "text": prompt},
-            {"type": "image_url", "image_url": f"data:image/jpeg;base64,{base64_image}"}
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
         ]})
         payload = {
             "model": "pixtral-large-2411",
@@ -458,7 +493,7 @@ class LLMManager:
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
         ]})
         payload = {
-            "model": "gemma-4-31b-it",
+            "model": "Llama-3.2-11B-Vision-Instruct",
             "messages": messages,
             "temperature": 0.0
         }
