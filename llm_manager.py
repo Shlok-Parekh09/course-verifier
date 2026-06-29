@@ -388,7 +388,7 @@ class LLMManager:
         messages.append({"role": "user", "content": prompt})
         
         payload = {
-            "model": "gemma-2-27b-it",
+            "model": "Meta-Llama-3.1-70B-Instruct",
             "messages": messages,
             "temperature": temperature
         }
