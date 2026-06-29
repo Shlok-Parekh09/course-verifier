@@ -7467,6 +7467,13 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             web_duration = "4 Years (Anna University Standard Duration)"
                             print("    -> [Heuristic] Applied Anna University standard 4-year duration override (MATCH).")
                             
+                        # As per user request: "just check university name that is it"
+                        # Force everything else to true so it completely skips deep crawling
+                        name_match = True
+                        sk_match = True
+                        uni_match = True
+                        sk_detail = "Verified via Anna University regulation heuristic."
+                        
                         fee_url_lower = str(course.get('fee_url', '')).lower()
                         if '1vog0rwxyzf2sf33kpukxoesepa2hb8wr' in fee_url_lower or '1vog0rWXRzF2SF33kPUkXoESePa2Hb8wr'.lower() in fee_url_lower:
                             cost_match = True
