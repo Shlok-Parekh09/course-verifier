@@ -7450,7 +7450,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     anna_indicators = ['anna university', 'anna univ', 's.a.', 'svcet', 'saet', 'thiruv', 'chennai', 'coimbatore', 'madurai', 'trichy', 'tirunelveli', 'salem', 'vellore', 'tirupur', 'erode', 'kanchipuram', 'chengalpattu']
                     aff_uni = str(course.get('affiliated_uni', '')).lower()
                     
-                    if course_uni_check and (any(ind in course_uni_check.lower() for ind in anna_indicators) or 'anna' in aff_uni):
+                    if course_uni_check and (any(ind in course_uni_check.lower() for ind in anna_indicators) or 'anna' in aff_uni or 'anna university' in page_text.lower() or 'affiliated to anna' in page_text.lower()):
                         val_str = str(course.get('cost', '0')).lower()
                         cleaned = re.sub(r'[₹$£€,a-zA-Z\s]', '', val_str)
                         try:
