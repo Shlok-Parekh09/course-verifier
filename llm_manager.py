@@ -153,7 +153,16 @@ class LLMManager:
                 if result: return result
                 print(f"      -> [LLM Manager] Groq Key {idx+1} failed. Failing over...")
 
-        # Provider 2: OPENROUTER
+        # Provider 2: SAMBANOVA
+        if provider in ["auto", "sambanova"]:
+            for idx, key in enumerate(self.sambanova_keys):
+                print(f"      -> [LLM Manager] Trying SambaNova Key {idx+1}/{len(self.sambanova_keys)} (Llama 70B)...")
+                self._rate_limit(f"sambanova_{idx}", min_interval=1.0)
+                result = self._call_sambanova(key, prompt, system, format, 0.0)
+                if result: return result
+                print(f"      -> [LLM Manager] SambaNova Key {idx+1} failed. Failing over...")
+                
+        # Provider 3: OPENROUTER
         if provider in ["auto", "openrouter"]:
             for idx, key in enumerate(self.openrouter_keys):
                 print(f"      -> [LLM Manager] Trying OpenRouter Key {idx+1}/{len(self.openrouter_keys)}...")
@@ -162,26 +171,15 @@ class LLMManager:
                 if result: return result
                 print(f"      -> [LLM Manager] OpenRouter Key {idx+1} failed. Failing over...")
 
-        # Provider 3: NVIDIA
+        # Provider 4: NVIDIA
         if provider in ["auto", "nvidia"]:
             for idx, key in enumerate(self.nvidia_keys):
-                print(f"      -> [LLM Manager] Trying NVIDIA Key {idx+1}/{len(self.nvidia_keys)} (Nemotron Super)...")
+                print(f"      -> [LLM Manager] Trying NVIDIA Key {idx+1}/{len(self.nvidia_keys)} (Llama 70B)...")
                 self._rate_limit(f"nvidia_{idx}", min_interval=1.0)
                 result = self._call_nvidia(key, prompt, system, format, 0.0, timeout=timeout)
                 if result: return result
                 print(f"      -> [LLM Manager] NVIDIA Key {idx+1} failed. Failing over...")
 
-
-
-        # Provider 4: SAMBANOVA
-        if provider in ["auto", "sambanova"]:
-            for idx, key in enumerate(self.sambanova_keys):
-                print(f"      -> [LLM Manager] Trying SambaNova Key {idx+1}/{len(self.sambanova_keys)} (Gemma)...")
-                self._rate_limit(f"sambanova_{idx}", min_interval=1.0)
-                result = self._call_sambanova(key, prompt, system, format, 0.0)
-                if result: return result
-                print(f"      -> [LLM Manager] SambaNova Key {idx+1} failed. Failing over...")
-                
         # Provider 5: GEMINI
         if provider in ["auto", "gemini"]:
             for idx, key in enumerate(self.gemini_keys):
@@ -191,7 +189,7 @@ class LLMManager:
                 if result: return result
                 print(f"      -> [LLM Manager] Gemini Key {idx+1} failed. Failing over...")
 
-        print("      -> [LLM Manager] CRITICAL ERROR: All API keys for Mistral, Groq, OpenRouter, and NVIDIA failed!")
+        print("      -> [LLM Manager] CRITICAL ERROR: All API keys for Mistral, Groq, SambaNova, OpenRouter, NVIDIA, and Gemini failed!")
         return None
 
     def generate_with_image(self, prompt: str, base64_image: str, system: Optional[str] = None, worker_id: int = None) -> Optional[str]:
