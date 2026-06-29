@@ -75,6 +75,9 @@ function sortCourses(list, state) {
         } else if (state.col === 'courseType') {
             vA = (a.domain || 'Uncategorised').toLowerCase();
             vB = (b.domain || 'Uncategorised').toLowerCase();
+        } else if (state.col === 'pdf_page') {
+            vA = (a.pdf_page == null) ? Infinity : Number(a.pdf_page);
+            vB = (b.pdf_page == null) ? Infinity : Number(b.pdf_page);
         } else if (state.col === 'name') {
             vA = (vA || '').toLowerCase();
             vB = (vB || '').toLowerCase();
@@ -595,7 +598,7 @@ function renderVerificationTab() {
     // Table
     const tbody = document.getElementById('vf-tbody');
     if (!slice.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No courses match the current filters.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No courses match the current filters.</td></tr>';
     } else {
         tbody.innerHTML = slice.map((c, i) => `
             <tr onclick="openModal(${c.id})" title="Click to view details">
@@ -605,6 +608,7 @@ function renderVerificationTab() {
                 <td>${escHtml(c.country || '—')}</td>
                 <td><span style="font-size:0.78rem; color:var(--text-muted);">${getDomainLabel(c.id)}</span></td>
                 <td><span style="font-size:0.78rem; color:var(--text-muted);">${escHtml(c.domain || 'Uncategorised')}</span></td>
+                <td style="font-size:0.78rem; color:var(--text-muted);">${escHtml(c.pdf_page != null ? c.pdf_page : '—')}</td>
                 <td>${escHtml(c.mode || '—')}</td>
                 <td>${badgeHtml(c.status)}</td>
                 <td style="font-size:0.78rem; color:var(--text-muted);" title="${escHtml(c.disc_reason || c.issue_sub_type || '')}">${escHtml(c.disc_reason || c.issue_sub_type || '—')}</td>
@@ -666,21 +670,21 @@ function renderSolvedTab() {
     tbody.innerHTML = '';
     
     if (pageData.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="7" class="empty-state">No solved courses yet!</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9" class="empty-state">No solved courses yet!</td></tr>`;
         return;
     }
-    
+
     pageData.forEach(c => {
         const domLabel = getDomainLabel(c.id);
         const tr = document.createElement('tr');
         tr.onclick = () => openModal(c.id);
-        
+
         let statBadge = '';
         if (c.status === 'Verified') statBadge = `<span class="badge-status status-ver">Verified</span>`;
         else if (c.status === 'Discrepancy') statBadge = `<span class="badge-status status-disc">Discrepancy</span>`;
         else if (c.status === 'Error') statBadge = `<span class="badge-status status-err">Error</span>`;
         else statBadge = `<span class="badge-status">${c.status || '—'}</span>`;
-        
+
         tr.innerHTML = `
             <td style="color:var(--text-dim); font-size:0.8rem;">${c.id}</td>
             <td class="td-name">${escHtml(c.name)}</td>
@@ -688,6 +692,7 @@ function renderSolvedTab() {
             <td>${escHtml(c.country || '—')}</td>
             <td><span class="badge-domain">${domLabel}</span></td>
             <td><span style="font-size:0.78rem; color:var(--text-muted);">${escHtml(c.domain || 'Uncategorised')}</span></td>
+            <td style="font-size:0.78rem; color:var(--text-muted);">${escHtml(c.pdf_page != null ? c.pdf_page : '—')}</td>
             <td>${escHtml(c.mode || '—')}</td>
             <td>${statBadge}</td>
         `;
@@ -705,7 +710,7 @@ function renderCoursesTab() {
 
     const tbody = document.getElementById('cf-tbody');
     if (!slice.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No courses match the current filters.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No courses match the current filters.</td></tr>';
     } else {
         tbody.innerHTML = slice.map((c, i) => `
             <tr onclick="openModal(${c.id})" title="Click to view details">
@@ -715,6 +720,8 @@ function renderCoursesTab() {
                 <td>${escHtml(c.country || '—')}</td>
                 <td><span style="font-size:0.78rem; color:var(--text-muted);">${getDomainLabel(c.id)}</span></td>
                 <td><span style="font-size:0.78rem; color:var(--text-muted);">${escHtml(c.domain || 'Uncategorised')}</span></td>
+                <td style="font-size:0.78rem; color:var(--text-muted);">${escHtml(c.pdf_page != null ? c.pdf_page : '—')}</td>
+                <td>${escHtml(c.mode || '—')}</td>
                 <td>${c.has_qs_badge ? '<span class="badge" style="background:var(--blue-bg);color:var(--blue);border:1px solid rgba(59,130,246,0.25);">QS ✓</span>' : '—'}</td>
                 <td>${badgeHtml(c.status)}</td>
             </tr>
