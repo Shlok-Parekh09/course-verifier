@@ -3016,6 +3016,9 @@ CRITICAL RULES:
                 if any(k in uni_lower for k in indian_name_keywords):
                     is_indian_college = True
 
+            if is_indian_college and 'college' in uni_lower:
+                is_college = True
+
             cache_key = (course_name, uni)
             if cache_key in affiliation_cache:
                 c['affiliated_uni'] = affiliation_cache[cache_key]
