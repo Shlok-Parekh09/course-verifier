@@ -4050,10 +4050,9 @@ Output JSON format:
         try:
             llm = get_llm_manager()
             
-            # Default to auto, allowing fallback sequence (Mistral -> Groq -> OpenRouter -> NVIDIA)
-            is_huge_prompt = len(prompt) > 35000
-            target_provider = "nvidia" if is_huge_prompt else "auto"
-            target_timeout = 300 if is_huge_prompt else 120
+            # Default to auto (Mistral -> Groq -> SambaNova -> OpenRouter)
+            target_provider = "auto"
+            target_timeout = 120
             
             res_str = llm.generate(
                 prompt, 
@@ -4062,6 +4061,18 @@ Output JSON format:
                 provider=target_provider, 
                 timeout=target_timeout
             )
+            
+            # Token Exceeded Fallback to NVIDIA with 180s timeout
+            if not res_str:
+                print(f"      -> [LLM Manager] Auto provider failed (Token Exceeded?). Trying NVIDIA with 180s timeout...")
+                res_str = llm.generate(
+                    prompt, 
+                    worker_id=worker_id, 
+                    format="json", 
+                    provider="nvidia", 
+                    timeout=180
+                )
+                
             print(f"DEBUG LLM OUTPUT:\n{res_str}\n")
             
             try:

@@ -108,7 +108,17 @@ class LLMManager:
                     self._rate_limit(key_id, min_interval=4.0)
                     res = self._call_groq(g_key, prompt, system, format, 0.0)
                     if res: return res
-                print(f"      -> [LLM Manager] Worker {worker_id+1}'s Groq keys failed. Failing over to OpenRouter...")
+                print(f"      -> [LLM Manager] Worker {worker_id+1}'s Groq keys failed. Failing over to SambaNova...")
+
+            if self.sambanova_keys and provider in ["auto", "sambanova"]:
+                for idx in self._get_key_sequence(worker_id, len(self.sambanova_keys)):
+                    s_key = self.sambanova_keys[idx]
+                    key_id = f"sambanova_{idx}"
+                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying SambaNova Key {idx+1} (Llama 70B)...")
+                    self._rate_limit(key_id, min_interval=1.0)
+                    res = self._call_sambanova(s_key, prompt, system, format, 0.0)
+                    if res: return res
+                print(f"      -> [LLM Manager] Worker {worker_id+1}'s SambaNova keys failed. Failing over to OpenRouter...")
 
             if self.openrouter_keys and provider in ["auto", "openrouter"]:
                 for idx in self._get_key_sequence(worker_id, len(self.openrouter_keys)):
@@ -120,7 +130,7 @@ class LLMManager:
                     if res: return res
                 print(f"      -> [LLM Manager] Worker {worker_id+1}'s OpenRouter keys failed. Failing over to NVIDIA...")
 
-            if self.nvidia_keys and provider in ["auto", "nvidia"]:
+            if self.nvidia_keys and provider == "nvidia":
                 for idx in self._get_key_sequence(worker_id, len(self.nvidia_keys)):
                     n_key = self.nvidia_keys[idx]
                     key_id = f"nvidia_{idx}"
@@ -172,7 +182,7 @@ class LLMManager:
                 print(f"      -> [LLM Manager] OpenRouter Key {idx+1} failed. Failing over...")
 
         # Provider 4: NVIDIA
-        if provider in ["auto", "nvidia"]:
+        if provider == "nvidia":
             for idx, key in enumerate(self.nvidia_keys):
                 print(f"      -> [LLM Manager] Trying NVIDIA Key {idx+1}/{len(self.nvidia_keys)} (Llama 70B)...")
                 self._rate_limit(f"nvidia_{idx}", min_interval=1.0)
