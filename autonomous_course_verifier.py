@@ -35,7 +35,39 @@ import json
 import time
 import os
 import re
+import shutil
 import base64
+import requests
+
+# --- GLOBAL ANTI-FREEZE MONKEY-PATCH FOR REQUESTS ---
+# This ensures that ALL requests (even from 3rd party libs like googlesearch) 
+# have a strict read timeout so they never freeze the ThreadPool on tarpits.
+_orig_get = requests.get
+_orig_post = requests.post
+_orig_head = requests.head
+
+def _safe_timeout_get(*args, **kwargs):
+    t = kwargs.get('timeout')
+    if t is None or isinstance(t, (int, float)):
+        kwargs['timeout'] = (15, 15)
+    return _orig_get(*args, **kwargs)
+
+def _safe_timeout_post(*args, **kwargs):
+    t = kwargs.get('timeout')
+    if t is None or isinstance(t, (int, float)):
+        kwargs['timeout'] = (15, 15)
+    return _orig_post(*args, **kwargs)
+
+def _safe_timeout_head(*args, **kwargs):
+    t = kwargs.get('timeout')
+    if t is None or isinstance(t, (int, float)):
+        kwargs['timeout'] = (15, 15)
+    return _orig_head(*args, **kwargs)
+
+requests.get = _safe_timeout_get
+requests.post = _safe_timeout_post
+requests.head = _safe_timeout_head
+# ----------------------------------------------------
 import tempfile
 import warnings
 import colorsys
@@ -1802,7 +1834,7 @@ class AutonomousCourseVerifier:
                 pass # removed local import requests
                 pass # removed local import re
                 headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'}
-                resp = requests.get(url, headers=headers, timeout=15)
+                resp = requests.get(url, headers=headers, timeout=(15, 15))
                 
                 if resp.status_code == 200:
                     # Remove all <script> tags to prevent React/NextJS from re-hydrating and forcing a redirect again
@@ -2999,7 +3031,7 @@ CRITICAL RULES:
                 from bs4 import BeautifulSoup
                 try:
                     url = f"https://html.duckduckgo.com/html/?q={requests.utils.quote(uni + ' location country')}"
-                    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+                    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=(5, 5))
                     soup = BeautifulSoup(r.text, 'html.parser')
                     snips = " ".join([a.text for a in soup.find_all('a', class_='result__snippet')])[:500]
                     if snips:
@@ -3450,7 +3482,7 @@ CRITICAL RULES:
             }
             import urllib3
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-            res = requests.get(url, headers=headers, timeout=20, verify=False, allow_redirects=True, cookies=cookies)
+            res = requests.get(url, headers=headers, timeout=(20, 20), verify=False, allow_redirects=True, cookies=cookies)
             
             # Handle Google Drive confirmation redirect ("too large to scan for viruses")
             if 'text/html' in res.headers.get('Content-Type', '') and 'drive.google.com' in url:
@@ -3462,7 +3494,7 @@ CRITICAL RULES:
                         new_url = re.sub(r'confirm=[^&]+', f'confirm={confirm_match.group(1)}', url)
                     if uuid_match:
                         new_url += f"&uuid={uuid_match.group(1)}"
-                    res = requests.get(new_url, headers=headers, timeout=20, verify=False, allow_redirects=True, cookies=cookies)
+                    res = requests.get(new_url, headers=headers, timeout=(20, 20), verify=False, allow_redirects=True, cookies=cookies)
             
             if res.status_code in [403, 405, 406, 429, 500, 503]:
                 import cloudscraper
@@ -3650,7 +3682,7 @@ CRITICAL RULES:
         if not is_document_or_drive:
             try:
                 pass # removed local import requests
-                head_res = requests.head(fee_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5, allow_redirects=True)
+                head_res = requests.head(fee_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=(5, 5), allow_redirects=True)
                 c_type = head_res.headers.get('Content-Type', '').lower()
                 if 'application/pdf' in c_type or 'image/' in c_type:
                     is_document_or_drive = True
@@ -4886,7 +4918,7 @@ Output JSON format:
             if img_urls and isinstance(img_urls, list):
                 for url in img_urls:
                     try:
-                        res = requests.get(url, timeout=10, verify=False, allow_redirects=True)
+                        res = requests.get(url, timeout=(10, 10), verify=False, allow_redirects=True)
                         if res.status_code == 200:
                             img = Image.open(io.BytesIO(res.content))
                             text = pytesseract.image_to_string(img)

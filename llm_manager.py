@@ -366,7 +366,7 @@ class LLMManager:
         if format == "json": payload["response_format"] = {"type": "json_object"}
             
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=30)
+            resp = requests.post(url, headers=headers, json=payload, timeout=(30, 30))
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
             print(f"      -> [LLM Manager] Mistral API Error {resp.status_code}: {resp.text}")
@@ -392,7 +392,7 @@ class LLMManager:
         payload = {"contents": [{"parts": parts}], "generationConfig": {"temperature": 0.0}}
             
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=60)
+            resp = requests.post(url, headers=headers, json=payload, timeout=(60, 60))
             if resp.status_code == 200: return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
             print(f"      -> [LLM Manager] Gemini Vision Error {resp.status_code}: {resp.text}")
             return None
