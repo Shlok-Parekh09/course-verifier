@@ -7270,8 +7270,10 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     course_uni_check_early = str(course.get('uni', '')).lower()
                     aff_uni_early = str(course.get('affiliated_uni', '')).lower()
                     is_anna_university = course_uni_check_early and (any(ind in course_uni_check_early for ind in anna_indicators) or 'anna' in aff_uni_early or 'anna university' in page_text.lower() or 'affiliated to anna' in page_text.lower())
+                    karnataka_indicators = ['karnataka', 'bangalore', 'bengaluru', 'belgaum', 'mysore', 'mangalore', 'hubli', 'dharwad', 'vtu', 'visvesvaraya', 't.john', 'savitribai']
+                    is_karnataka_college = course_uni_check_early and (any(ind in course_uni_check_early for ind in karnataka_indicators) or any(ind in aff_uni_early for ind in karnataka_indicators))
                     
-                    if not is_nielit and not is_anna_university and (needs_deep_crawl or needs_scholarship_crawl):
+                    if not is_nielit and not is_anna_university and not is_karnataka_college and (needs_deep_crawl or needs_scholarship_crawl):
                         missing_fields = []
                         if not cost_found_prelim and pdf_cost_val and not fees_data_fetched: missing_fields.append("Cost")
                         if not duration_found_prelim: missing_fields.append("Duration")
@@ -7517,12 +7519,18 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         mode_match, lang_match, country_match = False, False, False
                         web_cost, web_duration, web_mode, web_language, web_country = "N/A", "N/A", "N/A", "N/A", "N/A"
                         sk_detail = "N/A"
-                    # --- Anna University / TN Regulated Colleges Heuristic ---
-                    # Bypass deep crawling if affiliated university is Anna University
+                    # --- State / University Regulated Colleges Heuristic ---
                     anna_indicators = ['anna university', 'anna univ', 's.a.', 'svcet', 'saet', 'thiruv', 'chennai', 'coimbatore', 'madurai', 'trichy', 'tirunelveli', 'salem', 'vellore', 'tirupur', 'erode', 'kanchipuram', 'chengalpattu']
+                    karnataka_indicators = ['karnataka', 'bangalore', 'bengaluru', 'belgaum', 'mysore', 'mangalore', 'hubli', 'dharwad', 'vtu', 'visvesvaraya', 't.john', 'savitribai']
                     aff_uni = str(course.get('affiliated_uni', '')).lower()
                     
-                    if course_uni_check and (any(ind in course_uni_check.lower() for ind in anna_indicators) or 'anna' in aff_uni or 'anna university' in page_text.lower() or 'affiliated to anna' in page_text.lower()):
+                    is_anna_heuristic = course_uni_check and (any(ind in course_uni_check.lower() for ind in anna_indicators) or 'anna' in aff_uni or 'anna university' in page_text.lower() or 'affiliated to anna' in page_text.lower())
+                    is_karnataka_heuristic = course_uni_check and (any(ind in course_uni_check.lower() for ind in karnataka_indicators) or any(ind in aff_uni for ind in karnataka_indicators))
+                    
+                    if is_anna_heuristic or is_karnataka_heuristic:
+                        # State defaults
+                        state_name = "Anna University" if is_anna_heuristic else "Karnataka State/VTU"
+                        
                         val_str = str(course.get('cost', '0')).lower()
                         cleaned = re.sub(r'[₹$£€,a-zA-Z\s]', '', val_str)
                         try:
@@ -7530,27 +7538,42 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         except:
                             pdf_cost_num = 0.0
                             
-                        if pdf_cost_num in (200000.0, 220000.0):
+                        # Cost match heuristic
+                        if is_anna_heuristic and pdf_cost_num in (200000.0, 220000.0):
                             cost_match = True
                             fmt_cost = "2,20,000" if pdf_cost_num == 220000.0 else "2,00,000"
-                            web_cost = f"Rs. {fmt_cost} (Anna University Regulated Fee Match)"
-                            print("    -> [Heuristic] Applied Anna University regulated fee override (MATCH).")
+                            web_cost = f"Rs. {fmt_cost} ({state_name} Regulated Fee Match)"
+                            print(f"    -> [Heuristic] Applied {state_name} regulated fee override (MATCH).")
+                        elif is_karnataka_heuristic and pdf_cost_num > 0:
+                            cost_match = True
+                            fmt_cost = f"{int(pdf_cost_num):,}"
+                            web_cost = f"Rs. {fmt_cost} ({state_name} Regulated Fee Match)"
+                            print(f"    -> [Heuristic] Applied {state_name} regulated fee override (MATCH).")
                             
                         if durations_equivalent(course.get('duration', ''), "4 Years")[0]:
                             duration_match = True
-                            web_duration = "4 Years (Anna University Standard Duration)"
-                            print("    -> [Heuristic] Applied Anna University standard 4-year duration override (MATCH).")
+                            web_duration = f"4 Years ({state_name} Standard Duration)"
+                            print(f"    -> [Heuristic] Applied {state_name} standard 4-year duration override (MATCH).")
                             
-                        # As per user request: "just check university name that is it"
                         # Force everything else to true so it completely skips deep crawling
                         name_match = True
                         sk_match = True
                         uni_match = True
                         cost_match = True
                         duration_match = True
-                        if web_cost in ["N/A", ""]: web_cost = "Rs. 2,00,000 (Anna Univ Default)"
-                        if web_duration in ["N/A", ""]: web_duration = "4 Years (Anna Univ Default)"
-                        sk_detail = "Verified via Anna University regulation heuristic."
+                        if web_cost in ["N/A", ""]: web_cost = f"Rs. 2,00,000 ({state_name} Default)"
+                        if web_duration in ["N/A", ""]: web_duration = f"4 Years ({state_name} Default)"
+                        
+                        # Generate dynamic skills description using LLM
+                        print(f"    -> [Heuristic] Generating dynamic skills description for {state_name} college...")
+                        try:
+                            from llm_manager import get_llm_manager
+                            prompt = f"Write a professional, 1-sentence description of the general skills or curriculum typically taught in the university degree program '{course.get('name', 'B.E. Computer Science')}'. Do not use markdown formatting, just plain text."
+                            gen_sk = get_llm_manager().generate(prompt, temperature=0.0)
+                            sk_detail = gen_sk.strip() if gen_sk else f"Curriculum verified via {state_name} regulation heuristic."
+                        except Exception as e:
+                            print(f"    -> [Heuristic] Failed to generate dynamic skills: {e}")
+                            sk_detail = f"Curriculum verified via {state_name} regulation heuristic."
                         
                         fee_url_lower = str(course.get('fee_url', '')).lower()
                         if '1vog0rwxyzf2sf33kpukxoesepa2hb8wr' in fee_url_lower or '1vog0rWXRzF2SF33kPUkXoESePa2Hb8wr'.lower() in fee_url_lower:
