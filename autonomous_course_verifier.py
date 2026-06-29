@@ -8295,7 +8295,13 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         # Submit to ThreadPoolExecutor
         if end_idx is None:
             end_idx = len(self.courses)
-        items_to_process = [(i, c) for i, c in enumerate(self.courses) if start_idx <= i < end_idx]
+        items_to_process = []
+        for i, c in enumerate(self.courses):
+            if start_idx <= i < end_idx:
+                # Skip courses that were already successfully verified or definitively rejected in a previous checkpoint
+                if c.get("web_status") == "MATCH" or (c.get("web_status") == "FALSE" and c.get("reason", "") != ""):
+                    continue
+                items_to_process.append((i, c))
         retry_counts = {i: 0 for i, _ in items_to_process}
         
         while items_to_process:
