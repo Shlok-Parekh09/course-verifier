@@ -6280,7 +6280,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             options.add_argument('--metrics-recording-only')
             options.add_argument('--no-first-run')
             options.add_argument('--safebrowsing-disable-auto-update')
-            options.add_argument('--js-flags=--max-old-space-size=4096')
+            options.add_argument('--js-flags=--max-old-space-size=1024')
             # CI-specific flags to prevent crashes on GitHub Actions 2-core runner
             if is_ci:
                 options.add_argument('--headless=new')
@@ -6289,7 +6289,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 options.add_argument('--disable-web-security')
                 options.add_argument('--allow-running-insecure-content')
                 options.add_argument('--memory-pressure-off')
-                options.add_argument('--max_old_space_size=4096')
+                options.add_argument('--max_old_space_size=1024')
             fresh_profile = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"chrome_profile_{b_idx}")
             import shutil
             if os.path.exists(fresh_profile):
