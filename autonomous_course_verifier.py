@@ -3934,17 +3934,18 @@ CRITICAL RULES:
             
         anna_univ_rule = ""
         uni_name_lower = str(course.get('uni', '')).lower()
+        aff_uni_lower = str(course.get('affiliated_uni', '')).lower()
         fee_url_lower = str(course.get('fee_url', '')).lower()
         page_text_lower = page_text_limited[:10000].lower()
         
         # Strictly only use provided text values for Anna Univ, ignoring Management Quota (85k/87k).
-        if 'anna ' in uni_name_lower or any(kw in uni_name_lower for kw in ['tamil nadu', 'tamilnadu', 'chennai', 'thiruvallur']):
-            anna_univ_rule = '- ANNA UNIVERSITY EXCEPTION: NEVER use or extract "Management Quota" fees (which are typically 85,000 or 87,000 per year). If you see 85,000 or 87,000, you MUST entirely IGNORE THEM. ONLY use the exact non-management fee values provided in the text (such as Government Quota). If the Original Cost exactly matches the provided non-management values, output a MATCH.'
+        if 'anna ' in uni_name_lower or any(kw in uni_name_lower for kw in ['tamil nadu', 'tamilnadu', 'chennai', 'thiruvallur']) or 'anna ' in aff_uni_lower:
+            anna_univ_rule = '- ANNA UNIVERSITY EXCEPTION: NEVER use or extract "Management Quota" fees (which are typically 85,000 or 87,000 per year). If you see 85,000 or 87,000, you MUST entirely IGNORE THEM. ONLY use the exact non-management fee values provided in the text (such as Government Quota). Furthermore, the standard regulated Government Quota fee for Anna University affiliated private engineering colleges is 50,000 to 55,000 per year (totaling 2,00,000 or 2,20,000 for 4 years). If the Original Cost is exactly 2,00,000 or 2,20,000, you MUST output MATCH for Cost, even if the website does not explicitly state the fees.'
             
         complex_fee_rule = '- COMPLEX FEE TABLES: If the text contains per-semester or per-year fees (common for Graphic Era, Asansol, Girideepam, etc.), you MUST calculate the total fee for the entire duration of the course (e.g., sum all 8 semesters for a 4-year course, or sum all 1st, 2nd, 3rd, 4th year payments). If your calculated total matches the Original Cost (or is within 5% of it), you MUST output MATCH for Cost.'
         karnataka_rule = ""
         # Karnataka cities / state keywords
-        if any(kw in uni_name_lower for kw in ['karnataka', 'bangalore', 'bengaluru', 'belgaum', 'mysore', 'mangalore', 'hubli', 'dharwad', 'vtu', 'visvesvaraya', 't.john', 't. john']):
+        if any(kw in uni_name_lower or kw in aff_uni_lower for kw in ['karnataka', 'bangalore', 'bengaluru', 'belgaum', 'mysore', 'mangalore', 'hubli', 'dharwad', 'vtu', 'visvesvaraya', 't.john', 't. john']):
             karnataka_rule = """- KARNATAKA CET FEES BASELINE EXCEPTION: Karnataka engineering colleges have standard CET baseline fees:
   * Government / Aided Colleges: Rs. 44,200
   * Private Unaided / Minority Colleges: Rs. 1,12,410 or Rs. 1,21,410
