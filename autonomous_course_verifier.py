@@ -7544,7 +7544,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             fmt_cost = "2,20,000" if pdf_cost_num == 220000.0 else "2,00,000"
                             web_cost = f"Rs. {fmt_cost} ({state_name} Regulated Fee Match)"
                             print(f"    -> [Heuristic] Applied {state_name} regulated fee override (MATCH).")
-                        elif is_karnataka_heuristic and pdf_cost_num > 0:
+                        elif is_karnataka_heuristic and pdf_cost_num in (449640.0, 112410.0, 121410.0, 44200.0, 485640.0, 176800.0):
                             cost_match = True
                             fmt_cost = f"{int(pdf_cost_num):,}"
                             web_cost = f"Rs. {fmt_cost} ({state_name} Regulated Fee Match)"
@@ -7561,7 +7561,11 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         uni_match = True
                         cost_match = True
                         duration_match = True
-                        if web_cost in ["N/A", ""]: web_cost = f"Rs. 2,00,000 ({state_name} Default)"
+                        if web_cost in ["N/A", ""]: 
+                            if is_anna_heuristic:
+                                web_cost = f"Rs. 2,00,000 ({state_name} Default)"
+                            elif is_karnataka_heuristic:
+                                web_cost = f"Rs. 4,49,640 ({state_name} Default)"
                         if web_duration in ["N/A", ""]: web_duration = f"4 Years ({state_name} Default)"
                         
                         # Generate dynamic skills description using LLM
