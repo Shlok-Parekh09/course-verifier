@@ -7460,7 +7460,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             
                         if pdf_cost_num in (200000.0, 220000.0):
                             cost_match = True
-                            web_cost = "Rs. 2,20,000 (Anna University Regulated Fee Match)"
+                            fmt_cost = "2,20,000" if pdf_cost_num == 220000.0 else "2,00,000"
+                            web_cost = f"Rs. {fmt_cost} (Anna University Regulated Fee Match)"
                             print("    -> [Heuristic] Applied Anna University regulated fee override (MATCH).")
                             
                         if durations_equivalent(course.get('duration', ''), "4 Years")[0]:
