@@ -89,14 +89,13 @@ jobs:
           VERIFIER_NO_FORCE_EXIT: true
           VERIFIER_HTTP_FIRST: ${{ inputs.http_first }}
           VERIFIER_LLM_TEXT_BUDGET: ${{ inputs.llm_text_budget }}
+          VERIFIER_NUM_BROWSERS: ${{ inputs.browsers }}
           OPENROUTER_KEY_1: ${{ secrets.OPENROUTER_KEY_1 }}
           GEMINI_KEY_1: ${{ secrets.GEMINI_KEY_1 }}
           OLLAMA_API_URL: ${{ secrets.OLLAMA_API_URL }}
           OLLAMA_MODEL: ${{ secrets.OLLAMA_MODEL }}
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
         run: |
-          BROWSERS="${{ inputs.browsers }}"
-          sed -i "s/NUM_BROWSERS = 6/NUM_BROWSERS = ${BROWSERS}/g" autonomous_course_verifier.py
           START_IDX_FLAG=""
           if [ -n "${{ inputs.start_idx }}" ]; then
             START_IDX_FLAG="--start-idx ${{ inputs.start_idx }}"

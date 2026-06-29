@@ -6251,9 +6251,11 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         checkpoint_lock = threading.Lock()
         # Use fewer browsers on GitHub Actions (2-core VM = 6 browsers causes OOM/crashes)
         is_ci = os.environ.get('CI', '').lower() == 'true'
-        # GitHub Actions standard runners only have 2 vCPUs and 7GB RAM. 
-        # 6 headless Chromes will cause severe OOM crashes.
-        NUM_BROWSERS = 3 if is_ci else 6
+        env_browsers = os.environ.get('VERIFIER_NUM_BROWSERS')
+        if env_browsers and env_browsers.isdigit():
+            NUM_BROWSERS = int(env_browsers)
+        else:
+            NUM_BROWSERS = 3 if is_ci else 6
         if NUM_BROWSERS <= 0: return
         
         import subprocess

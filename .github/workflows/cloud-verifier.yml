@@ -46,6 +46,11 @@ jobs:
           # Verify Chrome is available
           google-chrome --version || true
 
+      - name: Increase Swap Space
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 10
+
       - name: Install Python Dependencies
         run: |
           pip install -r requirements-verifier.txt python-dotenv gdown
