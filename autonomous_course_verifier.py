@@ -6237,6 +6237,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         try:
             if sys.platform.startswith('win'):
                 subprocess.run('taskkill /F /IM chromedriver.exe /T', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run('taskkill /F /IM chrome.exe /T', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 subprocess.run('wmic process where "name=\'chrome.exe\' and commandline like \'%chrome_profile%\'" call terminate', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             else:
                 subprocess.run('pkill -9 -f "chromedriver"', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
