@@ -234,7 +234,7 @@ class LLMManager:
             headers = {"Content-Type": "application/json"}
             if self.ollama_api_key:
                 headers["Authorization"] = f"Bearer {self.ollama_api_key}"
-            resp = requests.post(url, json=payload, headers=headers, timeout=60)
+            resp = requests.post(url, json=payload, headers=headers, timeout=30)
             if resp.status_code == 200:
                 return resp.json().get("response")
             return None
@@ -252,7 +252,7 @@ class LLMManager:
         if format == "json": payload["response_format"] = {"type": "json_object"}
             
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=60)
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
             if resp.status_code == 200: return resp.json()["choices"][0]["message"]["content"]
             print(f"      -> [LLM Manager] OpenRouter API Error {resp.status_code}: {resp.text[:200]}")
             return None
@@ -295,7 +295,7 @@ class LLMManager:
         if format == "json": payload["generationConfig"]["responseMimeType"] = "application/json"
             
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=120)
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
             if resp.status_code == 200: return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
             print(f"      -> [LLM Manager] Gemini API Error {resp.status_code}: {resp.text}")
             return None
@@ -318,7 +318,7 @@ class LLMManager:
         if format == "json": payload["response_format"] = {"type": "json_object"}
             
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=60)
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
             print(f"      -> [LLM Manager] Groq API Error {resp.status_code}: {resp.text}")
@@ -342,7 +342,7 @@ class LLMManager:
         if format == "json": payload["response_format"] = {"type": "json_object"}
             
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=60)
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
             print(f"      -> [LLM Manager] SambaNova API Error {resp.status_code}: {resp.text}")
@@ -366,7 +366,7 @@ class LLMManager:
         if format == "json": payload["response_format"] = {"type": "json_object"}
             
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=120)
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
             print(f"      -> [LLM Manager] Mistral API Error {resp.status_code}: {resp.text}")
@@ -392,7 +392,7 @@ class LLMManager:
         payload = {"contents": [{"parts": parts}], "generationConfig": {"temperature": 0.0}}
             
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=120)
+            resp = requests.post(url, headers=headers, json=payload, timeout=60)
             if resp.status_code == 200: return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
             print(f"      -> [LLM Manager] Gemini Vision Error {resp.status_code}: {resp.text}")
             return None
@@ -415,7 +415,7 @@ class LLMManager:
             "temperature": 0.0
         }
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=60)
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
             else:
@@ -439,7 +439,7 @@ class LLMManager:
             "temperature": 0.0
         }
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=60)
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
             else:
@@ -463,7 +463,7 @@ class LLMManager:
             "temperature": 0.0
         }
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=60)
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
             else:
@@ -490,7 +490,7 @@ class LLMManager:
             headers = {"Content-Type": "application/json"}
             if self.ollama_api_key:
                 headers["Authorization"] = f"Bearer {self.ollama_api_key}"
-            resp = requests.post(url, json=payload, headers=headers, timeout=60)
+            resp = requests.post(url, json=payload, headers=headers, timeout=30)
             if resp.status_code == 200:
                 return resp.json().get("response")
             else:
