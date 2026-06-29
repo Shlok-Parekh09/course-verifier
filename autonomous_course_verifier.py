@@ -3003,7 +3003,7 @@ CRITICAL RULES:
 
             uni_lower = uni.lower()
             is_college = any(word in uni_lower for word in ['college', 'institute', 'school', 'academy', 'technology', 'engineering', 'svcet', 'saet', 's.a.', 'tech', 'campus'])
-            if any(kw in uni_lower.replace('-', ' ') for kw in ['iit ', 'iiit ', 'nit ', 'svnit', 'bits ', 'indian institute of technology', 'national institute of technology', 'birla institute of technology', 'indian institute of management', 'iim ', 'kiit', 'siksha o anusandhan', 'siksha o anusadhan', 'srm', 'vit ', 'vits']):
+            if any(kw in uni_lower.replace('-', ' ') for kw in ['iit ', 'iiit ', 'nit ', 'svnit', 'bits ', 'indian institute of technology', 'national institute of technology', 'birla institute of technology', 'indian institute of management', 'iim ', 'kiit', 'siksha o anusandhan', 'siksha o anusadhan', 'srm institute', 'srm university', 'vellore institute', 'vits']):
                 is_college = False
             if __import__('re').match(r'^(iit|iiit|nit|iim)\s+[a-z]+$', uni_lower.replace('-', ' ').strip()):
                 is_college = False
