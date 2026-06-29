@@ -1763,7 +1763,7 @@ class AutonomousCourseVerifier:
         from selenium.common.exceptions import TimeoutException
         
         try:
-            driver.set_page_load_timeout(90)
+            driver.set_page_load_timeout(30)
             driver.get(url)
         except TimeoutException:
             print(f"    -> [!] Page load timed out for {url}. Attempting to proceed with whatever loaded...")
@@ -6268,7 +6268,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     try:
                         driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {"latitude": 28.6139, "longitude": 77.2090, "accuracy": 100})
                     except: pass
-            driver.set_page_load_timeout(90)
+            driver.set_page_load_timeout(30)
             driver.set_script_timeout(30)
             
             try:
@@ -7639,7 +7639,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             from googlesearch import search as g_search
                             g_query = f'"{course_uni_check}" is affiliated to which university for the course "{course_name_short}"'
                             g_results_bg = []
-                            for j, g_url in enumerate(g_search(g_query, num_results=3, sleep_interval=1, advanced=True)):
+                            for j, g_url in enumerate(g_search(g_query, num_results=3, sleep_interval=1, advanced=True, timeout=15)):
                                 if hasattr(g_url, 'description'):
                                     g_results_bg.append(str(g_url.title) + " " + str(g_url.description))
                                 else:
@@ -8078,7 +8078,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 new_options.add_argument('--no-sandbox')
                                 ud_dir = os.path.join(tempfile.gettempdir(), f"uc_profile_rec_{random.randint(1000, 9999)}")
                                 driver = uc.Chrome(options=new_options, user_data_dir=ud_dir, version_main=get_chrome_main_version(), user_multi_procs=True)
-                                driver.set_page_load_timeout(90)
+                                driver.set_page_load_timeout(30)
                                 driver.set_script_timeout(30)
                                 try:
                                     driver.execute_cdp_cmd('Network.setBlockedURLs', {'urls': ['*admissionportal*', '*login*', '*Login*']})
