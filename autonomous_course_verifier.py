@@ -3977,6 +3977,7 @@ Rules:
    - "Free" Exception: If Original Cost is "Free", do NOT match generic terms (e.g., "toll free", "free box"). Must mean "Free Course Tuition". If a Paid Certificate track exists, cost_match = FALSE.
    - COURSERA EXCEPTION: Coursera courses are NEVER free or free to audit. If the website is Coursera, ignore any 'Enroll for Free' text and ONLY extract the specific one-time course purchase fee from the pricing modal details. Do NOT extract or use any "Subscription" fees or "Coursera Plus" fees. If Original Cost is "Free", you MUST ALWAYS mark cost_match as FALSE.
    - SWAYAM EXCEPTION: Swayam courses are free to audit but have a standard fee of Rs. 1000 for the certificate. If the Original Cost is "Rs. 1000" (or similar) and the platform is Swayam/NPTEL, you MUST ALWAYS mark cost_match as TRUE.
+   - MANAGEMENT QUOTA STRICT BAN: NEVER use or extract "Management Quota", "NRI Quota", or "Direct Admission" fees under ANY circumstances. You MUST ALWAYS use "Government Quota", "Merit Quota", "Counselling", or standard tuition fees. If both Government and Management quotas are present in the text, you MUST COMPLETELY IGNORE the Management Quota fees. If the Original Cost matches the Government/Merit Quota fee, you MUST output a MATCH for Cost.
    - CRITICAL EXTRACTION: If you cannot find the exact Original Cost, you MUST scan the page text comprehensively.
    - Must be 1-2 short sentences. Include exact math calculations if performed.
    - NEVER use quotation marks (") inside descriptions.
