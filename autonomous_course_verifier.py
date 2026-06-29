@@ -7519,7 +7519,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             
                         if pdf_cost_num in (200000.0, 220000.0) and course_uni_check:
                             anna_indicators = ['anna university', 'anna univ', 's.a.', 'svcet', 'saet', 'thiruv', 'chennai', 'coimbatore', 'madurai', 'trichy', 'tirunelveli', 'salem', 'vellore', 'tirupur', 'erode', 'kanchipuram', 'chengalpattu']
-                            if any(ind in course_uni_check.lower() for ind in anna_indicators):
+                            aff_uni = str(course.get('affiliated_uni', '')).lower()
+                            if any(ind in course_uni_check.lower() for ind in anna_indicators) or 'anna' in aff_uni:
                                 cost_match = True
                                 web_cost = "Rs. 2,20,000 (Anna University Regulated Fee Match)"
                                 print("    -> [Heuristic] Applied Anna University regulated fee override (MATCH).")
