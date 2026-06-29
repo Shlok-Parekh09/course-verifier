@@ -474,7 +474,7 @@ class LLMManager:
             "temperature": 0.0
         }
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=30)
+            resp = requests.post(url, headers=headers, json=payload, timeout=120)
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
             else:
@@ -493,12 +493,12 @@ class LLMManager:
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
         ]})
         payload = {
-            "model": "Llama-3.2-11B-Vision-Instruct",
+            "model": "Llama-3.2-90B-Vision-Instruct",
             "messages": messages,
             "temperature": 0.0
         }
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=30)
+            resp = requests.post(url, headers=headers, json=payload, timeout=120)
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
             else:
