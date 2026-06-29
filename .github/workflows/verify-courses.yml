@@ -26,7 +26,7 @@ on:
       browsers:
         description: 'Number of parallel browsers'
         required: true
-        default: '6'
+        default: '3'
       http_first:
         description: 'Enable HTTP-first extraction (skip browser for static pages) - 1/0'
         required: false
@@ -54,6 +54,11 @@ jobs:
         with:
           chrome-version: stable
           install-dependencies: true
+
+      - name: Increase Swap Space
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 10
 
       - name: Install system deps
         run: |

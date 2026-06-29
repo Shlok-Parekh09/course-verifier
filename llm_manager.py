@@ -79,9 +79,14 @@ class LLMManager:
                 time.sleep(wait_time)
             self.last_call[key_identifier] = time.time()
 
-    def _get_key_sequence(self, worker_id: int, num_keys: int) -> list[int]:
+    def _get_key_sequence(self, worker_id: int, num_keys: int, num_workers: int = 3) -> list[int]:
         if num_keys == 0: return []
-        return [worker_id % num_keys]
+        keys = [i for i in range(num_keys) if i % num_workers == worker_id % num_workers]
+        return keys if keys else [worker_id % num_keys]
+
+    def _check_token_error(self, text: str) -> bool:
+        err = text.lower()
+        return "context" in err or "token" in err or "too large" in err or "exceeds" in err
 
     def generate(self, prompt: str, system: Optional[str] = None, format: str = "text", temperature: float = 0.0, provider: str = "auto", worker_id: int = None, model_name: str = None, timeout: int = 120) -> Optional[str]:
         # Text Generation: Mistral -> Groq -> OpenRouter -> NVIDIA
@@ -316,6 +321,7 @@ class LLMManager:
             resp = requests.post(url, headers=headers, json=payload, timeout=30)
             if resp.status_code == 200: return resp.json()["choices"][0]["message"]["content"]
             print(f"      -> [LLM Manager] OpenRouter API Error {resp.status_code}: {resp.text[:200]}")
+            if self._check_token_error(resp.text): return "ERROR_TOKEN_EXCEEDED"
             return None
         except Exception as e: 
             print(f"      -> [LLM Manager] OpenRouter API Exception: {e}")
@@ -336,6 +342,7 @@ class LLMManager:
             resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
             if resp.status_code == 200: return resp.json()["choices"][0]["message"]["content"]
             print(f"      -> [LLM Manager] NVIDIA API Error {resp.status_code}: {resp.text[:200]}")
+            if self._check_token_error(resp.text): return "ERROR_TOKEN_EXCEEDED"
             return None
         except Exception as e:
             print(f"      -> [LLM Manager] NVIDIA API Exception: {e}")
@@ -359,6 +366,7 @@ class LLMManager:
             resp = requests.post(url, headers=headers, json=payload, timeout=30)
             if resp.status_code == 200: return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
             print(f"      -> [LLM Manager] Gemini API Error {resp.status_code}: {resp.text}")
+            if self._check_token_error(resp.text): return "ERROR_TOKEN_EXCEEDED"
             return None
         except Exception as e:
             print(f"      -> [LLM Manager] Gemini API Exception: {e}")
@@ -383,6 +391,7 @@ class LLMManager:
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
             print(f"      -> [LLM Manager] Groq API Error {resp.status_code}: {resp.text}")
+            if self._check_token_error(resp.text): return "ERROR_TOKEN_EXCEEDED"
             return None
         except Exception as e:
             print(f"      -> [LLM Manager] Groq API Exception: {e}")
@@ -407,6 +416,7 @@ class LLMManager:
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
             print(f"      -> [LLM Manager] SambaNova API Error {resp.status_code}: {resp.text}")
+            if self._check_token_error(resp.text): return "ERROR_TOKEN_EXCEEDED"
             return None
         except Exception as e:
             print(f"      -> [LLM Manager] SambaNova API Exception: {e}")
@@ -431,6 +441,7 @@ class LLMManager:
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
             print(f"      -> [LLM Manager] Mistral API Error {resp.status_code}: {resp.text}")
+            if self._check_token_error(resp.text): return "ERROR_TOKEN_EXCEEDED"
             return None
         except Exception as e:
             print(f"      -> [LLM Manager] Mistral API Exception: {e}")
