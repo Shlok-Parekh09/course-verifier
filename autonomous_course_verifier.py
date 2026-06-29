@@ -4063,14 +4063,25 @@ Output JSON format:
                 timeout=target_timeout
             )
             
-            # Token Exceeded Fallback to NVIDIA with 180s timeout
+            # Token Exceeded Fallback to NVIDIA with 120s timeout
             if res_str == "ERROR_TOKEN_EXCEEDED":
-                print(f"      -> [LLM Manager] Token Exceeded! Falling back to NVIDIA with 180s timeout...")
+                print(f"      -> [LLM Manager] Token Exceeded! Falling back to NVIDIA (Llama 70B) with 120s timeout...")
                 res_str = llm.generate(
                     prompt, 
                     worker_id=worker_id, 
                     format="json", 
                     provider="nvidia", 
+                    timeout=120
+                )
+                
+            # If NVIDIA ALSO exceeds token limit (>131k), strictly fallback to Puter (Gemini 1.5 Pro)
+            if res_str == "ERROR_TOKEN_EXCEEDED":
+                print(f"      -> [LLM Manager] NVIDIA Token Limit Exceeded (>131k)! Falling back strictly to Puter...")
+                res_str = llm.generate(
+                    prompt, 
+                    worker_id=worker_id, 
+                    format="json", 
+                    provider="puter", 
                     timeout=180
                 )
                 
