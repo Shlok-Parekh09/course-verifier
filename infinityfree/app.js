@@ -192,17 +192,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Populate dropdowns
         populateFilters();
 
-        // Render everything
-        renderDashboard();
-        renderVerificationTab();
-        renderCoursesTab();
-        renderSolvedTab();
-
-        // Wire up filter events
+        // Wire up ALL interactivity FIRST, before any rendering. A failure
+        // in a render (e.g. Chart.js failing to load from the CDN) must never
+        // leave the page with unbound filters / dead controls.
         initFilters();
         initModal();
         initKpiClickThrough();
         initSorting();
+        initTopbarExtras();
+
+        // Render every tab. Each is isolated so one failing renderer
+        // (charts, lists, etc.) doesn't abort the rest of the page.
+        safeRender(renderDashboard, 'renderDashboard');
+        safeRender(renderVerificationTab, 'renderVerificationTab');
+        safeRender(renderCoursesTab, 'renderCoursesTab');
+        safeRender(renderSolvedTab, 'renderSolvedTab');
 
     } catch (err) {
         setConnStatus('error');
@@ -210,6 +214,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.error('[MongoFetch]', err);
     }
 });
+
+// Run a renderer in isolation so a throw doesn't break sibling renders.
+function safeRender(fn, name) {
+    try { fn(); }
+    catch (err) { console.error('[' + name + ']', err); }
+}
 
 // ── THEME ─────────────────────────────────────────────────────────
 
@@ -246,6 +256,7 @@ function initTabs() {
         document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
         link.classList.add('active');
         document.getElementById(target).classList.add('active');
+        setPageTitle(link.dataset.title, link.dataset.sub);
     });
 }
 
@@ -384,22 +395,12 @@ function initKpiClickThrough() {
         vfFilter.status = 'Discrepancy'; vfPage = 1;
         document.getElementById('vf-status').value = 'Discrepancy';
         document.querySelector('.nav-tab[data-tab="tab-verification"]').click();
+        renderVerificationTab();
     });
     document.getElementById('kpi-err-card').addEventListener('click', () => {
         vfFilter.status = 'Error'; vfPage = 1;
         document.getElementById('vf-status').value = 'Error';
         document.querySelector('.nav-tab[data-tab="tab-verification"]').click();
-    });
-
-    // KPI strip cards
-    document.getElementById('vf-strip').addEventListener('click', e => {
-        const card = e.target.closest('.kpi-strip-card');
-        if (!card) return;
-        document.querySelectorAll('.kpi-strip-card').forEach(c => c.classList.remove('active'));
-        card.classList.add('active');
-        const status = card.dataset.vfStatus;
-        vfFilter.status = status; vfPage = 1;
-        document.getElementById('vf-status').value = status;
         renderVerificationTab();
     });
 }
@@ -422,9 +423,39 @@ function renderDashboard() {
     renderDomainChart();
     renderStatusDonut(verified, disc, err);
     renderCountryList();
+    renderRecentSolved();
+}
+
+function renderRecentSolved() {
+    const tbody = document.getElementById('recent-tbody');
+    if (!tbody) return;
+    const solved = allCourses
+        .filter(c => c.solved_attrs && c.solved_attrs.length > 0)
+        .slice(0, 8);
+
+    if (!solved.length) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No solved courses yet.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = solved.map(c => {
+        let badge = '<span class="badge-status">' + escHtml(c.status || '—') + '</span>';
+        if (c.status === 'Verified') badge = '<span class="badge-status status-ver">Verified</span>';
+        else if (c.status === 'Discrepancy') badge = '<span class="badge-status status-disc">Disc. Resolved</span>';
+        else if (c.status === 'Error') badge = '<span class="badge-status status-err">Error</span>';
+        return `
+            <tr onclick="openModal(${c.id})" title="Click to view details">
+                <td class="course-id">#${escHtml(c.id)}</td>
+                <td class="course-name" title="${escHtml(c.name)}">${escHtml(c.name)}</td>
+                <td title="${escHtml(c.university)}">${escHtml(c.university || '—')}</td>
+                <td>${badge}</td>
+            </tr>
+        `;
+    }).join('');
 }
 
 function renderDomainChart() {
+    if (typeof Chart === 'undefined') return;   // Chart.js (CDN) not loaded — skip gracefully
     const counts = {};
     DOMAIN_RANGES.forEach(r => { counts[r.label] = 0; });
     allCourses.forEach(c => {
@@ -447,11 +478,11 @@ function renderDomainChart() {
             labels,
             datasets: [{
                 data,
-                backgroundColor: 'rgba(99,102,241,0.6)',
-                borderColor: 'rgba(99,102,241,1)',
-                borderWidth: 1,
+                backgroundColor: 'rgba(0,229,255,0.75)',
+                borderColor: 'rgba(0,229,255,1)',
+                borderWidth: 0,
                 borderRadius: 6,
-                hoverBackgroundColor: 'rgba(99,102,241,0.85)',
+                hoverBackgroundColor: 'rgba(0,229,255,0.95)',
             }],
         },
         options: {
@@ -468,41 +499,49 @@ function renderDomainChart() {
 function renderStatusDonut(verified, disc, err) {
     const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
     const textCol = isDark ? '#94a3b8' : '#64748b';
-    const ctx = document.getElementById('statusDonut').getContext('2d');
-    if (statusChart) statusChart.destroy();
 
-    statusChart = new Chart(ctx, {
-        type: 'doughnut',
-        data: {
-            labels: ['Verified', 'Discrepancy', 'Error'],
-            datasets: [{
-                data: [verified, disc, err],
-                backgroundColor: ['rgba(34,197,94,0.75)', 'rgba(245,158,11,0.75)', 'rgba(239,68,68,0.75)'],
-                borderColor: ['#22c55e', '#f59e0b', '#ef4444'],
-                borderWidth: 2,
-                hoverOffset: 8,
-            }],
-        },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            cutout: '68%',
-            plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${ctx.raw.toLocaleString()}` } } },
-        },
-    });
+    // Donut chart — only if Chart.js (CDN) loaded
+    if (typeof Chart !== 'undefined') {
+        const ctxEl = document.getElementById('statusDonut');
+        if (ctxEl) {
+            const ctx = ctxEl.getContext('2d');
+            if (statusChart) statusChart.destroy();
+            statusChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Verified', 'Discrepancy', 'Error'],
+                    datasets: [{
+                        data: [verified, disc, err],
+                        backgroundColor: ['rgba(34,197,94,0.75)', 'rgba(245,158,11,0.75)', 'rgba(239,68,68,0.75)'],
+                        borderColor: ['#22c55e', '#f59e0b', '#ef4444'],
+                        borderWidth: 2,
+                        hoverOffset: 8,
+                    }],
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    cutout: '68%',
+                    plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${ctx.raw.toLocaleString()}` } } },
+                },
+            });
+        }
+    }
 
-    // Custom legend
+    // Custom legend — plain HTML, renders even without Chart.js
     const legend = document.getElementById('donut-legend');
-    const total = verified + disc + err;
-    legend.innerHTML = [
-        { label: 'Verified', color: '#22c55e', val: verified },
-        { label: 'Discrepancy', color: '#f59e0b', val: disc },
-        { label: 'Error', color: '#ef4444', val: err },
-    ].map(i => `
-        <div class="donut-legend-item">
-            <div class="donut-dot" style="background:${i.color}"></div>
-            ${i.label} — ${i.val.toLocaleString()} (${total ? Math.round((i.val / total) * 100) : 0}%)
-        </div>
-    `).join('');
+    if (legend) {
+        const total = verified + disc + err;
+        legend.innerHTML = [
+            { label: 'Verified', color: '#22c55e', val: verified },
+            { label: 'Discrepancy', color: '#f59e0b', val: disc },
+            { label: 'Error', color: '#ef4444', val: err },
+        ].map(i => `
+            <div class="donut-legend-item">
+                <div class="donut-dot" style="background:${i.color}"></div>
+                ${i.label} — ${i.val.toLocaleString()} (${total ? Math.round((i.val / total) * 100) : 0}%)
+            </div>
+        `).join('');
+    }
 }
 
 function renderCountryList() {
@@ -516,6 +555,7 @@ function renderCountryList() {
 
     document.getElementById('country-list').innerHTML = sorted.map(([name, count], i) => `
         <div class="country-row">
+            <div class="country-flag">${countryFlag(name)}</div>
             <div class="country-rank">${i + 1}</div>
             <div class="country-name" title="${escHtml(name)}">${escHtml(name)}</div>
             <div class="country-bar-wrap">
@@ -551,12 +591,6 @@ function renderVerificationTab() {
     const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
     if (vfPage > totalPages) vfPage = totalPages;
     const slice = filtered.slice((vfPage - 1) * PAGE_SIZE, vfPage * PAGE_SIZE);
-
-    // KPI strip
-    setText('vfs-total', total.toLocaleString());
-    setText('vfs-disc', allCourses.filter(c => c.status === 'Discrepancy').length.toLocaleString());
-    setText('vfs-err', allCourses.filter(c => c.status === 'Error').length.toLocaleString());
-    setText('vfs-ver', allCourses.filter(c => c.status === 'Verified').length.toLocaleString());
 
     // Table
     const tbody = document.getElementById('vf-tbody');
@@ -838,6 +872,7 @@ async function solveAttr(courseId, attr, isSolved) {
         renderVerificationTab();
         renderCoursesTab();
         renderSolvedTab();
+        renderRecentSolved();
         // Refresh dashboard KPIs
         const verified = allCourses.filter(x => x.status === 'Verified').length;
         const disc = allCourses.filter(x => x.status === 'Discrepancy').length;
@@ -891,6 +926,7 @@ async function solveAll() {
         renderVerificationTab();
         renderCoursesTab();
         renderSolvedTab();
+        renderRecentSolved();
     } catch (err) {
         alert('Failed to save: ' + err.message);
     }
@@ -901,6 +937,65 @@ async function solveAll() {
 function setText(id, val) {
     const el = document.getElementById(id);
     if (el) el.textContent = val;
+}
+
+// ── Page title (top bar) ────────────────────────────────────────
+function setPageTitle(title, sub) {
+    if (title) setText('page-title', title);
+    if (sub !== undefined) setText('page-sub', sub);
+}
+
+// ── Country → flag emoji ────────────────────────────────────────
+function countryFlag(name) {
+    if (!name) return '🌐';
+    const map = {
+        'india': '🇮🇳', 'usa': '🇺🇸', 'united states': '🇺🇸', 'united states of america': '🇺🇸',
+        'uk': '🇬🇧', 'united kingdom': '🇬🇧', 'britain': '🇬🇧', 'england': '🇬🇧',
+        'australia': '🇦🇺', 'canada': '🇨🇦', 'germany': '🇩🇪', 'france': '🇫🇷',
+        'ireland': '🇮🇪', 'netherlands': '🇳🇱', 'singapore': '🇸🇬', 'switzerland': '🇨🇭',
+        'sweden': '🇸🇪', 'spain': '🇪🇸', 'italy': '🇮🇹', 'japan': '🇯🇵', 'china': '🇨🇳',
+        'hong kong': '🇭🇰', 'south korea': '🇰🇷', 'korea': '🇰🇷', 'new zealand': '🇳🇿',
+        'dubai': '🇦🇪', 'uae': '🇦🇪', 'united arab emirates': '🇦🇪', 'malaysia': '🇲🇾',
+        'online': '🌐', 'remote': '🌐', 'global': '🌐',
+    };
+    const key = String(name).toLowerCase().trim();
+    if (map[key]) return map[key];
+    // Convert 2-letter ISO code to regional indicator flags
+    if (/^[a-z]{2}$/i.test(name)) {
+        const cc = name.toUpperCase();
+        return String.fromCodePoint(...[...cc].map(c => 0x1f1e6 + c.charCodeAt(0) - 65));
+    }
+    return '🌐';
+}
+
+// ── Top-bar global search ───────────────────────────────────────
+function initTopbarExtras() {
+    // Global search routes to All Courses tab and filters
+    let tbTimer;
+    const tb = document.getElementById('topbar-search');
+    if (tb) {
+        tb.addEventListener('input', e => {
+            clearTimeout(tbTimer);
+            const q = e.target.value.toLowerCase();
+            tbTimer = setTimeout(() => {
+                if (!q) return;
+                cfFilter.search = q; cfPage = 1;
+                const cs = document.getElementById('cf-search');
+                if (cs) cs.value = q;
+                document.querySelector('.nav-tab[data-tab="tab-courses"]').click();
+                renderCoursesTab();
+            }, 250);
+        });
+    }
+
+    // "View all" on Recently Solved → Solved Courses tab
+    const recentLink = document.getElementById('recent-link');
+    if (recentLink) {
+        recentLink.addEventListener('click', e => {
+            e.preventDefault();
+            document.querySelector('.nav-tab[data-tab="tab-solved"]').click();
+        });
+    }
 }
 
 function escHtml(str) {
