@@ -38,6 +38,8 @@ import re
 import shutil
 import base64
 import requests
+import socket
+import subprocess
 
 # --- GLOBAL ANTI-FREEZE MONKEY-PATCH FOR REQUESTS ---
 # This ensures that ALL requests (even from 3rd party libs like googlesearch) 
@@ -67,6 +69,31 @@ def _safe_timeout_head(*args, **kwargs):
 requests.get = _safe_timeout_get
 requests.post = _safe_timeout_post
 requests.head = _safe_timeout_head
+# ----------------------------------------------------
+
+# --- GLOBAL SAFETY NET FOR SUBPROCESS & SOCKETS ---
+# Prevent infinite hangs in taskkill, wmic, or Selenium's chromedriver socket
+socket.setdefaulttimeout(120)
+
+_orig_sub_run = subprocess.run
+_orig_sub_check_output = subprocess.check_output
+_orig_sub_check_call = subprocess.check_call
+
+def _safe_sub_run(*args, **kwargs):
+    kwargs.setdefault('timeout', 120)
+    return _orig_sub_run(*args, **kwargs)
+
+def _safe_sub_check_output(*args, **kwargs):
+    kwargs.setdefault('timeout', 120)
+    return _orig_sub_check_output(*args, **kwargs)
+
+def _safe_sub_check_call(*args, **kwargs):
+    kwargs.setdefault('timeout', 300)
+    return _orig_sub_check_call(*args, **kwargs)
+
+subprocess.run = _safe_sub_run
+subprocess.check_output = _safe_sub_check_output
+subprocess.check_call = _safe_sub_check_call
 # ----------------------------------------------------
 import tempfile
 import warnings
