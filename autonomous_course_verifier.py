@@ -7219,7 +7219,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     anna_indicators = ['anna university', 'anna univ', 's.a.', 'svcet', 'saet', 'thiruv', 'chennai', 'coimbatore', 'madurai', 'trichy', 'tirunelveli', 'salem', 'vellore', 'tirupur', 'erode', 'kanchipuram', 'chengalpattu']
                     course_uni_check_early = str(course.get('uni', '')).lower()
                     aff_uni_early = str(course.get('affiliated_uni', '')).lower()
-                    is_anna_university = course_uni_check_early and (any(ind in course_uni_check_early for ind in anna_indicators) or 'anna' in aff_uni_early or 'anna university' in page_text.lower() or 'affiliated to anna' in page_text.lower())
+                    is_anna_university = course_uni_check_early and (any(ind in course_uni_check_early for ind in anna_indicators) or 'anna' in aff_uni_early )
                     
                     if links.get('fees'):
                         print(f"    -> Found Fees hyperlink in fees.xlsx/CombinedWork.xlsx: {links['fees']}")
@@ -7269,7 +7269,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     anna_indicators = ['anna university', 'anna univ', 's.a.', 'svcet', 'saet', 'thiruv', 'chennai', 'coimbatore', 'madurai', 'trichy', 'tirunelveli', 'salem', 'vellore', 'tirupur', 'erode', 'kanchipuram', 'chengalpattu']
                     course_uni_check_early = str(course.get('uni', '')).lower()
                     aff_uni_early = str(course.get('affiliated_uni', '')).lower()
-                    is_anna_university = course_uni_check_early and (any(ind in course_uni_check_early for ind in anna_indicators) or 'anna' in aff_uni_early or 'anna university' in page_text.lower() or 'affiliated to anna' in page_text.lower())
+                    is_anna_university = course_uni_check_early and (any(ind in course_uni_check_early for ind in anna_indicators) or 'anna' in aff_uni_early )
                     karnataka_indicators = ['karnataka', 'bangalore', 'bengaluru', 'belgaum', 'mysore', 'mangalore', 'hubli', 'dharwad', 'vtu', 'visvesvaraya', 't.john', 'savitribai']
                     is_karnataka_college = course_uni_check_early and (any(ind in course_uni_check_early for ind in karnataka_indicators) or any(ind in aff_uni_early for ind in karnataka_indicators))
                     
@@ -7524,7 +7524,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     karnataka_indicators = ['karnataka', 'bangalore', 'bengaluru', 'belgaum', 'mysore', 'mangalore', 'hubli', 'dharwad', 'vtu', 'visvesvaraya', 't.john', 'savitribai']
                     aff_uni = str(course.get('affiliated_uni', '')).lower()
                     
-                    is_anna_heuristic = course_uni_check and (any(ind in course_uni_check.lower() for ind in anna_indicators) or 'anna' in aff_uni or 'anna university' in page_text.lower() or 'affiliated to anna' in page_text.lower())
+                    is_anna_heuristic = course_uni_check and (any(ind in course_uni_check.lower() for ind in anna_indicators) or 'anna' in aff_uni )
                     is_karnataka_heuristic = course_uni_check and (any(ind in course_uni_check.lower() for ind in karnataka_indicators) or any(ind in aff_uni for ind in karnataka_indicators))
                     
                     if is_anna_heuristic or is_karnataka_heuristic:
