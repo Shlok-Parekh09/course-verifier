@@ -6251,6 +6251,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         try:
             _t_opts = uc.ChromeOptions()
             _t_opts.add_argument('--headless')
+            _t_opts.set_capability("unhandledPromptBehavior", "dismiss")
             _t_drv = uc.Chrome(options=_t_opts, version_main=get_chrome_main_version())
             _t_drv.quit()
         except Exception as e:
@@ -6265,6 +6266,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             import os
             options = uc.ChromeOptions()
             options.page_load_strategy = 'eager'
+            options.set_capability("unhandledPromptBehavior", "dismiss")
             options.add_argument('--disable-blink-features=AutomationControlled')
             options.add_argument('--window-size=1280,800')
             options.add_argument('--ignore-certificate-errors')
@@ -6310,6 +6312,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     print(f"    -> Warning: Parallel profile creation failed ({e}). Retrying with fresh options...")
                     options2 = uc.ChromeOptions()
                     options2.page_load_strategy = 'eager'
+                    options2.set_capability("unhandledPromptBehavior", "dismiss")
                     options2.add_argument('--disable-blink-features=AutomationControlled')
                     options2.add_argument('--window-size=1280,800')
                     options2.add_argument('--ignore-certificate-errors')
