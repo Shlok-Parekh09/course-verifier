@@ -3012,7 +3012,7 @@ CRITICAL RULES:
             if any(k in country for k in ['india', 'bharat']):
                 is_indian_college = True
             elif not country or country == 'unknown':
-                indian_name_keywords = ['indian', 'iit', 'iim', 'nit', 'delhi', 'mumbai', 'bangalore', 'chennai', 'kanpur', 'roorkee', 'amity', 'symbiosis', 'jindal', 'bits', 'thapar', 'manipal', 'nmims', 'spjimr', 'xlri', 'punjab', 'maharashtra', 'gujarat', 'kerala', 'tamil nadu', 'karnataka']
+                indian_name_keywords = ['indian', 'iit', 'iim', 'nit', 'delhi', 'mumbai', 'bangalore', 'chennai', 'kanpur', 'roorkee', 'amity', 'symbiosis', 'jindal', 'bits', 'thapar', 'manipal', 'nmims', 'spjimr', 'xlri', 'punjab', 'maharashtra', 'gujarat', 'kerala', 'tamil nadu', 'karnataka', 'madurai']
                 if any(k in uni_lower for k in indian_name_keywords):
                     is_indian_college = True
 
@@ -3097,7 +3097,7 @@ CRITICAL RULES:
                 if any(k in country for k in indian_keywords):
                     is_indian_college = True
                 if not is_indian_college:
-                    indian_name_keywords = ['indian', 'iit', 'iim', 'nit', 'delhi', 'mumbai', 'bangalore', 'chennai', 'kanpur', 'roorkee', 'amity', 'symbiosis', 'jindal', 'bits', 'thapar', 'manipal', 'nmims', 'spjimr', 'xlri', 'punjab', 'maharashtra', 'gujarat', 'kerala', 'tamil nadu', 'karnataka']
+                    indian_name_keywords = ['indian', 'iit', 'iim', 'nit', 'delhi', 'mumbai', 'bangalore', 'chennai', 'kanpur', 'roorkee', 'amity', 'symbiosis', 'jindal', 'bits', 'thapar', 'manipal', 'nmims', 'spjimr', 'xlri', 'punjab', 'maharashtra', 'gujarat', 'kerala', 'tamil nadu', 'karnataka', 'madurai']
                     if any(k in uni_lower for k in indian_name_keywords):
                         is_indian_college = True
                 

@@ -283,7 +283,7 @@ class LLMManager:
         if system: messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
         
-        payload = {"model": "meta-llama/llama-3.3-70b-instruct:free", "messages": messages, "temperature": temperature}
+        payload = {"model": "nvidia/llama-3.1-nemotron-70b-instruct:free", "messages": messages, "temperature": temperature}
         if format == "json": payload["response_format"] = {"type": "json_object"}
             
         try:
@@ -370,7 +370,7 @@ class LLMManager:
         messages.append({"role": "user", "content": prompt})
         
         payload = {
-            "model": "Llama-3.2-11B-Vision-Instruct",
+            "model": "gemma-4-31b-it",
             "messages": messages,
             "temperature": temperature
         }
