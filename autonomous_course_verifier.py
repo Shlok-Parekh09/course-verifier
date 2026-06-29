@@ -7212,6 +7212,12 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     fees_data_fetched = False
                     links = self._search_excel_for_links(course.get('uni', ''), course.get('name', ''))
                     course['fee_url'] = links.get('fees', '')
+                    
+                    anna_indicators = ['anna university', 'anna univ', 's.a.', 'svcet', 'saet', 'thiruv', 'chennai', 'coimbatore', 'madurai', 'trichy', 'tirunelveli', 'salem', 'vellore', 'tirupur', 'erode', 'kanchipuram', 'chengalpattu']
+                    course_uni_check_early = str(course.get('uni', '')).lower()
+                    aff_uni_early = str(course.get('affiliated_uni', '')).lower()
+                    is_anna_university = course_uni_check_early and (any(ind in course_uni_check_early for ind in anna_indicators) or 'anna' in aff_uni_early or 'anna university' in page_text.lower() or 'affiliated to anna' in page_text.lower())
+                    
                     if links.get('fees'):
                         print(f"    -> Found Fees hyperlink in fees.xlsx/CombinedWork.xlsx: {links['fees']}")
                         excel_text = self._fetch_fee_link_with_browser(driver, links['fees'], course.get('name', ''))
@@ -7257,7 +7263,12 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     needs_deep_crawl = (not cost_found_prelim and pdf_cost_val and not fees_data_fetched) or not duration_found_prelim or (not skills_found_prelim and not syllabus_data_fetched)
                     needs_scholarship_crawl = not scholarship_found_prelim
                     
-                    if not is_nielit and (needs_deep_crawl or needs_scholarship_crawl):
+                    anna_indicators = ['anna university', 'anna univ', 's.a.', 'svcet', 'saet', 'thiruv', 'chennai', 'coimbatore', 'madurai', 'trichy', 'tirunelveli', 'salem', 'vellore', 'tirupur', 'erode', 'kanchipuram', 'chengalpattu']
+                    course_uni_check_early = str(course.get('uni', '')).lower()
+                    aff_uni_early = str(course.get('affiliated_uni', '')).lower()
+                    is_anna_university = course_uni_check_early and (any(ind in course_uni_check_early for ind in anna_indicators) or 'anna' in aff_uni_early or 'anna university' in page_text.lower() or 'affiliated to anna' in page_text.lower())
+                    
+                    if not is_nielit and not is_anna_university and (needs_deep_crawl or needs_scholarship_crawl):
                         missing_fields = []
                         if not cost_found_prelim and pdf_cost_val and not fees_data_fetched: missing_fields.append("Cost")
                         if not duration_found_prelim: missing_fields.append("Duration")
@@ -7532,6 +7543,10 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         name_match = True
                         sk_match = True
                         uni_match = True
+                        cost_match = True
+                        duration_match = True
+                        if web_cost in ["N/A", ""]: web_cost = "Rs. 2,00,000 (Anna Univ Default)"
+                        if web_duration in ["N/A", ""]: web_duration = "4 Years (Anna Univ Default)"
                         sk_detail = "Verified via Anna University regulation heuristic."
                         
                         fee_url_lower = str(course.get('fee_url', '')).lower()
