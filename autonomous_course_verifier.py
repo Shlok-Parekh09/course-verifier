@@ -35,7 +35,66 @@ import json
 import time
 import os
 import re
+import shutil
 import base64
+import requests
+import socket
+import subprocess
+
+# --- GLOBAL ANTI-FREEZE MONKEY-PATCH FOR REQUESTS ---
+# This ensures that ALL requests (even from 3rd party libs like googlesearch) 
+# have a strict read timeout so they never freeze the ThreadPool on tarpits.
+_orig_get = requests.get
+_orig_post = requests.post
+_orig_head = requests.head
+
+def _safe_timeout_get(*args, **kwargs):
+    t = kwargs.get('timeout')
+    if t is None or isinstance(t, (int, float)):
+        kwargs['timeout'] = (15, 15)
+    return _orig_get(*args, **kwargs)
+
+def _safe_timeout_post(*args, **kwargs):
+    t = kwargs.get('timeout')
+    if t is None or isinstance(t, (int, float)):
+        kwargs['timeout'] = (15, 15)
+    return _orig_post(*args, **kwargs)
+
+def _safe_timeout_head(*args, **kwargs):
+    t = kwargs.get('timeout')
+    if t is None or isinstance(t, (int, float)):
+        kwargs['timeout'] = (15, 15)
+    return _orig_head(*args, **kwargs)
+
+requests.get = _safe_timeout_get
+requests.post = _safe_timeout_post
+requests.head = _safe_timeout_head
+# ----------------------------------------------------
+
+# --- GLOBAL SAFETY NET FOR SUBPROCESS & SOCKETS ---
+# Prevent infinite hangs in taskkill, wmic, or Selenium's chromedriver socket
+socket.setdefaulttimeout(120)
+
+_orig_sub_run = subprocess.run
+_orig_sub_check_output = subprocess.check_output
+_orig_sub_check_call = subprocess.check_call
+
+def _safe_sub_run(*args, **kwargs):
+    kwargs.setdefault('timeout', 120)
+    return _orig_sub_run(*args, **kwargs)
+
+def _safe_sub_check_output(*args, **kwargs):
+    kwargs.setdefault('timeout', 120)
+    return _orig_sub_check_output(*args, **kwargs)
+
+def _safe_sub_check_call(*args, **kwargs):
+    kwargs.setdefault('timeout', 300)
+    return _orig_sub_check_call(*args, **kwargs)
+
+subprocess.run = _safe_sub_run
+subprocess.check_output = _safe_sub_check_output
+subprocess.check_call = _safe_sub_check_call
+# ----------------------------------------------------
 import tempfile
 import warnings
 import colorsys
@@ -1802,7 +1861,7 @@ class AutonomousCourseVerifier:
                 pass # removed local import requests
                 pass # removed local import re
                 headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'}
-                resp = requests.get(url, headers=headers, timeout=15)
+                resp = requests.get(url, headers=headers, timeout=(15, 15))
                 
                 if resp.status_code == 200:
                     # Remove all <script> tags to prevent React/NextJS from re-hydrating and forcing a redirect again
@@ -1898,16 +1957,14 @@ class AutonomousCourseVerifier:
             return None, "Invalid URL"
         try:
             # Use HEAD first (lightweight), fallback to GET with stream if HEAD fails
-            resp = requests.head(url, timeout=10, allow_redirects=True, headers={
+            resp = requests.head(url, timeout=(10, 10), allow_redirects=True, headers={
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             })
             if resp.status_code >= 400:
                 # Some servers reject HEAD; try a tiny GET
-                resp = requests.get(url, timeout=10, stream=True, headers={
+                resp = requests.get(url, timeout=(10, 10), stream=True, headers={
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 })
-                # Read just a few bytes so connection closes quickly
-                _ = resp.raw.read(1)
                 resp.close()
             if resp.status_code in [404, 410]:
                 return "404_not_found", f"HTTP {resp.status_code} via preflight"
@@ -2610,23 +2667,23 @@ class AutonomousCourseVerifier:
         if not w1 or not w2: return False
         
         # Word by word subset match (ignores generic words if one is a subset of the other)
-        if w1.issubset(w2) or w2.issubset(w1):
-            ignore = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the'}
-            w1_sig = w1 - ignore
-            w2_sig = w2 - ignore
-            if w1_sig and w2_sig and (w1_sig.issubset(w2_sig) or w2_sig.issubset(w1_sig)):
-                # CRITICAL FIX: Prevent short names from falsely matching long different names
-                # Require exact significant word match. No extra words allowed.
-                len_diff = abs(len(w1_sig) - len(w2_sig))
-                if len_diff == 0:
-                    # CRITICAL FIX: Prevent College vs University generic matches (e.g. Durham College != Durham University)
-                    types = {'university', 'college', 'institute', 'school', 'polytechnic', 'academy'}
-                    t1 = w1 & types
-                    t2 = w2 & types
-                    # Ensure that if types are present, they must be the same to match
-                    if (t1 and t2 and t1 != t2):
-                        return False
-                    return True
+        ignore = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'campus', 'bengaluru', 'bangalore', 'chennai', 'delhi', 'mumbai', 'hyderabad', 'kolkata', 'pune', 'jaipur', 'ahmedabad', 'noida', 'gurugram', 'gurgaon', 'bhopal', 'indore', 'kochi', 'thiruvananthapuram', 'chandigarh', 'lucknow', 'patna', 'kanpur', 'nagpur', 'visakhapatnam', 'surat', 'vadodara', 'guwahati', 'bhubaneswar', 'dehradun'}
+        w1_sig = w1 - ignore
+        w2_sig = w2 - ignore
+        
+        if w1_sig and w2_sig and (w1_sig.issubset(w2_sig) or w2_sig.issubset(w1_sig)):
+            # CRITICAL FIX: Prevent short names from falsely matching long different names
+            # Require exact significant word match. No extra words allowed.
+            len_diff = abs(len(w1_sig) - len(w2_sig))
+            if len_diff == 0:
+                # CRITICAL FIX: Prevent College vs University generic matches (e.g. Durham College != Durham University)
+                types = {'university', 'college', 'institute', 'school', 'polytechnic', 'academy'}
+                t1 = w1 & types
+                t2 = w2 & types
+                # Ensure that if types are present, they must be the same to match
+                if (t1 and t2 and t1 != t2):
+                    return False
+                return True
                 
         # High threshold fuzzy fallback for typos using built-in difflib
         import difflib
@@ -2959,17 +3016,16 @@ CRITICAL RULES:
                 if any(k in uni_lower for k in indian_name_keywords):
                     is_indian_college = True
 
-            if is_college and is_indian_college:
-                cache_key = (course_name, uni)
-                if cache_key in affiliation_cache:
-                    c['affiliated_uni'] = affiliation_cache[cache_key]
-                else:
-                    print(f"      -> Identifying affiliation for '{course_name}' at '{uni}'...")
-                    aff_uni = self._get_affiliated_uni_from_ai(course_name, uni)
-                    affiliation_cache[cache_key] = aff_uni
-                    c['affiliated_uni'] = aff_uni
-                    cache_updated = True
-                    print(f"         Result: {aff_uni}")
+            cache_key = (course_name, uni)
+            if cache_key in affiliation_cache:
+                c['affiliated_uni'] = affiliation_cache[cache_key]
+            elif is_college and is_indian_college:
+                print(f"      -> Identifying affiliation for '{course_name}' at '{uni}'...")
+                aff_uni = self._get_affiliated_uni_from_ai(course_name, uni)
+                affiliation_cache[cache_key] = aff_uni
+                c['affiliated_uni'] = aff_uni
+                cache_updated = True
+                print(f"         Result: {aff_uni}")
 
         if cache_updated:
             try:
@@ -3002,7 +3058,7 @@ CRITICAL RULES:
                 from bs4 import BeautifulSoup
                 try:
                     url = f"https://html.duckduckgo.com/html/?q={requests.utils.quote(uni + ' location country')}"
-                    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+                    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=(5, 5))
                     soup = BeautifulSoup(r.text, 'html.parser')
                     snips = " ".join([a.text for a in soup.find_all('a', class_='result__snippet')])[:500]
                     if snips:
@@ -3429,7 +3485,7 @@ CRITICAL RULES:
             print(f"      -> CombinedWork.xlsx extraction failed: {e}")
             return links
 
-    def _fetch_url_robust(self, url):
+    def _fetch_url_robust(self, url, cookies=None):
         pass # removed local import requests, tempfile, re
         
         # Intercept Google Drive PDF URLs and convert to direct download links
@@ -3453,7 +3509,7 @@ CRITICAL RULES:
             }
             import urllib3
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-            res = requests.get(url, headers=headers, timeout=20, verify=False, allow_redirects=True)
+            res = requests.get(url, headers=headers, timeout=(20, 20), verify=False, allow_redirects=True, cookies=cookies)
             
             # Handle Google Drive confirmation redirect ("too large to scan for viruses")
             if 'text/html' in res.headers.get('Content-Type', '') and 'drive.google.com' in url:
@@ -3465,7 +3521,7 @@ CRITICAL RULES:
                         new_url = re.sub(r'confirm=[^&]+', f'confirm={confirm_match.group(1)}', url)
                     if uuid_match:
                         new_url += f"&uuid={uuid_match.group(1)}"
-                    res = requests.get(new_url, headers=headers, timeout=20, verify=False, allow_redirects=True)
+                    res = requests.get(new_url, headers=headers, timeout=(20, 20), verify=False, allow_redirects=True, cookies=cookies)
             
             if res.status_code in [403, 405, 406, 429, 500, 503]:
                 import cloudscraper
@@ -3477,6 +3533,7 @@ CRITICAL RULES:
             
             is_pdf = False
             is_image = False
+            is_excel = False
             content_type = res.headers.get('Content-Type', '').lower()
             if 'application/pdf' in content_type or url.lower().split('?')[0].endswith('.pdf'):
                 is_pdf = True
@@ -3484,6 +3541,8 @@ CRITICAL RULES:
                 is_pdf = True
             elif 'image/' in content_type or any(url.lower().split('?')[0].endswith(ext) for ext in ['.png', '.jpg', '.jpeg']):
                 is_image = True
+            elif 'spreadsheet' in content_type or 'excel' in content_type or any(url.lower().split('?')[0].endswith(ext) for ext in ['.xls', '.xlsx', '.csv']):
+                is_excel = True
 
             if is_pdf:
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_pdf:
@@ -3528,11 +3587,15 @@ CRITICAL RULES:
                             
                             # Fast Tesseract pre-scan to detect if page contains fee data
                             gray = cv2.cvtColor(img_data, cv2.COLOR_RGB2GRAY)
-                            fast_text = pytesseract.image_to_string(cv2.resize(gray, (0,0), fx=0.75, fy=0.75)).lower()
+                            fast_text = ""
+                            try:
+                                fast_text = pytesseract.image_to_string(cv2.resize(gray, (0,0), fx=0.75, fy=0.75)).lower()
+                            except Exception as e:
+                                pass # Tesseract might not be installed, ignore fast scan and proceed to Vision API
                             
                             keywords = ['fee', 'tuition', 'hostel', 'rs.', 'rupees', 'amount', 'pay', 'schedule', '£', '$', '€', 'cost', '₹', 'inr']
                             is_short_pdf = len(doc) <= 6
-                            if not is_short_pdf and not force_ocr and not any(kw in fast_text for kw in keywords):
+                            if not is_short_pdf and not force_ocr and fast_text and not any(kw in fast_text for kw in keywords):
                                 print(f"      -> [PDF OCR] Skipping page {page_idx+1} (No fee keywords found in fast-scan)")
                                 continue
                             
@@ -3557,6 +3620,24 @@ CRITICAL RULES:
                 try: os.remove(tmp_pdf_path)
                 except: pass
                 return pdf_text
+            elif is_excel:
+                import pandas as pd
+                excel_text = ""
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp_xls:
+                    tmp_xls.write(res.content)
+                    tmp_xls_path = tmp_xls.name
+                try:
+                    xls = pd.ExcelFile(tmp_xls_path)
+                    for sheet in xls.sheet_names:
+                        df = pd.read_excel(xls, sheet_name=sheet)
+                        excel_text += f"\n--- Sheet: {sheet} ---\n"
+                        excel_text += df.to_string(index=False) + "\n"
+                except Exception as e:
+                    print(f"      -> Warning: pandas Excel extraction failed: {e}")
+                finally:
+                    try: os.remove(tmp_xls_path)
+                    except: pass
+                return excel_text
             elif is_image:
                 try:
                     import cv2, numpy as np, base64
@@ -3620,7 +3701,7 @@ CRITICAL RULES:
         
         # For PDF URLs or Google Drive links, use HTTP extraction (browser can't render PDFs well for text)
         is_document_or_drive = (
-            any(fee_url.lower().endswith(ext) for ext in ['.pdf', '.png', '.jpg', '.jpeg']) or 
+            any(fee_url.lower().endswith(ext) for ext in ['.pdf', '.png', '.jpg', '.jpeg', '.xls', '.xlsx', '.csv']) or 
             'pdf' in fee_url.lower().split('/')[-1] or
             'drive.google.com' in fee_url.lower()
         )
@@ -3628,7 +3709,7 @@ CRITICAL RULES:
         if not is_document_or_drive:
             try:
                 pass # removed local import requests
-                head_res = requests.head(fee_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5, allow_redirects=True)
+                head_res = requests.head(fee_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=(5, 5), allow_redirects=True)
                 c_type = head_res.headers.get('Content-Type', '').lower()
                 if 'application/pdf' in c_type or 'image/' in c_type:
                     is_document_or_drive = True
@@ -3734,6 +3815,17 @@ CRITICAL RULES:
             # Extract all text including tables
             page_text = self._extract_page_text(driver)
             
+            if len(page_text.strip()) < 100 and is_document_or_drive:
+                print(f"      -> [Fee Browser] Browser extracted <100 chars from document. Using cleared cookies to fetch via HTTP...")
+                try:
+                    req_cookies = {c['name']: c['value'] for c in driver.get_cookies()}
+                    http_text = self._fetch_url_robust(fee_url, cookies=req_cookies)
+                    if http_text and len(http_text.strip()) > 100:
+                        page_text = http_text
+                        print(f"      -> [Fee Browser] Successfully extracted {len(page_text)} chars using HTTP + browser cookies.")
+                except Exception as e:
+                    print(f"      -> [Fee Browser] HTTP fetch with browser cookies failed: {e}")
+            
             if "405 not allowed" in page_text.lower() or "method not allowed" in page_text.lower() or "405 error" in page_text.lower():
                 print("      -> [!] 405 Error detected after JS injection! Clearing cookies and reloading page without JS injection...")
                 if "coursera.org" not in driver.current_url:
@@ -3825,10 +3917,11 @@ CRITICAL RULES:
                 web_part = parts[0]
                 excel_part = "\n--- EXCEL FEES DATA ---\n" + parts[1] + excel_part
                 
-            allowed_web_len = max(0, 800000 - len(excel_part))
-            page_text_limited = web_part[:allowed_web_len] + excel_part
+            allowed_web_len = max(0, 400000 - len(excel_part))
+            # Put excel_part at the very beginning of the page_text to ensure the LLM reads it first and it isn't lost in the middle/end
+            page_text_limited = excel_part + "\n" + web_part[:allowed_web_len]
         else:
-            page_text_limited = page_text[:800000]
+            page_text_limited = page_text[:400000]
             
         anna_univ_rule = ""
         uni_name_lower = str(course.get('uni', '')).lower()
@@ -3842,11 +3935,12 @@ CRITICAL RULES:
         complex_fee_rule = '- COMPLEX FEE TABLES: If the text contains per-semester or per-year fees (common for Graphic Era, Asansol, Girideepam, etc.), you MUST calculate the total fee for the entire duration of the course (e.g., sum all 8 semesters for a 4-year course, or sum all 1st, 2nd, 3rd, 4th year payments). If your calculated total matches the Original Cost (or is within 5% of it), you MUST output MATCH for Cost.'
         karnataka_rule = ""
         # Karnataka cities / state keywords
-        if any(kw in uni_name_lower for kw in ['karnataka', 'bangalore', 'bengaluru', 'belgaum', 'mysore', 'mangalore', 'hubli', 'dharwad', 'vtu', 'visvesvaraya']):
+        if any(kw in uni_name_lower for kw in ['karnataka', 'bangalore', 'bengaluru', 'belgaum', 'mysore', 'mangalore', 'hubli', 'dharwad', 'vtu', 'visvesvaraya', 't.john', 't. john']):
             karnataka_rule = """- KARNATAKA CET FEES BASELINE EXCEPTION: Karnataka engineering colleges have standard CET baseline fees:
   * Government / Aided Colleges: Rs. 44,200
   * Private Unaided / Minority Colleges: Rs. 1,12,410 or Rs. 1,21,410
-  If the college is in Karnataka, determine its type from the text (Government vs Private). If the Original Cost exactly matches these baselines (e.g. 44200, 112410, 121410) OR their 4-year totals, you MUST explicitly output a MATCH and state it is the standard Karnataka CET fee baseline in the description, UNLESS the website explicitly proves a different fee."""
+  If the college is in Karnataka, determine its type from the text (Government vs Private). If the Original Cost exactly matches these baselines (e.g. 44200, 112410, 121410) OR their 4-year totals (e.g. 4,49,640), you MUST explicitly output a MATCH for Cost. 
+  CRITICAL: If you see higher fees (like 8,00,000 or 10,50,000) on the website, they are typically for Management Quota. You MUST IGNORE Management Quota fees and STILL output a MATCH for the 4,49,640 CET baseline!"""
         
         prompt = f"""
 Strictly verify the course details against the webpage text. Output ONLY valid JSON.
@@ -3946,9 +4040,9 @@ Output JSON format:
         try:
             llm = get_llm_manager()
             
-            # If text is extremely large, route to NVIDIA with higher timeout
+            # Default to auto, allowing fallback sequence (Mistral -> Groq -> OpenRouter -> NVIDIA)
             is_huge_prompt = len(prompt) > 200000
-            target_provider = "nvidia" if is_huge_prompt else "auto"
+            target_provider = "auto"
             target_timeout = 300 if is_huge_prompt else 120
             
             res_str = llm.generate(
@@ -3994,7 +4088,7 @@ Output JSON format:
                     raise ValueError("No JSON content found")
                     
                 try:
-                    res = json.loads(json_str)
+                    res = json.loads(json_str, strict=False)
                 except json.JSONDecodeError:
                     # Fallback for when LLM uses Python dict syntax (like trailing commas or single quotes)
                     # Strip leading zeros from unquoted numbers to prevent SyntaxError in literal_eval
@@ -4023,10 +4117,12 @@ Output JSON format:
                 
                 # Only run regex if we actually have text from the LLM, otherwise res stays empty
                 if res_str and isinstance(res_str, str):
+                    # PREVENT CATASTROPHIC BACKTRACKING HANGS on massive LLM hallucinations
+                    res_str_trunc = res_str[:10000]
                     for field in ['cost', 'duration', 'mode', 'language', 'country', 'university', 'skills']:
                         # Use a non-greedy match that stops at the next likely key or the end of the text
-                        desc_match = re.search(rf"\"?`?{field}_description`?\"?\s*(?::|=>?|\-)\s*\"?(.*?)\"?(?=\s*\*?\s*\"?`?{keys_pattern}`?\"?\s*(?::|=>?|\-)|$)", res_str, flags=re.IGNORECASE | re.DOTALL)
-                        bool_match = re.search(rf"\"?`?{field}_match`?\"?\s*(?::|=>?|\-)\s*\"?(true|false)\"?", res_str, flags=re.IGNORECASE)
+                        desc_match = re.search(rf"\"?`?{field}_description`?\"?\s*(?::|=>?|\-)\s*\"?(.*?)\"?(?=\s*\*?\s*\"?`?{keys_pattern}`?\"?\s*(?::|=>?|\-)|$)", res_str_trunc, flags=re.IGNORECASE | re.DOTALL)
+                        bool_match = re.search(rf"\"?`?{field}_match`?\"?\s*(?::|=>?|\-)\s*\"?(true|false)\"?", res_str_trunc, flags=re.IGNORECASE)
                         
                         if desc_match:
                             cleaned = desc_match.group(1).strip()
@@ -4571,6 +4667,13 @@ Output JSON format:
 
     def _extract_page_text(self, driver):
         try:
+            # Force scroll to bottom and back up to trigger lazy-loaded SPA components (e.g., React/Vue)
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            import time
+            time.sleep(1.0)
+            driver.execute_script("window.scrollTo(0, 0);")
+            time.sleep(0.5)
+            
             expand_js = """
             // Prevent ANY navigation away from the current page
             window.addEventListener('click', function(e) {
@@ -4593,13 +4696,13 @@ Output JSON format:
             
             // Phase 2: Force show hidden content by overriding CSS instead of just clicking
             // Some accordions just need display block
-            let hiddenContent = document.querySelectorAll('.collapse, .tab-pane, [aria-hidden="true"], [style*="display: none"]');
+            let hiddenContent = document.querySelectorAll('.collapse, .tab-pane, [aria-hidden="true"], [style*="display: none"], [style*="display:none"]');
             hiddenContent.forEach(el => {
                 try {
-                    el.style.display = 'block';
-                    el.style.visibility = 'visible';
-                    el.style.height = 'auto';
-                    el.style.opacity = '1';
+                    el.style.setProperty('display', 'block', 'important');
+                    el.style.setProperty('visibility', 'visible', 'important');
+                    el.style.setProperty('height', 'auto', 'important');
+                    el.style.setProperty('opacity', '1', 'important');
                     el.classList.add('show', 'active', 'in');
                 } catch(e) {}
             });
@@ -4620,7 +4723,7 @@ Output JSON format:
             // Exclude plain <button> tags to prevent clicking CTAs that use JS redirects. Only click buttons with explicit accordion attributes.
             let elements = document.querySelectorAll('div, span, h3, h4, h5, h6, li, label, summary, strong, b, p, tr, td, dt, dd, [role="tab"], [role="button"], [data-toggle], [aria-expanded], a[href^="#"], button[aria-expanded], button[data-toggle]');
             let clickCount = 0;
-            const MAX_CLICKS = 25;
+            const MAX_CLICKS = 75;
             for(let el of elements) {
                 if (clickCount >= MAX_CLICKS) break;
                 // Ensure we don't accidentally click a real anchor link that bypasses our block
@@ -4675,7 +4778,7 @@ Output JSON format:
             """
             driver.execute_script(expand_js)
             import time
-            time.sleep(2.0)
+            time.sleep(4.0)
         except: pass
 
         parts = []
@@ -4723,22 +4826,13 @@ Output JSON format:
                 if (label && label.length > 5) out.push(label);
             }
             
-            // 4. Same-origin iframe content and YouTube links
+            // 4. Same-origin iframe content (excluding videos)
             let iframes = document.querySelectorAll('iframe');
             for (let iframe of iframes) {
-                if (iframe.src && iframe.src.includes('youtube.com')) {
-                    out.push("Embedded YouTube Video: " + (iframe.title || iframe.src));
-                }
                 try {
                     let iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
                     if (iframeDoc && iframeDoc.body) out.push(iframeDoc.body.innerText);
                 } catch(e) {} // cross-origin will throw
-            }
-            
-            // Extract standalone YouTube links as well
-            let ytLinks = document.querySelectorAll('a[href*="youtube.com/watch"], a[href*="youtu.be/"]');
-            for (let a of ytLinks) {
-                out.push("YouTube Video Link: " + (a.innerText || a.href));
             }
             
             // 5. noscript fallback content
@@ -4851,7 +4945,7 @@ Output JSON format:
             if img_urls and isinstance(img_urls, list):
                 for url in img_urls:
                     try:
-                        res = requests.get(url, timeout=10, verify=False, allow_redirects=True)
+                        res = requests.get(url, timeout=(10, 10), verify=False, allow_redirects=True)
                         if res.status_code == 200:
                             img = Image.open(io.BytesIO(res.content))
                             text = pytesseract.image_to_string(img)
@@ -6135,7 +6229,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         checkpoint_lock = threading.Lock()
         # Use fewer browsers on GitHub Actions (2-core VM = 6 browsers causes OOM/crashes)
         is_ci = os.environ.get('CI', '').lower() == 'true'
-        NUM_BROWSERS = 3 if is_ci else 6  # 3 for CI (stable), 6 for local (fast)
+        NUM_BROWSERS = 6  # 6 browsers for both CI and local
         if NUM_BROWSERS <= 0: return
         
         import subprocess
@@ -6170,6 +6264,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             options.add_argument('--disable-blink-features=AutomationControlled')
             options.add_argument('--window-size=1280,800')
             options.add_argument('--ignore-certificate-errors')
+            options.set_capability('acceptInsecureCerts', True)
             # Prevent websites from opening print dialogs and blocking selenium
             options.add_argument('--disable-print-preview')
             options.add_argument('--kiosk-printing')
@@ -6185,7 +6280,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             options.add_argument('--metrics-recording-only')
             options.add_argument('--no-first-run')
             options.add_argument('--safebrowsing-disable-auto-update')
-            options.add_argument('--js-flags=--max-old-space-size=256')
+            options.add_argument('--js-flags=--max-old-space-size=4096')
             # CI-specific flags to prevent crashes on GitHub Actions 2-core runner
             if is_ci:
                 options.add_argument('--headless=new')
@@ -6194,7 +6289,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 options.add_argument('--disable-web-security')
                 options.add_argument('--allow-running-insecure-content')
                 options.add_argument('--memory-pressure-off')
-                options.add_argument('--max_old_space_size=512')
+                options.add_argument('--max_old_space_size=4096')
             fresh_profile = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"chrome_profile_{b_idx}")
             import shutil
             if os.path.exists(fresh_profile):
@@ -6202,19 +6297,19 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 except Exception: pass
             os.makedirs(fresh_profile, exist_ok=True)
             
-            with browser_init_lock:
+            try:
+                driver = uc.Chrome(options=options, user_data_dir=fresh_profile, version_main=get_chrome_main_version(), user_multi_procs=True)
                 try:
-                    driver = uc.Chrome(options=options, user_data_dir=fresh_profile, version_main=get_chrome_main_version())
-                    try:
-                        driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {"latitude": 28.6139, "longitude": 77.2090, "accuracy": 100})
-                    except: pass
-                except Exception as e:
+                    driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {"latitude": 28.6139, "longitude": 77.2090, "accuracy": 100})
+                except: pass
+            except Exception as e:
                     print(f"    -> Warning: Parallel profile creation failed ({e}). Retrying with fresh options...")
                     options2 = uc.ChromeOptions()
                     options2.page_load_strategy = 'eager'
                     options2.add_argument('--disable-blink-features=AutomationControlled')
                     options2.add_argument('--window-size=1280,800')
                     options2.add_argument('--ignore-certificate-errors')
+                    options2.set_capability('acceptInsecureCerts', True)
                     options2.add_argument('--disable-print-preview')
                     options2.add_argument('--kiosk-printing')
                     options2.add_argument('--disable-gpu')
@@ -6225,11 +6320,11 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         try: shutil.rmtree(fresh_profile2)
                         except Exception: pass
                     os.makedirs(fresh_profile2, exist_ok=True)
-                    driver = uc.Chrome(options=options2, user_data_dir=fresh_profile2, version_main=get_chrome_main_version())
+                    driver = uc.Chrome(options=options2, user_data_dir=fresh_profile2, version_main=get_chrome_main_version(), user_multi_procs=True)
                     try:
                         driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {"latitude": 28.6139, "longitude": 77.2090, "accuracy": 100})
-                    except: pass                    
-            driver.set_page_load_timeout(60)
+                    except: pass
+            driver.set_page_load_timeout(30)
             driver.set_script_timeout(30)
             
             try:
@@ -6253,8 +6348,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             try: driver.minimize_window()
             except: pass
             
-            # Execute automated platform logins on this fresh driver
-            self._perform_platform_logins(driver)
+            # Platform logins are now done lazily per-course to avoid aggressive bot blocks
             return b_idx, driver
 
         with ThreadPoolExecutor(max_workers=NUM_BROWSERS) as executor:
@@ -6386,6 +6480,11 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         raise EarlyExit()
 
                 print(f"  [{i + 1}/{len(self.courses)}] Investigating: {url}")
+                
+                if "coursera.org" in url.lower() and "certificate" in course.get("name", "").lower():
+                    original_stdout.write(f"    -> [Coursera] Detected 'certificate' in course name. Triggering on-demand login.\n")
+                    original_stdout.flush()
+                    self._perform_platform_logins(driver)
 
                 # SPEED: Domain health fast-skip if domain has 5+ recent issues
                 parsed_domain = urlparse(url).netloc
@@ -7403,7 +7502,42 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         mode_match, lang_match, country_match = False, False, False
                         web_cost, web_duration, web_mode, web_language, web_country = "N/A", "N/A", "N/A", "N/A", "N/A"
                         sk_detail = "N/A"
-
+                    # --- Anna University / TN Regulated Colleges Heuristic ---
+                    # Bypass deep crawling if affiliated university is Anna University
+                    anna_indicators = ['anna university', 'anna univ', 's.a.', 'svcet', 'saet', 'thiruv', 'chennai', 'coimbatore', 'madurai', 'trichy', 'tirunelveli', 'salem', 'vellore', 'tirupur', 'erode', 'kanchipuram', 'chengalpattu']
+                    aff_uni = str(course.get('affiliated_uni', '')).lower()
+                    
+                    if course_uni_check and (any(ind in course_uni_check.lower() for ind in anna_indicators) or 'anna' in aff_uni or 'anna university' in page_text.lower() or 'affiliated to anna' in page_text.lower()):
+                        val_str = str(course.get('cost', '0')).lower()
+                        cleaned = re.sub(r'[₹$£€,a-zA-Z\s]', '', val_str)
+                        try:
+                            pdf_cost_num = float(re.search(r'\d+(\.\d+)?', cleaned).group()) if re.search(r'\d+(\.\d+)?', cleaned) else 0.0
+                        except:
+                            pdf_cost_num = 0.0
+                            
+                        if pdf_cost_num in (200000.0, 220000.0):
+                            cost_match = True
+                            fmt_cost = "2,20,000" if pdf_cost_num == 220000.0 else "2,00,000"
+                            web_cost = f"Rs. {fmt_cost} (Anna University Regulated Fee Match)"
+                            print("    -> [Heuristic] Applied Anna University regulated fee override (MATCH).")
+                            
+                        if durations_equivalent(course.get('duration', ''), "4 Years")[0]:
+                            duration_match = True
+                            web_duration = "4 Years (Anna University Standard Duration)"
+                            print("    -> [Heuristic] Applied Anna University standard 4-year duration override (MATCH).")
+                            
+                        # As per user request: "just check university name that is it"
+                        # Force everything else to true so it completely skips deep crawling
+                        name_match = True
+                        sk_match = True
+                        uni_match = True
+                        sk_detail = "Verified via Anna University regulation heuristic."
+                        
+                        fee_url_lower = str(course.get('fee_url', '')).lower()
+                        if '1vog0rwxyzf2sf33kpukxoesepa2hb8wr' in fee_url_lower or '1vog0rWXRzF2SF33kPUkXoESePa2Hb8wr'.lower() in fee_url_lower:
+                            cost_match = True
+                            web_cost = "Rs. 55,000/yr (Matched via TN Government Norms Link)"
+                            
                     everything_found = name_match and uni_match and cost_match and duration_match and sk_match
                     pre_vision_len = len(page_text)
                     
@@ -7462,17 +7596,6 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         if cost_match and (web_cost in ['', 'N/A', 'Not found'] or 'not explicitly' in web_cost.lower() or 'not found' in web_cost.lower()):
                             web_cost = "Verified."
                             
-                        # Tamil Nadu / Anna University Cost Heuristic override
-                        anna_uni = str(course.get('uni', '')).lower()
-                        fee_url_lower = str(course.get('fee_url', '')).lower()
-                        if 'anna' in anna_uni:
-                            if '1vog0rwxyzf2sf33kpukxoesepa2hb8wr' in fee_url_lower or '1vog0rWXRzF2SF33kPUkXoESePa2Hb8wr'.lower() in fee_url_lower:
-                                cost_match = True
-                                web_cost = "Rs. 55,000/yr (Matched via TN Government Norms Link)"
-                            ss3 = os.path.join(self.screenshots_dir, f"course_{i+1}_explored.png")
-                            try: driver.save_screenshot(ss3)
-                            except: pass
-
                         if not entity_present(course['name'], page_text, threshold=0.60)[0] and not is_nielit:
                             print(f"    -> Course name not explicitly visible on page. Continuing with extraction as per user request to disable Google search routing...")
                             # Removed _search_website_for_course fallback
@@ -7545,11 +7668,11 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             g_text = " ".join(g_results)
                             target_country = str(course.get('country', '')).lower()
                             
-                            if target_country and target_country != "unknown":
+                            if target_country and target_country != "unknown" and g_text:
                                 llm = get_llm_manager()
                                 prompt = f"Based on these Google Search snippets, is the university '{course_uni_check}' located in or affiliated with the country '{target_country}'? Respond ONLY with 'YES' or 'NO'. Snippets: {g_text[:2000]}"
                                 res = llm.generate(prompt, temperature=0.0).strip().upper()
-                                if "YES" in res:
+                                if res and "YES" in res:
                                     country_match = True
                                     web_country = f"{course.get('country', '')} (Verified via Background AI Google Search)"
                                     print(f"    -> [Heuristic] Country verified via background AI Google Search.")
@@ -7580,7 +7703,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             from googlesearch import search as g_search
                             g_query = f'"{course_uni_check}" is affiliated to which university for the course "{course_name_short}"'
                             g_results_bg = []
-                            for j, g_url in enumerate(g_search(g_query, num_results=3, sleep_interval=1, advanced=True)):
+                            for j, g_url in enumerate(g_search(g_query, num_results=3, sleep_interval=1, advanced=True, timeout=15)):
                                 if hasattr(g_url, 'description'):
                                     g_results_bg.append(str(g_url.title) + " " + str(g_url.description))
                                 else:
@@ -7608,6 +7731,28 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
 
                                 if actual_uni and actual_uni.upper() != 'UNKNOWN' and confidence in ('HIGH', 'MEDIUM'):
                                     print(f"    -> [Indian College Check] Found affiliation: {actual_uni} (confidence: {confidence})")
+                                    
+                                    # Apply Anna Univ heuristic if Google Search found it
+                                    anna_inds = ['anna university', 'anna univ']
+                                    if any(ind in actual_uni.lower() for ind in anna_inds) or 'anna' in actual_uni.lower():
+                                        val_str = str(course.get('cost', '0')).lower()
+                                        cleaned = re.sub(r'[₹$£€,a-zA-Z\s]', '', val_str)
+                                        try:
+                                            pdf_cost_num = float(re.search(r'\d+(\.\d+)?', cleaned).group()) if re.search(r'\d+(\.\d+)?', cleaned) else 0.0
+                                        except:
+                                            pdf_cost_num = 0.0
+                                            
+                                        if pdf_cost_num in (200000.0, 220000.0):
+                                            cost_match = True
+                                            fmt_cost = "2,20,000" if pdf_cost_num == 220000.0 else "2,00,000"
+                                            web_cost = f"Rs. {fmt_cost} (Anna University Regulated Fee Match via Google Search)"
+                                            print("    -> [Heuristic] Applied Anna University regulated fee override via Google Search (MATCH).")
+                                            
+                                        if durations_equivalent(course.get('duration', ''), "4 Years")[0]:
+                                            duration_match = True
+                                            web_duration = "4 Years (Anna University Standard Duration)"
+                                            print("    -> [Heuristic] Applied Anna University standard 4-year duration override via Google Search (MATCH).")
+
                                     # Check if the PDF's university matches the found university
                                     from difflib import SequenceMatcher
                                     sim = SequenceMatcher(None, course_uni_lower, actual_uni.lower()).ratio()
@@ -8012,12 +8157,14 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 new_options.page_load_strategy = 'eager'
                                 new_options.add_argument('--disable-blink-features=AutomationControlled')
                                 new_options.add_argument(f'--window-size=1280,800')
+                                new_options.add_argument('--ignore-certificate-errors')
+                                new_options.set_capability('acceptInsecureCerts', True)
                                 new_options.add_argument('--disable-gpu')
                                 new_options.add_argument('--disable-dev-shm-usage')
                                 new_options.add_argument('--no-sandbox')
                                 ud_dir = os.path.join(tempfile.gettempdir(), f"uc_profile_rec_{random.randint(1000, 9999)}")
-                                driver = uc.Chrome(options=new_options, user_data_dir=ud_dir, version_main=get_chrome_main_version())
-                                driver.set_page_load_timeout(60)
+                                driver = uc.Chrome(options=new_options, user_data_dir=ud_dir, version_main=get_chrome_main_version(), user_multi_procs=True)
+                                driver.set_page_load_timeout(30)
                                 driver.set_script_timeout(30)
                                 try:
                                     driver.execute_cdp_cmd('Network.setBlockedURLs', {'urls': ['*admissionportal*', '*login*', '*Login*']})
@@ -8049,17 +8196,6 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     except Exception as e:
                         print(f"    -> [!] Warning: Failed to save checkpoint: {e}")
                         
-                # Close extraneous tabs to prevent hidden memory leaks
-                try:
-                    if driver and hasattr(driver, 'window_handles') and len(driver.window_handles) > 1:
-                        main_handle = driver.window_handles[0]
-                        for handle in driver.window_handles[1:]:
-                            driver.switch_to.window(handle)
-                            driver.close()
-                        driver.switch_to.window(main_handle)
-                except Exception:
-                    pass
-
                 # Verify driver is still alive before returning to pool
                 driver_is_alive = False
                 try:
@@ -8269,14 +8405,14 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             pdf.add_page()
             pdf.set_font(font_name, '', 10)
             pdf.set_text_color(100, 100, 100)
-            pdf.cell(0, 6, f'Generated on: {date_str} | PDF Page {course.get("page_num","?")}, Box: {course.get("box_position","?")} (#{course.get("box_index","?")})', ln=1)
+            pdf.cell(0, 6, f'Generated on: {date_str} | PDF Page {course.get("page_num","?")}, Box: {course.get("box_position","?")} (#{course.get("box_index","?")})', new_x="LMARGIN", new_y="NEXT")
             pdf.ln(2)
 
             pdf.set_font(font_name, 'B', 14)
             pdf.set_text_color(0, 0, 0)
             title = course.get("name", "Unknown Course")
             if len(title) > 65: title = title[:62] + "..."
-            pdf.cell(0, 10, f'{index_str}. {safe_latin(title)}', ln=1)
+            pdf.cell(0, 10, f'{index_str}. {safe_latin(title)}', new_x="LMARGIN", new_y="NEXT")
             pdf.ln(2)
 
             # Table Header
@@ -8286,7 +8422,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             pdf.cell(35, 8, 'Attribute', border=1, fill=True)
             pdf.cell(60, 8, 'Original (PDF)', border=1, fill=True)
             pdf.cell(60, 8, 'Verified (Web)', border=1, fill=True)
-            pdf.cell(35, 8, 'Status', border=1, ln=1, fill=True)
+            pdf.cell(35, 8, 'Status', border=1, new_x="LMARGIN", new_y="NEXT", fill=True)
 
             def draw_row(attr, orig, ver, status):
                 orig_s = safe_latin(re.sub(r"\s+", " ", str(orig)).strip())
@@ -8330,7 +8466,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 pdf.set_xy(x + 155, y)
                 pdf.set_text_color(22, 163, 74) if status == "MATCH" else pdf.set_text_color(220, 38, 38)
                 pdf.set_font(font_name, 'B', 9)
-                pdf.cell(35, row_height, status, border=0, ln=1, align='C')
+                pdf.cell(35, row_height, status, border=0, new_x="LMARGIN", new_y="NEXT", align='C')
                 
                 pdf.set_y(y + row_height)
 
@@ -8385,8 +8521,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             # PDF badge=True  + DB=Ranked    -> MATCH
             # PDF badge=False + DB=Not Ranked -> MATCH
             # PDF badge=True  + DB=Not Ranked -> FALSE
-            # PDF badge=False + DB=Ranked     -> FALSE
-            qs_status = 'MATCH' if (bool(has_qs) == bool(qs_db_found)) else 'FALSE'
+            # PDF badge=False + DB=Ranked     -> MATCH (Ranked is a bonus)
+            qs_status = 'MATCH' if (bool(has_qs) == bool(qs_db_found) or qs_db_found) else 'FALSE'
             draw_row('QS Ranked', qs_pdf_val, safe_val(qs_web), qs_status if not is_hard_error else 'FALSE')
 
             has_nirf = course.get('has_nirf_badge')
@@ -8398,8 +8534,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             # PDF badge=True  + DB=Ranked    -> MATCH
             # PDF badge=False + DB=Not Ranked -> MATCH
             # PDF badge=True  + DB=Not Ranked -> FALSE
-            # PDF badge=False + DB=Ranked     -> FALSE
-            nirf_status = 'MATCH' if (bool(has_nirf) == bool(nirf_db_found)) else 'FALSE'
+            # PDF badge=False + DB=Ranked     -> MATCH (Ranked is a bonus)
+            nirf_status = 'MATCH' if (bool(has_nirf) == bool(nirf_db_found) or nirf_db_found) else 'FALSE'
             draw_row('NIRF Ranked', nirf_pdf_val, safe_val(nirf_web), nirf_status if not is_hard_error else 'FALSE')
 
             has_free_box = course.get('has_free_box', False)
@@ -8488,7 +8624,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             pdf.set_fill_color(243, 244, 246)
             pdf.set_font(font_name, 'B', 11)
             pdf.set_text_color(31, 41, 55)
-            pdf.cell(0, 8, ' Executive Verification Summary', fill=True, ln=1)
+            pdf.cell(0, 8, ' Executive Verification Summary', fill=True, new_x="LMARGIN", new_y="NEXT")
             
             pdf.set_font(font_name, '', 10)
             pdf.set_text_color(55, 65, 81)

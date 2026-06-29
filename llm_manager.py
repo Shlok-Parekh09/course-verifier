@@ -80,14 +80,6 @@ class LLMManager:
         if num_keys == 0: return []
         return [worker_id % num_keys]
 
-<<<<<<< HEAD
-    def generate(self, prompt: str, system: Optional[str] = None, format: str = "text", temperature: float = 0.0, provider: str = "auto", worker_id: int = None, model_name: str = None) -> Optional[str]:
-        # Text Generation: NVIDIA -> Mistral -> Gemini -> OpenRouter
-
-        if worker_id is not None:
-            # DEDICATED KEY LOGIC for Multithreading
-            # Chain: NVIDIA -> Mistral -> Gemini -> OpenRouter (with keys per provider)
-=======
     def generate(self, prompt: str, system: Optional[str] = None, format: str = "text", temperature: float = 0.0, provider: str = "auto", worker_id: int = None, model_name: str = None, timeout: int = 120) -> Optional[str]:
         # Text Generation: Mistral -> Groq -> OpenRouter -> NVIDIA
 
@@ -104,7 +96,6 @@ class LLMManager:
                     res = self._call_mistral(m_key, prompt, system, format, 0.0)
                     if res: return res
                 print(f"      -> [LLM Manager] Worker {worker_id+1}'s Mistral keys failed. Failing over to Groq...")
->>>>>>> 6268b25219523f4442914f1c05fe005e564f9265
 
             if self.groq_keys and provider in ["auto", "groq"]:
                 for idx in self._get_key_sequence(worker_id, len(self.groq_keys)):
@@ -114,31 +105,7 @@ class LLMManager:
                     self._rate_limit(key_id, min_interval=4.0)
                     res = self._call_groq(g_key, prompt, system, format, 0.0)
                     if res: return res
-<<<<<<< HEAD
-                print(f"      -> [LLM Manager] Worker {worker_id+1}'s NVIDIA keys failed. Failing over to Mistral...")
-
-            if self.mistral_keys and provider in ["auto", "mistral"]:
-                for idx in self._get_key_sequence(worker_id, len(self.mistral_keys)):
-                    m_key = self.mistral_keys[idx]
-                    key_id = f"mistral_text_{idx}"
-                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying Mistral Key {idx+1}...")
-                    self._rate_limit(key_id, min_interval=1.0)
-                    res = self._call_mistral(m_key, prompt, system, format, 0.0)
-                    if res: return res
-                print(f"      -> [LLM Manager] Worker {worker_id+1}'s Mistral keys failed. Failing over to Gemini...")
-
-            if self.gemini_keys and provider in ["auto", "gemini"]:
-                for idx in self._get_key_sequence(worker_id, len(self.gemini_keys)):
-                    g_key = self.gemini_keys[idx]
-                    key_id = f"gemini_{idx}"
-                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying Gemini Key {idx+1}...")
-                    self._rate_limit(key_id)
-                    res = self._call_gemini(g_key, prompt, system, format, 0.0, model_name=model_name)
-                    if res: return res
-                print(f"      -> [LLM Manager] Worker {worker_id+1}'s Gemini keys failed. Failing over to OpenRouter...")
-=======
                 print(f"      -> [LLM Manager] Worker {worker_id+1}'s Groq keys failed. Failing over to OpenRouter...")
->>>>>>> 6268b25219523f4442914f1c05fe005e564f9265
 
             if self.openrouter_keys and provider in ["auto", "openrouter"]:
                 for idx in self._get_key_sequence(worker_id, len(self.openrouter_keys)):
@@ -165,14 +132,6 @@ class LLMManager:
             return None
 
         # FALLBACK SEQUENTIAL LOGIC (If worker_id is not provided)
-<<<<<<< HEAD
-        # Provider 0: NVIDIA
-        if provider in ["auto", "nvidia"]:
-            for idx, key in enumerate(self.nvidia_keys):
-                print(f"      -> [LLM Manager] Trying NVIDIA Key {idx+1}/{len(self.nvidia_keys)} (Nemotron Super)...")
-                self._rate_limit(f"nvidia_{idx}", min_interval=1.0)
-                result = self._call_nvidia(key, prompt, system, format, 0.0)
-=======
         # Provider 0: MISTRAL
         if provider in ["auto", "mistral"]:
             for idx, key in enumerate(self.mistral_keys):
@@ -188,33 +147,10 @@ class LLMManager:
                 print(f"      -> [LLM Manager] Trying Groq Key {idx+1}/{len(self.groq_keys)} (Llama 3.3 70B)...")
                 self._rate_limit(f"groq_{idx}", min_interval=4.0)
                 result = self._call_groq(key, prompt, system, format, 0.0)
->>>>>>> 6268b25219523f4442914f1c05fe005e564f9265
                 if result: return result
                 print(f"      -> [LLM Manager] Groq Key {idx+1} failed. Failing over...")
 
-<<<<<<< HEAD
-        # Provider 1: MISTRAL
-        if provider in ["auto", "mistral"]:
-            for idx, key in enumerate(self.mistral_keys):
-                print(f"      -> [LLM Manager] Trying Mistral Key {idx+1}/{len(self.mistral_keys)}...")
-                self._rate_limit(f"mistral_text_{idx}", min_interval=1.0)
-                result = self._call_mistral(key, prompt, system, format, 0.0)
-                if result: return result
-                print(f"      -> [LLM Manager] Mistral Key {idx+1} failed. Failing over...")
-
-        # Provider 2: GEMINI
-        if provider in ["auto", "gemini"]:
-            for idx, key in enumerate(self.gemini_keys):
-                print(f"      -> [LLM Manager] Trying Gemini Key {idx+1}/{len(self.gemini_keys)}...")
-                self._rate_limit(f"gemini_{idx}")
-                result = self._call_gemini(key, prompt, system, format, 0.0, model_name=model_name)
-                if result: return result
-                print(f"      -> [LLM Manager] Gemini Key {idx+1} failed. Failing over...")
-
-        # Provider 3: OPENROUTER
-=======
         # Provider 2: OPENROUTER
->>>>>>> 6268b25219523f4442914f1c05fe005e564f9265
         if provider in ["auto", "openrouter"]:
             for idx, key in enumerate(self.openrouter_keys):
                 print(f"      -> [LLM Manager] Trying OpenRouter Key {idx+1}/{len(self.openrouter_keys)}...")
@@ -233,12 +169,8 @@ class LLMManager:
                 print(f"      -> [LLM Manager] NVIDIA Key {idx+1} failed. Failing over...")
 
 
-<<<<<<< HEAD
-        print("      -> [LLM Manager] CRITICAL ERROR: All API keys for NVIDIA, Mistral, Gemini, and OpenRouter failed!")
-=======
 
         print("      -> [LLM Manager] CRITICAL ERROR: All API keys for Mistral, Groq, OpenRouter, and NVIDIA failed!")
->>>>>>> 6268b25219523f4442914f1c05fe005e564f9265
         return None
 
     def generate_with_image(self, prompt: str, base64_image: str, system: Optional[str] = None, worker_id: int = None) -> Optional[str]:
@@ -302,7 +234,7 @@ class LLMManager:
             headers = {"Content-Type": "application/json"}
             if self.ollama_api_key:
                 headers["Authorization"] = f"Bearer {self.ollama_api_key}"
-            resp = requests.post(url, json=payload, headers=headers, timeout=60)
+            resp = requests.post(url, json=payload, headers=headers, timeout=30)
             if resp.status_code == 200:
                 return resp.json().get("response")
             return None
@@ -320,7 +252,7 @@ class LLMManager:
         if format == "json": payload["response_format"] = {"type": "json_object"}
             
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=60)
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
             if resp.status_code == 200: return resp.json()["choices"][0]["message"]["content"]
             print(f"      -> [LLM Manager] OpenRouter API Error {resp.status_code}: {resp.text[:200]}")
             return None
@@ -363,7 +295,7 @@ class LLMManager:
         if format == "json": payload["generationConfig"]["responseMimeType"] = "application/json"
             
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=300)
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
             if resp.status_code == 200: return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
             print(f"      -> [LLM Manager] Gemini API Error {resp.status_code}: {resp.text}")
             return None
@@ -386,7 +318,7 @@ class LLMManager:
         if format == "json": payload["response_format"] = {"type": "json_object"}
             
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=60)
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
             print(f"      -> [LLM Manager] Groq API Error {resp.status_code}: {resp.text}")
@@ -403,14 +335,14 @@ class LLMManager:
         messages.append({"role": "user", "content": prompt})
         
         payload = {
-            "model": "Meta-Llama-3.1-70B-Instruct",
+            "model": "gemma-4-31b-it",
             "messages": messages,
             "temperature": temperature
         }
         if format == "json": payload["response_format"] = {"type": "json_object"}
             
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=60)
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
             print(f"      -> [LLM Manager] SambaNova API Error {resp.status_code}: {resp.text}")
@@ -427,14 +359,14 @@ class LLMManager:
         messages.append({"role": "user", "content": prompt})
         
         payload = {
-            "model": "mistral-large-2512",
+            "model": "mistral-large-latest",
             "messages": messages,
             "temperature": temperature
         }
         if format == "json": payload["response_format"] = {"type": "json_object"}
             
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=60)
+            resp = requests.post(url, headers=headers, json=payload, timeout=(30, 30))
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
             print(f"      -> [LLM Manager] Mistral API Error {resp.status_code}: {resp.text}")
@@ -460,7 +392,7 @@ class LLMManager:
         payload = {"contents": [{"parts": parts}], "generationConfig": {"temperature": 0.0}}
             
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=300)
+            resp = requests.post(url, headers=headers, json=payload, timeout=(60, 60))
             if resp.status_code == 200: return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
             print(f"      -> [LLM Manager] Gemini Vision Error {resp.status_code}: {resp.text}")
             return None
@@ -483,7 +415,7 @@ class LLMManager:
             "temperature": 0.0
         }
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=60)
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
             else:
@@ -507,7 +439,7 @@ class LLMManager:
             "temperature": 0.0
         }
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=60)
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
             else:
@@ -526,12 +458,12 @@ class LLMManager:
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
         ]})
         payload = {
-            "model": "Llama-3.2-90B-Vision-Instruct",
+            "model": "gemma-4-31b-it",
             "messages": messages,
             "temperature": 0.0
         }
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=60)
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
             else:
@@ -558,7 +490,7 @@ class LLMManager:
             headers = {"Content-Type": "application/json"}
             if self.ollama_api_key:
                 headers["Authorization"] = f"Bearer {self.ollama_api_key}"
-            resp = requests.post(url, json=payload, headers=headers, timeout=60)
+            resp = requests.post(url, json=payload, headers=headers, timeout=30)
             if resp.status_code == 200:
                 return resp.json().get("response")
             else:
