@@ -71,13 +71,23 @@ jobs:
           DISPLAY: ":99"
           CI: true
           VERIFIER_NO_FORCE_EXIT: true
-          MISTRAL_API_KEYS: ${{ secrets.MISTRAL_API_KEYS }}
-          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
-          GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
-          OPENROUTER_API_KEYS: ${{ secrets.OPENROUTER_API_KEYS }}
-          NVIDIA_API_KEYS: ${{ secrets.NVIDIA_API_KEYS }}
-          PUTER_API_KEYS: ${{ secrets.PUTER_API_KEYS }}
+          # ── Ollama is the ONLY LLM backend (see llm_manager.py) ──
+          # The OLLAMA_* keys come from the ENV_FILE secret written to .env in
+          # the "Load All API Keys" step above, then read via load_dotenv().
+          # llm_manager self-verifies the key on startup (sys.exit(1) on a
+          # bad/missing key), so a bad ENV_FILE fails the job fast.
+          # Ollama cloud queues requests over the plan concurrency (Pro=3).
+          # Match browsers to the LLM cap so no browser sits idle waiting on a
+          # slot. Pro → 3; Max → 10; Free → 1.
+          VERIFIER_NUM_BROWSERS: 3
+          OLLAMA_MAX_CONCURRENCY: 3
         run: |
+          # Belt-and-braces: confirm the Ollama key made it into .env before the
+          # (possibly long) run starts. llm_manager does the real auth check.
+          if ! grep -qE '^OLLAMA_API_KEY=.' .env; then
+            echo "::error::OLLAMA_API_KEY missing in .env (check the ENV_FILE secret). The verifier runs on Ollama cloud only."
+            exit 1
+          fi
           Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset &
           sleep 3
           # Run with continue-on-error so checkpoint is always saved

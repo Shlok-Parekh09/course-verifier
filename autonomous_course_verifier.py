@@ -3587,17 +3587,28 @@ CRITICAL RULES:
                             pytesseract.pytesseract.tesseract_cmd = r'C:\Users\Shlok Parekh\AppData\Local\Programs\Tesseract-OCR\tesseract.exe'
                         
                         doc = fitz.open(tmp_pdf_path)
+                        # Bound the number of vision-OCR pages per PDF. A 16-page
+                        # "Strategic Plan" / "Service Rules" PDF that merely
+                        # mentions fees would otherwise fire a slow 31B vision
+                        # call on every page. 8 pages is plenty for fee tables.
+                        try:
+                            VISION_PAGE_CAP = int(os.environ.get('VERIFIER_VISION_PAGE_CAP', '8'))
+                        except ValueError:
+                            VISION_PAGE_CAP = 8
+                        if VISION_PAGE_CAP <= 0:
+                            VISION_PAGE_CAP = 8
+                        vision_pages_sent = 0
                         for page_idx, page in enumerate(doc):
                             if page_idx > 60: break # Absolute max limit of 60 pages to prevent infinite loops
                             # Use higher resolution matrix (3,3) ~216 DPI to handle blurred/photo PDFs
                             pix = page.get_pixmap(matrix=fitz.Matrix(3, 3))
                             img_data = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
                             if pix.n == 4: img_data = cv2.cvtColor(img_data, cv2.COLOR_RGBA2RGB)
-                            
+
                             # Sharpen image using OpenCV to fix blurred or photo-clicked PDFs
                             kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
                             img_data = cv2.filter2D(img_data, -1, kernel)
-                            
+
                             # Fast Tesseract pre-scan to detect if page contains fee data
                             gray = cv2.cvtColor(img_data, cv2.COLOR_RGB2GRAY)
                             fast_text = ""
@@ -3605,24 +3616,45 @@ CRITICAL RULES:
                                 fast_text = pytesseract.image_to_string(cv2.resize(gray, (0,0), fx=0.75, fy=0.75)).lower()
                             except Exception as e:
                                 pass # Tesseract might not be installed, ignore fast scan and proceed to Vision API
-                            
+
                             keywords = ['fee', 'tuition', 'hostel', 'rs.', 'rupees', 'amount', 'pay', 'schedule', '£', '$', '€', 'cost', '₹', 'inr']
                             is_short_pdf = len(doc) <= 6
                             if not is_short_pdf and not force_ocr and fast_text and not any(kw in fast_text for kw in keywords):
                                 print(f"      -> [PDF OCR] Skipping page {page_idx+1} (No fee keywords found in fast-scan)")
                                 continue
-                            
-                            print(f"      -> [PDF OCR] Fee keywords detected! Using Vision API (Groq/Mistral/SambaNova) for perfect extraction on page {page_idx+1}...")
-                            
+
+                            # Stop firing expensive vision calls once we've
+                            # processed enough pages — remaining pages fall back
+                            # to the (free, instant) Tesseract text below.
+                            use_vision = vision_pages_sent < VISION_PAGE_CAP
+                            if use_vision:
+                                vision_pages_sent += 1
+                                print(f"      -> [PDF OCR] Fee keywords detected! Using Ollama Vision for perfect extraction on page {page_idx+1}...")
+                            else:
+                                print(f"      -> [PDF OCR] Vision page cap ({VISION_PAGE_CAP}) reached; using Tesseract for page {page_idx+1}...")
+
+                            ocr_text = None
                             try:
-                                _, buffer = cv2.imencode('.jpg', img_data)
-                                b64_img = base64.b64encode(buffer).decode('utf-8')
-                                llm = get_llm_manager()
-                                ocr_text = llm.generate_with_image("Extract all the text in this image perfectly. If there are tables, extract all rows and columns accurately, preserving all numbers and fees. Output only the exact text from the image.", b64_img)
-                                
-                                if ocr_text: pdf_text += ocr_text + "\n"
+                                if use_vision:
+                                    _, buffer = cv2.imencode('.jpg', img_data)
+                                    b64_img = base64.b64encode(buffer).decode('utf-8')
+                                    llm = get_llm_manager()
+                                    ocr_text = llm.generate_with_image("Extract all the text in this image perfectly. If there are tables, extract all rows and columns accurately, preserving all numbers and fees. Output only the exact text from the image.", b64_img)
                             except Exception as e:
                                 print(f"      -> Warning: Vision API OCR failed: {e}")
+
+                            # If vision was skipped OR failed (timeout/error),
+                            # fall back to a full-resolution Tesseract pass so the
+                            # page's text isn't lost entirely. fast_text was
+                            # downscaled; re-run at full res for accuracy.
+                            if not ocr_text or not ocr_text.strip():
+                                try:
+                                    ocr_text = pytesseract.image_to_string(gray)
+                                except Exception:
+                                    ocr_text = ""
+
+                            if ocr_text:
+                                pdf_text += ocr_text + "\n"
                                 
                     except Exception as e:
                         print(f"      -> Warning: PDF OCR failed: {e}")
@@ -3918,6 +3950,17 @@ CRITICAL RULES:
         sk_match = pre_match_skills
         sk_detail = ""
         
+        # VERIFIER_LLM_TEXT_BUDGET caps the page text fed to the LLM. Default
+        # 400000 preserves historical behavior; the token-overflow retry below
+        # re-runs with a tight 40000-char cap so oversized courses succeed (or
+        # fail fast) instead of burning pointless fallback round-trips.
+        try:
+            LLM_TEXT_BUDGET = int(os.environ.get('VERIFIER_LLM_TEXT_BUDGET', '400000'))
+        except ValueError:
+            LLM_TEXT_BUDGET = 400000
+        if LLM_TEXT_BUDGET <= 0:
+            LLM_TEXT_BUDGET = 400000
+
         if "--- EXCEL FEES DATA ---" in page_text or "--- EXCEL SYLLABUS DATA ---" in page_text:
             web_part = page_text
             excel_part = ""
@@ -3929,12 +3972,12 @@ CRITICAL RULES:
                 parts = web_part.split("--- EXCEL FEES DATA ---", 1)
                 web_part = parts[0]
                 excel_part = "\n--- EXCEL FEES DATA ---\n" + parts[1] + excel_part
-                
-            allowed_web_len = max(0, 400000 - len(excel_part))
+
+            allowed_web_len = max(0, LLM_TEXT_BUDGET - len(excel_part))
             # Put excel_part at the very beginning of the page_text to ensure the LLM reads it first and it isn't lost in the middle/end
             page_text_limited = excel_part + "\n" + web_part[:allowed_web_len]
         else:
-            page_text_limited = page_text[:400000]
+            page_text_limited = page_text[:LLM_TEXT_BUDGET]
             
         anna_univ_rule = ""
         uni_name_lower = str(course.get('uni', '')).lower()
@@ -4060,35 +4103,68 @@ Output JSON format:
             target_timeout = 120
             
             res_str = llm.generate(
-                prompt, 
-                worker_id=worker_id, 
-                format="json", 
-                provider=target_provider, 
+                prompt,
+                worker_id=worker_id,
+                format="json",
+                provider=target_provider,
                 timeout=target_timeout
             )
-            
-            # Token Exceeded Fallback to NVIDIA with 120s timeout
+
+            # Token-overflow retry: the old code "fell back" to NVIDIA then
+            # Puter, but llm_manager routes every call to the SAME Ollama backend
+            # and ignores `provider`, so those calls just re-sent the oversized
+            # prompt and returned ERROR_TOKEN_EXCEEDED again — two wasted
+            # round-trips and the course still failed. Instead, retry ONCE with a
+            # tightly truncated (40K-char) page text so the prompt fits the model's
+            # context. If it still overflows, fall through to the empty-response
+            # handler below.
             if res_str == "ERROR_TOKEN_EXCEEDED":
-                print(f"      -> [LLM Manager] Token Exceeded! Falling back to NVIDIA (Llama 70B) with 120s timeout...")
+                print(f"      -> [LLM Manager] Token exceeded on first call; retrying once with a 40000-char truncated prompt (Ollama-only)...")
+                retry_budget = 40000
+                if "--- EXCEL FEES DATA ---" in page_text or "--- EXCEL SYLLABUS DATA ---" in page_text:
+                    web_part = page_text
+                    excel_part = ""
+                    if "--- EXCEL SYLLABUS DATA ---" in web_part:
+                        p = web_part.split("--- EXCEL SYLLABUS DATA ---", 1)
+                        web_part = p[0]
+                        excel_part = "\n--- EXCEL SYLLABUS DATA ---\n" + p[1]
+                    if "--- EXCEL FEES DATA ---" in web_part:
+                        p = web_part.split("--- EXCEL FEES DATA ---", 1)
+                        web_part = p[0]
+                        excel_part = "\n--- EXCEL FEES DATA ---\n" + p[1]
+                    retry_text = excel_part + "\n" + web_part[:max(0, retry_budget - len(excel_part))]
+                else:
+                    retry_text = page_text[:retry_budget]
+                retry_prompt = f"""
+Strictly verify the course details against the webpage text. Output ONLY valid JSON.
+
+Data:
+Course: {course.get('name')}
+Cost: {course.get('cost')}
+Duration: {course.get('duration')}
+Mode: {course.get('mode')}
+Language: {course.get('language')}
+Country: {course.get('country')}
+University: {course.get('uni', 'N/A')}
+
+Text (truncated to fit context):
+{retry_text}
+
+{anna_univ_rule}
+{complex_fee_rule}
+{karnataka_rule}
+
+Output ONLY a single valid JSON object (no markdown, no explanation) with these keys:
+reasoning, found_cost, cost_description, cost_match, duration_description, duration_match, mode_description, mode_match, language_description, language_match, country_description, country_match, university_description, university_match, skills_description, skills_match.
+"""
                 res_str = llm.generate(
-                    prompt, 
-                    worker_id=worker_id, 
-                    format="json", 
-                    provider="nvidia", 
-                    timeout=120
+                    retry_prompt,
+                    worker_id=worker_id,
+                    format="json",
+                    provider=target_provider,
+                    timeout=target_timeout
                 )
-                
-            # If NVIDIA ALSO exceeds token limit (>131k), strictly fallback to Puter (Gemini 1.5 Pro)
-            if res_str == "ERROR_TOKEN_EXCEEDED":
-                print(f"      -> [LLM Manager] NVIDIA Token Limit Exceeded (>131k)! Falling back strictly to Puter...")
-                res_str = llm.generate(
-                    prompt, 
-                    worker_id=worker_id, 
-                    format="json", 
-                    provider="puter", 
-                    timeout=180
-                )
-                
+
             print(f"DEBUG LLM OUTPUT:\n{res_str}\n")
             
             try:
@@ -5970,8 +6046,17 @@ Output JSON format:
             original_url = driver.current_url.split('#')[0]
             original_window = driver.current_window_handle
 
-            # ── Agentic Loop: Observe -> Think -> Act (Max 6 rounds to avoid wasting time) ──
-            for vision_round in range(6):
+            # ── Agentic Loop: Observe -> Think -> Act ──
+            # Max rounds is configurable (default 6). Lower it (e.g. 3-4) to cut
+            # per-course LLM cost once you've confirmed accuracy holds; the loop
+            # often finishes early via the "finish" action before the cap anyway.
+            try:
+                vision_max_rounds = int(os.environ.get('VERIFIER_VISION_MAX_ROUNDS', '6'))
+            except ValueError:
+                vision_max_rounds = 6
+            if vision_max_rounds <= 0:
+                vision_max_rounds = 6
+            for vision_round in range(vision_max_rounds):
                 self._inject_beautiful_cursor(driver)
                 print(f"    -> [Smart Agent] [Round {vision_round+1}] Scanning DOM for '{missing_info}'...")
 
@@ -6299,17 +6384,42 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             self.git_pusher = self.BackgroundGitPusher()
         url_cache = {}
         import random
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
         import queue
         import threading
         
         checkpoint_lock = threading.Lock()
-        # Use fewer browsers on GitHub Actions (2-core VM = 6 browsers causes OOM/crashes)
+        # Per-course timeout support: maps course index -> the Chrome driver
+        # currently working on it, so the dispatcher can quit() a stuck driver
+        # to unblock a hung worker thread (see future.result(timeout=...) below).
+        active_drivers = {}
+        active_drivers_lock = threading.Lock()
+        try:
+            COURSE_TIMEOUT = int(os.environ.get('VERIFIER_COURSE_TIMEOUT', '900'))
+        except ValueError:
+            COURSE_TIMEOUT = 900
+        if COURSE_TIMEOUT <= 0:
+            COURSE_TIMEOUT = 900
+        # Post-load settle waits (defaults preserve current behavior). Lower
+        # via VERIFIER_SPA_WAIT / VERIFIER_JS_FALLBACK_WAIT to speed up scraping
+        # on a test run — but expect more incomplete-content scrapes (false
+        # mismatches) if set too low, since these wait for JS/SPA rendering.
+        try:
+            SPA_WAIT = float(os.environ.get('VERIFIER_SPA_WAIT', '2'))
+        except ValueError:
+            SPA_WAIT = 2.0
+        try:
+            JS_FALLBACK_WAIT = float(os.environ.get('VERIFIER_JS_FALLBACK_WAIT', '3'))
+        except ValueError:
+            JS_FALLBACK_WAIT = 3.0
+        # Use fewer browsers on GitHub Actions (2-core VM = 6 browsers causes OOM/crashes).
+        # 4 in CI: Ollama cloud rate-limits per worker, not per CPU, so one extra
+        # parallel browser is a cheap wall-clock win with 10GB swap configured.
         env_browsers = os.environ.get('VERIFIER_NUM_BROWSERS')
         if env_browsers and env_browsers.isdigit():
             NUM_BROWSERS = int(env_browsers)
         else:
-            NUM_BROWSERS = 3 if is_ci else 6
+            NUM_BROWSERS = 4 if is_ci else 6
         if NUM_BROWSERS <= 0: return
         
         import subprocess
@@ -6483,6 +6593,10 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             course['processed_this_run'] = True
             worker_id, driver, usage_count = browser_pool.get()
             usage_count += 1
+            # Register this driver as "active" so the dispatcher can quit() it
+            # if the course exceeds VERIFIER_COURSE_TIMEOUT, unblocking this worker.
+            with active_drivers_lock:
+                active_drivers[i] = driver
             
             # Removed psutil sleep loop to prevent deadlocks and CPU stalling
             
@@ -6685,7 +6799,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     # Smart Wait: Wait for JavaScript frameworks to finish rendering dynamic content (like fees)
                     # We check the length of the body text and wait until it stops growing, up to a max of 5 seconds.
                     try:
-                        time.sleep(2) # Initial wait for SPA/AJAX content to begin loading
+                        time.sleep(SPA_WAIT) # Initial wait for SPA/AJAX content to begin loading
                         last_len = -1
                         stable_count = 0
                         for _ in range(10): # max 10s wait for dynamic content
@@ -6699,7 +6813,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             last_len = current_len
                             time.sleep(1)
                     except:
-                        time.sleep(3) # Fallback wait if JS fails
+                        time.sleep(JS_FALLBACK_WAIT) # Fallback wait if JS fails
                     time.sleep(1)  # Brief extra settle time
                     
                     # Handling PDF Links and Cloud Links (Google Drive, Dropbox) directly
@@ -8353,7 +8467,10 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         print(f"    -> [!] Failed to restart browser {worker_id}: {e}")
                         
                 browser_pool.put((worker_id, driver, usage_count))
-                
+                # Course finished normally — drop it from the active-driver map.
+                with active_drivers_lock:
+                    active_drivers.pop(i, None)
+
                 logs = sys.stdout.local.buffer.getvalue()
                 del sys.stdout.local.buffer
                 
@@ -8381,39 +8498,71 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             try:
                 with ThreadPoolExecutor(max_workers=NUM_BROWSERS) as executor:
                     futures_map = {executor.submit(process_course, item): item for item in items_to_process}
-                    for future in as_completed(futures_map):
-                        item = futures_map[future]
-                        course_idx = item[0]
-                        course_name = item[1].get('name', '?') if isinstance(item, tuple) else '?'
-                        try:
-                            idx, logs = future.result()  # Wait indefinitely to ensure accurate verification
+                    try:
+                        # COURSE_TIMEOUT bounds the whole batch's wall-clock.
+                        # as_completed yields each future as it finishes (so
+                        # fast courses are handled immediately); it only raises
+                        # TimeoutError if some future is still running after
+                        # COURSE_TIMEOUT seconds — i.e. a genuinely stuck course.
+                        for future in as_completed(futures_map, timeout=COURSE_TIMEOUT):
+                            item = futures_map[future]
+                            course_idx = item[0]
+                            course_name = item[1].get('name', '?') if isinstance(item, tuple) else '?'
                             try:
-                                original_stdout.write(logs)
-                            except UnicodeEncodeError:
-                                original_stdout.write(logs.encode('ascii', 'replace').decode('ascii'))
-                            original_stdout.flush()
-                        except BrowserCrashRetryException as e:
-                            if retry_counts[course_idx] < 2:
-                                retry_counts[course_idx] += 1
-                                original_stdout.write(f"    -> [!] Course '{course_name}' crashed (browser died). Queuing for retry {retry_counts[course_idx]}/2...\n")
+                                idx, logs = future.result()
+                                try:
+                                    original_stdout.write(logs)
+                                except UnicodeEncodeError:
+                                    original_stdout.write(logs.encode('ascii', 'replace').decode('ascii'))
                                 original_stdout.flush()
-                                next_items_to_process.append(item)
-                            else:
-                                original_stdout.write(f"    -> [!] Course '{course_name}' crashed 3 times. Skipping.\n")
-                                original_stdout.flush()
-                        except Exception as e:
-                            err_msg = str(e).lower()
+                            except BrowserCrashRetryException as e:
+                                if retry_counts[course_idx] < 2:
+                                    retry_counts[course_idx] += 1
+                                    original_stdout.write(f"    -> [!] Course '{course_name}' crashed (browser died). Queuing for retry {retry_counts[course_idx]}/2...\n")
+                                    original_stdout.flush()
+                                    next_items_to_process.append(item)
+                                else:
+                                    original_stdout.write(f"    -> [!] Course '{course_name}' crashed 3 times. Skipping.\n")
+                                    original_stdout.flush()
+                            except Exception as e:
+                                err_msg = str(e).lower()
+                                course_obj = item[1] if isinstance(item, tuple) else {}
+                                has_result = course_obj.get('web_status') not in [None, '']
+                                # If the course was killed mid-processing (no result yet), retry it
+                                if not has_result and retry_counts.get(course_idx, 0) < 2:
+                                    retry_counts[course_idx] = retry_counts.get(course_idx, 0) + 1
+                                    original_stdout.write(f"    -> [!] Course '{course_name}' lost (browser killed/crashed: {str(e)[:80]}). Re-queuing for retry {retry_counts[course_idx]}/2...\n")
+                                    original_stdout.flush()
+                                    next_items_to_process.append(item)
+                                else:
+                                    original_stdout.write(f"    -> [!] Course '{course_name}' thread failed: {e}\n")
+                                    original_stdout.flush()
+                    except FuturesTimeoutError:
+                        # One or more courses are still running after
+                        # COURSE_TIMEOUT — they're stuck. Quit their drivers so
+                        # the worker threads unblock, mark each as a timeout,
+                        # and let the executor shut down cleanly.
+                        original_stdout.write(f"\n    -> [!] Per-course timeout ({COURSE_TIMEOUT}s) reached; killing stuck worker(s)...\n")
+                        original_stdout.flush()
+                        for future, item in futures_map.items():
+                            if future.done():
+                                continue
+                            course_idx = item[0]
                             course_obj = item[1] if isinstance(item, tuple) else {}
-                            has_result = course_obj.get('web_status') not in [None, '']
-                            # If the course was killed mid-processing (no result yet), retry it
-                            if not has_result and retry_counts.get(course_idx, 0) < 2:
-                                retry_counts[course_idx] = retry_counts.get(course_idx, 0) + 1
-                                original_stdout.write(f"    -> [!] Course '{course_name}' lost (browser killed/crashed: {str(e)[:80]}). Re-queuing for retry {retry_counts[course_idx]}/2...\n")
-                                original_stdout.flush()
-                                next_items_to_process.append(item)
-                            else:
-                                original_stdout.write(f"    -> [!] Course '{course_name}' thread failed: {e}\n")
-                                original_stdout.flush()
+                            course_name = course_obj.get('name', '?')
+                            with active_drivers_lock:
+                                drv = active_drivers.pop(course_idx, None)
+                            if drv is not None:
+                                try:
+                                    drv.quit()
+                                except Exception:
+                                    pass
+                            course_obj['web_status'] = 'FALSE'
+                            course_obj['reason'] = 'course_timeout'
+                            course_obj['issue_category'] = ISSUE_CATEGORY_WEBSITE
+                            course_obj['issue_sub_type'] = 'timeout'
+                            original_stdout.write(f"    -> [!] Course '{course_name}' exceeded {COURSE_TIMEOUT}s — driver killed, marked timeout.\n")
+                            original_stdout.flush()
             finally:
                 pass
             
@@ -8432,6 +8581,13 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         try:
             sys.stdout = original_stdout
         except:
+            pass
+
+        # Ollama quota usage report (Pro has 5h session / 7d weekly limits).
+        try:
+            from llm_manager import get_llm_manager as _get_llm
+            print(f"\n{_get_llm().usage_summary()}")
+        except Exception:
             pass
 
         # Cleanup browsers

@@ -8,33 +8,21 @@ on:
         required: true
         default: '688-965_compressed.pdf'
       start_page:
-        description: 'Start PDF page (original page numbering)'
-        required: true
-        default: '688'
+        description: 'Start PDF page (original page numbering). Blank = resume from checkpoint.'
+        required: false
+        default: ''
       end_page:
-        description: 'End PDF page (original page numbering)'
-        required: true
-        default: '965'
-      page_offset:
-        description: 'Original page = cropped page + offset (171 if PDF starts at original p.172)'
+        description: 'End PDF page (original page numbering). Blank = all remaining.'
         required: false
-        default: '688'
-      start_idx:
-        description: 'Report course numbering starts here (e.g. 602 if first course is original idx 602). Blank = 1-based position.'
-        required: false
-        default: '2635'
+        default: ''
       browsers:
-        description: 'Number of parallel browsers'
-        required: true
+        description: 'Number of parallel browsers (match to Ollama plan: Pro=3, Max=10, Free=1)'
+        required: false
         default: '3'
-      http_first:
-        description: 'Enable HTTP-first extraction (skip browser for static pages) - 1/0'
-        required: false
-        default: '1'
       llm_text_budget:
-        description: 'Max chars of page text sent to the LLM (default 25000)'
+        description: 'Max chars of page text sent to the LLM (default 400000; retry uses 40000)'
         required: false
-        default: '25000'
+        default: '400000'
 
 jobs:
   verify:
@@ -69,54 +57,60 @@ jobs:
             libgtk-3-0t64 libxcomposite1 libxcursor1 libxdamage1 libxi6 libxtst6 \
             libxrandr2 libasound2t64 libpangocairo-1.0-0 libatspi2.0-0t64 libcups2t64 \
             libdrm2 libgbm1 libxkbcommon0 tesseract-ocr tesseract-ocr-eng \
-            unzip curl
+            unzip curl xvfb x11-utils
 
       - name: Cache pip
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-${{ hashFiles('requirements.txt') }}
+          key: pip-${{ hashFiles('requirements-verifier.txt') }}
 
       - name: Install Python deps
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt
-          playwright install chromium || true
+          pip install -r requirements-verifier.txt python-dotenv
+
+      - name: Load All API Keys
+        env:
+          ENV_FILE: ${{ secrets.ENV_FILE }}
+        run: |
+          echo "$ENV_FILE" > .env
 
       - name: Run verifier
         id: verifier
         env:
+          CI: true
           VERIFIER_NO_FORCE_EXIT: true
-          VERIFIER_HTTP_FIRST: ${{ inputs.http_first }}
-          VERIFIER_LLM_TEXT_BUDGET: ${{ inputs.llm_text_budget }}
           VERIFIER_NUM_BROWSERS: ${{ inputs.browsers }}
-          OPENROUTER_KEY_1: ${{ secrets.OPENROUTER_KEY_1 }}
-          GEMINI_KEY_1: ${{ secrets.GEMINI_KEY_1 }}
-          OLLAMA_API_URL: ${{ secrets.OLLAMA_API_URL }}
-          OLLAMA_MODEL: ${{ secrets.OLLAMA_MODEL }}
-          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+          OLLAMA_MAX_CONCURRENCY: ${{ inputs.browsers }}
+          VERIFIER_LLM_TEXT_BUDGET: ${{ inputs.llm_text_budget }}
+          # The verifier reads these in CI mode to scope the page range
+          START_PAGE: ${{ inputs.start_page }}
+          END_PAGE: ${{ inputs.end_page }}
+          # Predictable report filename for the artifact upload
+          PDF_NAME: ${{ inputs.pdf }}
+          # ── Ollama is the ONLY LLM backend (see llm_manager.py) ──
+          # OLLAMA_* keys come from the ENV_FILE secret written to .env above,
+          # then read via load_dotenv(). llm_manager self-verifies the key on
+          # startup (sys.exit(1) on a bad/missing key).
+          DISPLAY: ":99"
         run: |
-          START_IDX_FLAG=""
-          if [ -n "${{ inputs.start_idx }}" ]; then
-            START_IDX_FLAG="--start-idx ${{ inputs.start_idx }}"
+          if ! grep -qE '^OLLAMA_API_KEY=.' .env; then
+            echo "::error::OLLAMA_API_KEY missing in .env (check the ENV_FILE secret). The verifier runs on Ollama cloud only."
+            exit 1
           fi
-          python run_verifier_pages.py ${{ inputs.pdf }} --pages ${{ inputs.start_page }} ${{ inputs.end_page }} --fresh --page-offset ${{ inputs.page_offset }} $START_IDX_FLAG --no-email
+          Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset &
+          sleep 3
+          python autonomous_course_verifier.py "${{ inputs.pdf }}" || echo "::warning::Verifier exited with non-zero status, but checkpoint should be saved"
 
       - name: Upload PDF report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: report-pdf
-          path: Verification_Report_Pages_*.pdf
-          retention-days: 30
-          if-no-files-found: error
-
-      - name: Upload checkpoint
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: verifier-checkpoint
-          path: autonomous_verified_${{ inputs.pdf }}.json
+          path: |
+            *.pdf
+            autonomous_verified_*.json
           retention-days: 30
           if-no-files-found: warn
 

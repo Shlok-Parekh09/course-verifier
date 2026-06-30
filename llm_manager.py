@@ -48,10 +48,33 @@ class LLMManager:
         self.vision_call_counter = 0
         self._vision_lock = threading.Lock()
 
+        # Quota usage counters (Ollama Pro has 5h session / 7d weekly limits
+        # billed by GPU-time). Printed at run end so you can see when you're
+        # approaching the ceiling.
+        self.text_call_count = 0
+        self.vision_call_count = 0
+        self._count_lock = threading.Lock()
+
+        # ── Global concurrency cap ──
+        # Ollama cloud queues requests over the plan's concurrency limit
+        # (Free=1, Pro=3, Max=10) and rejects them once the queue fills,
+        # which surfaces as "Read timed out" in CI. A shared semaphore lets
+        # workers wait here for a slot instead of piling on Ollama's side.
+        # Set OLLAMA_MAX_CONCURRENCY to match your plan.
+        try:
+            max_conc = int(os.environ.get("OLLAMA_MAX_CONCURRENCY", "3"))
+        except ValueError:
+            max_conc = 3
+        if max_conc <= 0:
+            max_conc = 3
+        self._llm_semaphore = threading.Semaphore(max_conc)
+        self.max_concurrency = max_conc
+
         # ── Diagnostic logging ──
         print(f"[LLM Manager] Ollama-only mode | url={self.ollama_api_url} | "
               f"text_model={self.ollama_model} | vision_model={self.ollama_vision_model} | "
-              f"auth={'bearer' if self.ollama_api_key else 'none'}")
+              f"auth={'bearer' if self.ollama_api_key else 'none'} | "
+              f"max_concurrency={max_conc}")
         if not self.ollama_api_url:
             print("[LLM Manager] [!] WARNING: OLLAMA_API_URL not set; targeting localhost:11434.")
 
@@ -157,6 +180,8 @@ class LLMManager:
         model = model_name or self.ollama_model
         print(f"      -> [LLM Manager] {who}calling Ollama ({model})...")
         self._rate_limit(key_id, min_interval=1.0)
+        with self._count_lock:
+            self.text_call_count += 1
         result = self._call_ollama(prompt, system, format, temperature,
                                    timeout=timeout, model=model)
         if result:
@@ -174,6 +199,8 @@ class LLMManager:
         print(f"      -> [LLM Manager] Vision call index: {current_call_idx} "
               f"-> Ollama ({self.ollama_vision_model})")
         self._rate_limit(f"ollama_vision_{current_call_idx}", min_interval=4.0)
+        with self._count_lock:
+            self.vision_call_count += 1
         result = self._call_ollama_vision(prompt, base64_image, system)
         if result:
             return result
@@ -200,6 +227,7 @@ class LLMManager:
         if format == "json":
             payload["format"] = "json"
 
+        self._llm_semaphore.acquire()
         try:
             headers = {"Content-Type": "application/json"}
             if self.ollama_api_key:
@@ -223,9 +251,23 @@ class LLMManager:
         except Exception as e:
             print(f"      -> [LLM Manager] Ollama API Exception: {e}")
             return None
+        finally:
+            self._llm_semaphore.release()
 
     def _call_ollama_vision(self, prompt: str, base64_image: str, system: Optional[str]) -> Optional[str]:
         url = f"{self.ollama_api_url}/api/generate"
+        # 31B cloud vision model under concurrent worker load routinely
+        # exceeds the old 60s read timeout (see "Read timed out (read
+        # timeout=60)" in CI logs). Give it real headroom and retry once on a
+        # transient timeout/error so a single slow page doesn't drop the whole
+        # fee extraction. Overridable via OLLAMA_VISION_TIMEOUT.
+        try:
+            vision_timeout = int(os.environ.get("OLLAMA_VISION_TIMEOUT", "120"))
+        except ValueError:
+            vision_timeout = 120
+        if vision_timeout <= 0:
+            vision_timeout = 120
+
         payload = {
             "model": self.ollama_vision_model,
             "prompt": prompt,
@@ -238,23 +280,57 @@ class LLMManager:
         if system:
             payload["system"] = system
 
-        try:
-            headers = {"Content-Type": "application/json"}
-            if self.ollama_api_key:
-                headers["Authorization"] = f"Bearer {self.ollama_api_key}"
-            resp = requests.post(url, json=payload, headers=headers, timeout=60)
-            if resp.status_code == 200:
-                data = resp.json()
-                if data.get("error"):
-                    err = str(data["error"])
-                    print(f"      -> [LLM Manager] Ollama Vision error: {err[:200]}")
-                    return None
-                return data.get("response")
-            print(f"      -> [LLM Manager] Ollama Vision Error {resp.status_code}: {resp.text[:200]}")
-            return None
-        except Exception as e:
-            print(f"      -> [LLM Manager] Ollama Vision Exception: {e}")
-            return None
+        headers = {"Content-Type": "application/json"}
+        if self.ollama_api_key:
+            headers["Authorization"] = f"Bearer {self.ollama_api_key}"
+
+        last_err = None
+        for attempt in range(1, 3):  # original try + 1 retry
+            try:
+                # Hold the concurrency slot only for the in-flight HTTP call,
+                # not the retry backoff — so the slot frees during the 3s sleep.
+                self._llm_semaphore.acquire()
+                try:
+                    resp = requests.post(url, json=payload, headers=headers, timeout=vision_timeout)
+                finally:
+                    self._llm_semaphore.release()
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("error"):
+                        err = str(data["error"])
+                        print(f"      -> [LLM Manager] Ollama Vision error: {err[:200]}")
+                        return None
+                    return data.get("response")
+                # Non-200: retry once on transient server errors, else give up.
+                last_err = f"HTTP {resp.status_code} {resp.text[:200]}"
+                if resp.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+                    print(f"      -> [LLM Manager] Ollama Vision {last_err}; retrying in 3s...")
+                    time.sleep(3)
+                    continue
+                print(f"      -> [LLM Manager] Ollama Vision Error {resp.status_code}: {resp.text[:200]}")
+                return None
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                last_err = str(e)
+                if attempt < 2:
+                    print(f"      -> [LLM Manager] Ollama Vision timeout/conn error ({str(e)[:120]}); retrying in 3s...")
+                    time.sleep(3)
+                    continue
+                print(f"      -> [LLM Manager] Ollama Vision Exception: {e}")
+                return None
+            except Exception as e:
+                print(f"      -> [LLM Manager] Ollama Vision Exception: {e}")
+                return None
+        print(f"      -> [LLM Manager] Ollama Vision failed after retry: {last_err}")
+        return None
+
+    def usage_summary(self) -> str:
+        """One-line Ollama quota usage report for end-of-run logging."""
+        with self._count_lock:
+            t, v = self.text_call_count, self.vision_call_count
+        total = t + v
+        return (f"[LLM Manager] Ollama usage this run: {total} calls "
+                f"({t} text + {v} vision) | max_concurrency={self.max_concurrency} | "
+                f"text_model={self.ollama_model} | vision_model={self.ollama_vision_model}")
 
 # Global Singleton for easy import
 _llm_manager = None
