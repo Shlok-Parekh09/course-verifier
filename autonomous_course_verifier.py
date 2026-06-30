@@ -6412,6 +6412,23 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             JS_FALLBACK_WAIT = float(os.environ.get('VERIFIER_JS_FALLBACK_WAIT', '3'))
         except ValueError:
             JS_FALLBACK_WAIT = 3.0
+        # Extra settle after the smart-wait loop. The smart wait already polls
+        # until body text stops growing, so this is mostly redundant — lower it
+        # (VERIFIER_SETTLE_WAIT, seconds) to shave ~1s off every course without
+        # losing render fidelity when the smart wait succeeded.
+        try:
+            SETTLE_WAIT = float(os.environ.get('VERIFIER_SETTLE_WAIT', '1'))
+        except ValueError:
+            SETTLE_WAIT = 1.0
+        # Pre-navigation jitter before each course's first _safe_get. uc already
+        # handles bot detection, so the default 0.5–1.5s is conservative; lower
+        # the upper bound via VERIFIER_PRE_NAV_JITTER (seconds) for test runs.
+        try:
+            PRE_NAV_JITTER = float(os.environ.get('VERIFIER_PRE_NAV_JITTER', '1.5'))
+        except ValueError:
+            PRE_NAV_JITTER = 1.5
+        if PRE_NAV_JITTER < 0:
+            PRE_NAV_JITTER = 0.0
         # Use fewer browsers on GitHub Actions (2-core VM = 6 browsers causes OOM/crashes).
         # 4 in CI: Ollama cloud rate-limits per worker, not per CPU, so one extra
         # parallel browser is a cheap wall-clock win with 10GB swap configured.
@@ -6721,7 +6738,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     raise EarlyExit()
 
                 try:
-                    time.sleep(random.uniform(0.5, 1.5))  # Fast: uc handles bot detection
+                    if PRE_NAV_JITTER > 0:
+                        time.sleep(random.uniform(0.5, PRE_NAV_JITTER))  # Fast: uc handles bot detection
                     self._safe_get(driver, url)
                     
                     initial_title = ""
@@ -6814,7 +6832,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             time.sleep(1)
                     except:
                         time.sleep(JS_FALLBACK_WAIT) # Fallback wait if JS fails
-                    time.sleep(1)  # Brief extra settle time
+                    if SETTLE_WAIT > 0:
+                        time.sleep(SETTLE_WAIT)  # Brief extra settle time (configurable)
                     
                     # Handling PDF Links and Cloud Links (Google Drive, Dropbox) directly
                     is_cloud_pdf = False
@@ -9001,8 +9020,18 @@ if __name__ == "__main__":
             choice = 'y'
             print("[*] Specific index mode detected. Auto-resuming from checkpoint to preserve data.")
         elif os.environ.get('CI') == 'true':
-            choice = 'y'
-            print("[*] CI mode detected. Auto-resuming from checkpoint.")
+            # CI runs must NOT reuse a stale checkpoint by default. A checkpoint
+            # from a previous run marks courses as already verified, so they get
+            # skipped and show as "verified" even though they were never
+            # re-checked this run. Default = fresh full re-verification (the old
+            # checkpoint is flushed below). Set VERIFIER_RESUME=true to opt back
+            # into checkpoint resume for crash-recovery scenarios.
+            if os.environ.get('VERIFIER_RESUME', 'false').lower() == 'true':
+                choice = 'y'
+                print("[*] CI mode + VERIFIER_RESUME=true: resuming from checkpoint.")
+            else:
+                choice = 'n'
+                print("[*] CI mode: ignoring any existing checkpoint (fresh re-verification).")
         else:
             choice = input(f"\n[!] Checkpoint found (autonomous_verified_{os.path.basename(pdf_path)}.json). Resume from last run? (y/n): ").strip().lower()
         if choice == 'y':
