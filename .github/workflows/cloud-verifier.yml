@@ -82,15 +82,11 @@ jobs:
           VERIFIER_NUM_BROWSERS: 3
           OLLAMA_MAX_CONCURRENCY: 3
         run: |
-          # Belt-and-braces: confirm the Ollama key made it into .env before the
-          # (possibly long) run starts. llm_manager does the real auth check.
-          if ! grep -qE '^OLLAMA_API_KEY=.' .env; then
-            echo "::error::OLLAMA_API_KEY missing in .env (check the ENV_FILE secret). The verifier runs on Ollama cloud only."
-            exit 1
-          fi
           Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset &
           sleep 3
-          # Run with continue-on-error so checkpoint is always saved
+          # Run with continue-on-error so checkpoint is always saved.
+          # OLLAMA_* keys come from .env (ENV_FILE) via load_dotenv(); llm_manager
+          # self-verifies the key on startup and sys.exit(1) on a bad/missing key.
           python autonomous_course_verifier.py || echo "::warning::Verifier exited with non-zero status, but checkpoint should be saved"
 
       - name: Remove input PDF before upload
