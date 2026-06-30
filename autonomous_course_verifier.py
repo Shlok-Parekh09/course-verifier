@@ -1806,8 +1806,12 @@ class AutonomousCourseVerifier:
         self.ndu_category_cache = {} # Cache for NDU category pages
         self.domain_health = _DOMAIN_HEALTH  # Shared domain-health cache
         run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_dir = os.path.dirname(input_pdf) or '.'
+        if base_dir.startswith('/kaggle/input'):
+            base_dir = '.'
+            
         self.screenshots_dir = os.path.abspath(os.path.join(
-            os.path.dirname(input_pdf) or '.',
+            base_dir,
             'verification_screenshots',
             f"{self.base_name}_{run_stamp}",
         ))
