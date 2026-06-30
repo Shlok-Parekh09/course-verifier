@@ -8610,8 +8610,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             # PDF badge=True  + DB=Ranked    -> MATCH
             # PDF badge=False + DB=Not Ranked -> MATCH
             # PDF badge=True  + DB=Not Ranked -> FALSE
-            # PDF badge=False + DB=Ranked     -> MATCH (Ranked is a bonus)
-            qs_status = 'MATCH' if (bool(has_qs) == bool(qs_db_found) or qs_db_found) else 'FALSE'
+            # PDF badge=False + DB=Ranked     -> FALSE (Badge missing)
+            qs_status = 'MATCH' if bool(has_qs) == bool(qs_db_found) else 'FALSE'
             draw_row('QS Ranked', qs_pdf_val, safe_val(qs_web), qs_status if not is_hard_error else 'FALSE')
 
             has_nirf = course.get('has_nirf_badge')
@@ -8623,8 +8623,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             # PDF badge=True  + DB=Ranked    -> MATCH
             # PDF badge=False + DB=Not Ranked -> MATCH
             # PDF badge=True  + DB=Not Ranked -> FALSE
-            # PDF badge=False + DB=Ranked     -> MATCH (Ranked is a bonus)
-            nirf_status = 'MATCH' if (bool(has_nirf) == bool(nirf_db_found) or nirf_db_found) else 'FALSE'
+            # PDF badge=False + DB=Ranked     -> FALSE (Badge missing)
+            nirf_status = 'MATCH' if bool(has_nirf) == bool(nirf_db_found) else 'FALSE'
             draw_row('NIRF Ranked', nirf_pdf_val, safe_val(nirf_web), nirf_status if not is_hard_error else 'FALSE')
 
             has_free_box = course.get('has_free_box', False)
