@@ -70,6 +70,24 @@ class LLMManager:
         self._llm_semaphore = threading.Semaphore(max_conc)
         self.max_concurrency = max_conc
 
+        # ── Shared HTTP session for connection reuse (keep-alive) ──
+        # Every LLM call used to hit requests.post() with a fresh connection,
+        # paying a TCP+TLS handshake (~100-300ms) to ollama.com each time. A
+        # shared Session pools connections so repeated calls reuse the same
+        # socket. urllib3's connection pool is thread-safe, so one Session is
+        # fine across the worker threads. Pool sized to the concurrency cap so
+        # every in-flight call can have its own connection.
+        self._session = requests.Session()
+        try:
+            from requests.adapters import HTTPAdapter
+            _adapter = HTTPAdapter(pool_connections=max_conc,
+                                   pool_maxsize=max_conc,
+                                   max_retries=0)
+            self._session.mount("http://", _adapter)
+            self._session.mount("https://", _adapter)
+        except Exception:
+            pass  # default adapter is fine if construction fails
+
         # ── Diagnostic logging ──
         print(f"[LLM Manager] Ollama-only mode | url={self.ollama_api_url} | "
               f"text_model={self.ollama_model} | vision_model={self.ollama_vision_model} | "
@@ -179,7 +197,16 @@ class LLMManager:
         key_id = f"ollama_text_{worker_id if worker_id is not None else 0}"
         model = model_name or self.ollama_model
         print(f"      -> [LLM Manager] {who}calling Ollama ({model})...")
-        self._rate_limit(key_id, min_interval=1.0)
+        # The global _llm_semaphore already gates concurrency to the plan limit,
+        # so the per-worker spacing is just a mild anti-burst throttle. Default
+        # lowered from 1.0s to 0.2s (VERIFIER_TEXT_RATE_LIMIT) — ~0.8s saved per
+        # text call per worker with no effect on the cloud concurrency cap.
+        try:
+            text_rate = float(os.environ.get("VERIFIER_TEXT_RATE_LIMIT", "0.2"))
+        except ValueError:
+            text_rate = 0.2
+        if text_rate > 0:
+            self._rate_limit(key_id, min_interval=text_rate)
         with self._count_lock:
             self.text_call_count += 1
         result = self._call_ollama(prompt, system, format, temperature,
@@ -232,7 +259,7 @@ class LLMManager:
             headers = {"Content-Type": "application/json"}
             if self.ollama_api_key:
                 headers["Authorization"] = f"Bearer {self.ollama_api_key}"
-            resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
+            resp = self._session.post(url, json=payload, headers=headers, timeout=timeout)
             if resp.status_code == 200:
                 data = resp.json()
                 # Ollama may return an "error" field even with HTTP 200
@@ -291,7 +318,7 @@ class LLMManager:
                 # not the retry backoff — so the slot frees during the 3s sleep.
                 self._llm_semaphore.acquire()
                 try:
-                    resp = requests.post(url, json=payload, headers=headers, timeout=vision_timeout)
+                    resp = self._session.post(url, json=payload, headers=headers, timeout=vision_timeout)
                 finally:
                     self._llm_semaphore.release()
                 if resp.status_code == 200:
