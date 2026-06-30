@@ -1806,8 +1806,12 @@ class AutonomousCourseVerifier:
         self.ndu_category_cache = {} # Cache for NDU category pages
         self.domain_health = _DOMAIN_HEALTH  # Shared domain-health cache
         run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_dir = os.path.dirname(input_pdf) or '.'
+        if base_dir.startswith('/kaggle/input'):
+            base_dir = '.'
+            
         self.screenshots_dir = os.path.abspath(os.path.join(
-            os.path.dirname(input_pdf) or '.',
+            base_dir,
             'verification_screenshots',
             f"{self.base_name}_{run_stamp}",
         ))
@@ -6240,6 +6244,43 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
     #  STEP 3: WEB VERIFICATION
     # ──────────────────────────────────────────────────────────
 
+    class BackgroundGitPusher:
+        def __init__(self, target_dir="../course-verifier-kaggle"):
+            import queue, threading
+            self.q = queue.Queue()
+            self.target_dir = target_dir
+            self.running = True
+            self.thread = threading.Thread(target=self._worker, daemon=True)
+            self.thread.start()
+
+        def push(self, filepath):
+            self.q.put(filepath)
+
+        def _worker(self):
+            import queue, os, shutil, subprocess
+            while self.running:
+                try:
+                    filepath = self.q.get(timeout=1.0)
+                    if not os.path.exists(self.target_dir):
+                        self.q.task_done()
+                        continue
+                    try:
+                        basename = os.path.basename(filepath)
+                        dest = os.path.join(self.target_dir, basename)
+                        shutil.copy2(filepath, dest)
+                        subprocess.run(["git", "add", basename], cwd=self.target_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        subprocess.run(["git", "commit", "-m", "Auto-backup checkpoint"], cwd=self.target_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        subprocess.run(["git", "push"], cwd=self.target_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    except Exception as e:
+                        print(f"    -> [Background Git] Failed to push: {e}")
+                    self.q.task_done()
+                except queue.Empty:
+                    pass
+
+        def stop(self):
+            self.running = False
+            if self.thread.is_alive():
+                self.thread.join(timeout=2.0)
 
     def autonomous_web_verify(self, start_idx=0, end_idx=None):
         print(f"\n[*] Step 3/4: Launching Visible Browser Agent (Selenium/uc)...")
@@ -6253,6 +6294,9 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         else:
             print(f"    -> [Resume] Resuming from course index {start_idx + 1}. Keeping existing screenshots in: {self.screenshots_dir}")
 
+        is_ci = os.environ.get('CI', '').lower() == 'true'
+        if is_ci:
+            self.git_pusher = self.BackgroundGitPusher()
         url_cache = {}
         import random
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -6261,7 +6305,6 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         
         checkpoint_lock = threading.Lock()
         # Use fewer browsers on GitHub Actions (2-core VM = 6 browsers causes OOM/crashes)
-        is_ci = os.environ.get('CI', '').lower() == 'true'
         env_browsers = os.environ.get('VERIFIER_NUM_BROWSERS')
         if env_browsers and env_browsers.isdigit():
             NUM_BROWSERS = int(env_browsers)
@@ -8273,9 +8316,12 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             finally:
                 with checkpoint_lock:
                     try:
-                        with open(f"autonomous_verified_{os.path.basename(self.input_pdf)}.json", 'w', encoding='utf-8') as f:
+                        checkpoint_filename = f"autonomous_verified_{os.path.basename(self.input_pdf)}.json"
+                        with open(checkpoint_filename, 'w', encoding='utf-8') as f:
                             json.dump(self.courses, f, indent=4, ensure_ascii=False)
                         self.export_to_excel(quiet=True)
+                        if hasattr(self, 'git_pusher'):
+                            self.git_pusher.push(os.path.abspath(checkpoint_filename))
                     except Exception as e:
                         print(f"    -> [!] Warning: Failed to save checkpoint: {e}")
                         
@@ -8758,10 +8804,19 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
 if __name__ == "__main__":
 
 
+    specific_index = None
+    if '--index' in sys.argv:
+        idx_pos = sys.argv.index('--index')
+        try:
+            specific_index = int(sys.argv[idx_pos + 1])
+            sys.argv.pop(idx_pos)
+            sys.argv.pop(idx_pos)
+        except (IndexError, ValueError):
+            print("[!] Invalid --index provided.")
+            sys.exit(1)
+
     if not check_runtime_dependencies():
         sys.exit(1)
-
-
 
     if len(sys.argv) > 1:
         pdf_path = sys.argv[1].strip()
@@ -8786,7 +8841,10 @@ if __name__ == "__main__":
     start_idx = 0
     resume = False
     if os.path.exists(f"autonomous_verified_{os.path.basename(pdf_path)}.json"):
-        if os.environ.get('CI') == 'true':
+        if specific_index is not None:
+            choice = 'y'
+            print("[*] Specific index mode detected. Auto-resuming from checkpoint to preserve data.")
+        elif os.environ.get('CI') == 'true':
             choice = 'y'
             print("[*] CI mode detected. Auto-resuming from checkpoint.")
         else:
@@ -8850,11 +8908,14 @@ if __name__ == "__main__":
     max_page = max((c.get('page_num', 1) for c in agent.courses), default=1)
 
     # Ask the user for an optional manual start page
-    if os.environ.get('CI') == 'true':
+    if specific_index is not None:
+        pass # Skip asking for manual start page since we're using a specific index
+    elif os.environ.get('CI') == 'true':
         manual_start = os.environ.get('START_PAGE', "")
     else:
         manual_start = input(f"\n[?] From which page number ({min_page}-{max_page}) do you want to start web verification? (Press Enter to use default/checkpoint): ").strip()
-    if manual_start.isdigit():
+        
+    if specific_index is None and manual_start.isdigit():
         start_page = int(manual_start)
         manual_idx = len(agent.courses)
         for i, c in enumerate(agent.courses):
@@ -8872,11 +8933,15 @@ if __name__ == "__main__":
     end_idx = len(agent.courses)
     min_page = min((c.get('page_num', 1) for c in agent.courses), default=1)
     max_page = max((c.get('page_num', 1) for c in agent.courses), default=1)
-    if os.environ.get('CI') == 'true':
+    
+    if specific_index is not None:
+        pass # Skip asking for manual end page
+    elif os.environ.get('CI') == 'true':
         manual_end = os.environ.get('END_PAGE', "")
     else:
         manual_end = input(f"\n[?] Up to which page number ({min_page}-{max_page}) do you want to run web verification? (Press Enter for all remaining): ").strip()
-    if manual_end.isdigit():
+        
+    if specific_index is None and manual_end.isdigit():
         end_page = int(manual_end)
         for i, c in enumerate(agent.courses):
             if c.get('page_num', 1) > end_page:
@@ -8888,6 +8953,15 @@ if __name__ == "__main__":
             end_idx = len(agent.courses)
         else:
             print(f"[*] Manually setting end index to {end_idx} (up to Page {end_page})")
+
+    if specific_index is not None:
+        start_idx = specific_index
+        end_idx = specific_index + 1
+        print(f"[*] Running ONLY for specific course index {specific_index}")
+        # Force 1 browser if running locally
+        if os.environ.get('CI') != 'true':
+            os.environ['VERIFIER_NUM_BROWSERS'] = '1'
+            print("[*] Local run with specific index: Forced NUM_BROWSERS=1")
 
     if start_idx < len(agent.courses):
         agent.extract_visuals_for_range(start_idx=start_idx, end_idx=end_idx)
@@ -8913,7 +8987,9 @@ if __name__ == "__main__":
     print("\n[*] Verifying QS/NIRF rankings based on updated web extraction data...")
     agent.verify_rankings(start_idx=start_idx, end_idx=end_idx)
 
-    if os.environ.get('CI') == 'true':
+    if specific_index is not None:
+        pdf_name = f"Single_Course_{specific_index}"
+    elif os.environ.get('CI') == 'true':
         pdf_name = os.environ.get('PDF_NAME', "Autonomous_Course_Verification_Report")
     else:
         pdf_name = input("\n[?] Enter the name for the final PDF report (without .pdf, press Enter for default): ").strip()
