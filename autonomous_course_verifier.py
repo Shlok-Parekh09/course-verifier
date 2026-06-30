@@ -6394,6 +6394,14 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         # to unblock a hung worker thread (see future.result(timeout=...) below).
         active_drivers = {}
         active_drivers_lock = threading.Lock()
+        # Per-course start times (monotonic) so the reaper thread can enforce a
+        # TRUE per-course timeout. The old code used as_completed(timeout=...),
+        # which is a BATCH timeout — with many courses queued it would fire long
+        # before the queue drained and mark every not-yet-started course as
+        # "timed out" in one shot. Tracking start times lets us kill only the
+        # one stuck course's driver, preserving full browser utilization.
+        course_start_times = {}
+        course_start_lock = threading.Lock()
         try:
             COURSE_TIMEOUT = int(os.environ.get('VERIFIER_COURSE_TIMEOUT', '900'))
         except ValueError:
@@ -6614,6 +6622,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             # if the course exceeds VERIFIER_COURSE_TIMEOUT, unblocking this worker.
             with active_drivers_lock:
                 active_drivers[i] = driver
+            with course_start_lock:
+                course_start_times[i] = time.monotonic()
             
             # Removed psutil sleep loop to prevent deadlocks and CPU stalling
             
@@ -8486,9 +8496,12 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         print(f"    -> [!] Failed to restart browser {worker_id}: {e}")
                         
                 browser_pool.put((worker_id, driver, usage_count))
-                # Course finished normally — drop it from the active-driver map.
+                # Course finished normally — drop it from the active-driver map
+                # and the start-time map so the reaper stops watching it.
                 with active_drivers_lock:
                     active_drivers.pop(i, None)
+                with course_start_lock:
+                    course_start_times.pop(i, None)
 
                 logs = sys.stdout.local.buffer.getvalue()
                 del sys.stdout.local.buffer
@@ -8499,6 +8512,46 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 gc.collect()
                 
             return i, logs
+
+        # ── Per-course timeout reaper ──
+        # A daemon thread that watches each in-flight course's start time and
+        # quits its Chrome driver once it exceeds COURSE_TIMEOUT. This enforces a
+        # TRUE per-course timeout. The previous design used
+        # as_completed(timeout=COURSE_TIMEOUT), which is a BATCH timeout: with
+        # many courses queued it fired long before the queue drained and marked
+        # every not-yet-started course as "timed out" in one shot (see the mass
+        # "exceeded 600s" failures). Quitting just the stuck course's driver
+        # unblocks that one worker (its selenium call raises → crash retry),
+        # while every other browser keeps working at full utilization.
+        reaper_stop = threading.Event()
+        def _timeout_reaper():
+            while not reaper_stop.wait(5.0):
+                now = time.monotonic()
+                with course_start_lock:
+                    overdue = [idx for idx, st in course_start_times.items()
+                               if now - st > COURSE_TIMEOUT]
+                for idx in overdue:
+                    with active_drivers_lock:
+                        drv = active_drivers.get(idx)
+                    if drv is not None:
+                        try:
+                            drv.quit()
+                        except Exception:
+                            pass
+                    course_obj = self.courses[idx] if 0 <= idx < len(self.courses) else None
+                    if course_obj is not None and course_obj.get('web_status') in (None, ''):
+                        course_obj['web_status'] = 'FALSE'
+                        course_obj['reason'] = 'course_timeout'
+                        course_obj['issue_category'] = ISSUE_CATEGORY_WEBSITE
+                        course_obj['issue_sub_type'] = 'timeout'
+                        cname = str(course_obj.get('name', '?'))[:40]
+                        original_stdout.write(f"    -> [!] Course '{cname}' exceeded {COURSE_TIMEOUT}s — driver killed, marked timeout.\n")
+                        original_stdout.flush()
+                    # Stop watching it so we don't re-kill / re-mark.
+                    with course_start_lock:
+                        course_start_times.pop(idx, None)
+        reaper_thread = threading.Thread(target=_timeout_reaper, daemon=True)
+        reaper_thread.start()
 
         # Submit to ThreadPoolExecutor
         if end_idx is None:
@@ -8517,71 +8570,44 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             try:
                 with ThreadPoolExecutor(max_workers=NUM_BROWSERS) as executor:
                     futures_map = {executor.submit(process_course, item): item for item in items_to_process}
-                    try:
-                        # COURSE_TIMEOUT bounds the whole batch's wall-clock.
-                        # as_completed yields each future as it finishes (so
-                        # fast courses are handled immediately); it only raises
-                        # TimeoutError if some future is still running after
-                        # COURSE_TIMEOUT seconds — i.e. a genuinely stuck course.
-                        for future in as_completed(futures_map, timeout=COURSE_TIMEOUT):
-                            item = futures_map[future]
-                            course_idx = item[0]
-                            course_name = item[1].get('name', '?') if isinstance(item, tuple) else '?'
+                    # No batch timeout here — the _timeout_reaper thread enforces
+                    # a TRUE per-course timeout by quitting stuck drivers, which
+                    # unblocks the worker so its future completes naturally.
+                    # as_completed just drains futures as they finish (fast
+                    # courses handled immediately, full browser utilization).
+                    for future in as_completed(futures_map):
+                        item = futures_map[future]
+                        course_idx = item[0]
+                        course_name = item[1].get('name', '?') if isinstance(item, tuple) else '?'
+                        try:
+                            idx, logs = future.result()
                             try:
-                                idx, logs = future.result()
-                                try:
-                                    original_stdout.write(logs)
-                                except UnicodeEncodeError:
-                                    original_stdout.write(logs.encode('ascii', 'replace').decode('ascii'))
-                                original_stdout.flush()
-                            except BrowserCrashRetryException as e:
-                                if retry_counts[course_idx] < 2:
-                                    retry_counts[course_idx] += 1
-                                    original_stdout.write(f"    -> [!] Course '{course_name}' crashed (browser died). Queuing for retry {retry_counts[course_idx]}/2...\n")
-                                    original_stdout.flush()
-                                    next_items_to_process.append(item)
-                                else:
-                                    original_stdout.write(f"    -> [!] Course '{course_name}' crashed 3 times. Skipping.\n")
-                                    original_stdout.flush()
-                            except Exception as e:
-                                err_msg = str(e).lower()
-                                course_obj = item[1] if isinstance(item, tuple) else {}
-                                has_result = course_obj.get('web_status') not in [None, '']
-                                # If the course was killed mid-processing (no result yet), retry it
-                                if not has_result and retry_counts.get(course_idx, 0) < 2:
-                                    retry_counts[course_idx] = retry_counts.get(course_idx, 0) + 1
-                                    original_stdout.write(f"    -> [!] Course '{course_name}' lost (browser killed/crashed: {str(e)[:80]}). Re-queuing for retry {retry_counts[course_idx]}/2...\n")
-                                    original_stdout.flush()
-                                    next_items_to_process.append(item)
-                                else:
-                                    original_stdout.write(f"    -> [!] Course '{course_name}' thread failed: {e}\n")
-                                    original_stdout.flush()
-                    except FuturesTimeoutError:
-                        # One or more courses are still running after
-                        # COURSE_TIMEOUT — they're stuck. Quit their drivers so
-                        # the worker threads unblock, mark each as a timeout,
-                        # and let the executor shut down cleanly.
-                        original_stdout.write(f"\n    -> [!] Per-course timeout ({COURSE_TIMEOUT}s) reached; killing stuck worker(s)...\n")
-                        original_stdout.flush()
-                        for future, item in futures_map.items():
-                            if future.done():
-                                continue
-                            course_idx = item[0]
-                            course_obj = item[1] if isinstance(item, tuple) else {}
-                            course_name = course_obj.get('name', '?')
-                            with active_drivers_lock:
-                                drv = active_drivers.pop(course_idx, None)
-                            if drv is not None:
-                                try:
-                                    drv.quit()
-                                except Exception:
-                                    pass
-                            course_obj['web_status'] = 'FALSE'
-                            course_obj['reason'] = 'course_timeout'
-                            course_obj['issue_category'] = ISSUE_CATEGORY_WEBSITE
-                            course_obj['issue_sub_type'] = 'timeout'
-                            original_stdout.write(f"    -> [!] Course '{course_name}' exceeded {COURSE_TIMEOUT}s — driver killed, marked timeout.\n")
+                                original_stdout.write(logs)
+                            except UnicodeEncodeError:
+                                original_stdout.write(logs.encode('ascii', 'replace').decode('ascii'))
                             original_stdout.flush()
+                        except BrowserCrashRetryException as e:
+                            if retry_counts[course_idx] < 2:
+                                retry_counts[course_idx] += 1
+                                original_stdout.write(f"    -> [!] Course '{course_name}' crashed (browser died). Queuing for retry {retry_counts[course_idx]}/2...\n")
+                                original_stdout.flush()
+                                next_items_to_process.append(item)
+                            else:
+                                original_stdout.write(f"    -> [!] Course '{course_name}' crashed 3 times. Skipping.\n")
+                                original_stdout.flush()
+                        except Exception as e:
+                            err_msg = str(e).lower()
+                            course_obj = item[1] if isinstance(item, tuple) else {}
+                            has_result = course_obj.get('web_status') not in [None, '']
+                            # If the course was killed mid-processing (no result yet), retry it
+                            if not has_result and retry_counts.get(course_idx, 0) < 2:
+                                retry_counts[course_idx] = retry_counts.get(course_idx, 0) + 1
+                                original_stdout.write(f"    -> [!] Course '{course_name}' lost (browser killed/crashed: {str(e)[:80]}). Re-queuing for retry {retry_counts[course_idx]}/2...\n")
+                                original_stdout.flush()
+                                next_items_to_process.append(item)
+                            else:
+                                original_stdout.write(f"    -> [!] Course '{course_name}' thread failed: {e}\n")
+                                original_stdout.flush()
             finally:
                 pass
             
@@ -8594,6 +8620,13 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         try:
             pass # _watchdog_stop.set()
         except NameError:
+            pass
+
+        # Stop the per-course timeout reaper
+        try:
+            reaper_stop.set()
+            reaper_thread.join(timeout=10.0)
+        except Exception:
             pass
         
         # Cleanup code after all loops

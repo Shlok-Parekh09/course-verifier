@@ -82,15 +82,12 @@ jobs:
           VERIFIER_NUM_BROWSERS: 3
           OLLAMA_MAX_CONCURRENCY: 3
           # ── Speed levers (scrape waits) ──
-          # The smart-wait loop already polls until body text stops growing, so
-          # these initial/settle waits are conservative. Tightened for test runs;
-          # raise them if you see incomplete-content false mismatches.
-          VERIFIER_SPA_WAIT: 1.0
-          VERIFIER_JS_FALLBACK_WAIT: 1.5
-          VERIFIER_SETTLE_WAIT: 0.3
-          VERIFIER_PRE_NAV_JITTER: 0.6
-          # Cut losses on hung courses (default 900s is too generous for test runs).
-          VERIFIER_COURSE_TIMEOUT: 600
+          # Left at defaults so the verification process is unchanged. These are
+          # env-overridable knobs (VERIFIER_SPA_WAIT, VERIFIER_JS_FALLBACK_WAIT,
+          # VERIFIER_SETTLE_WAIT, VERIFIER_PRE_NAV_JITTER, VERIFIER_COURSE_TIMEOUT)
+          # — set them here only after confirming accuracy holds.
+          # VERIFIER_COURSE_TIMEOUT is now a TRUE per-course timeout (reaper
+          # thread), so lowering it is safe and won't nuke the whole batch.
         run: |
           Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset &
           sleep 3
