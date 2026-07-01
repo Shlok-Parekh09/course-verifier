@@ -2914,7 +2914,10 @@ class AutonomousCourseVerifier:
         print(f"\n[*] Step 1.5/4: Extracting visual badges (OCR) for selected courses ({start_idx+1} to {end_idx if end_idx else len(self.courses)})...")
         doc = fitz.open(self.input_pdf)
         end_limit = end_idx if end_idx is not None else len(self.courses)
-        for c in self.courses[start_idx:end_limit]:
+        for i, c in enumerate(self.courses):
+            if hasattr(self, 'specific_indices') and self.specific_indices:
+                if i not in self.specific_indices: continue
+            elif not (start_idx <= i < end_limit): continue
             page_num = c['page_num'] - 1
             box_idx = c['box_index'] - 1
             box_position = c['box_position']
@@ -3003,7 +3006,10 @@ CRITICAL RULES:
         
         cache_updated = False
 
-        for c in self.courses[start_idx:end_limit]:
+        for i, c in enumerate(self.courses):
+            if hasattr(self, 'specific_indices') and self.specific_indices:
+                if i not in self.specific_indices: continue
+            elif not (start_idx <= i < end_limit): continue
             uni = c.get('uni', 'Unknown')
             course_name = c.get('name', '')  # BUGFIX: The key is 'name', not 'course_name'
             country = str(c.get('country', '')).lower()
@@ -3050,7 +3056,10 @@ CRITICAL RULES:
 
         # Collect unique universities and their countries for standard ranking checks
         uni_map = {}
-        for c in self.courses[start_idx:end_limit]:
+        for i, c in enumerate(self.courses):
+            if hasattr(self, 'specific_indices') and self.specific_indices:
+                if i not in self.specific_indices: continue
+            elif not (start_idx <= i < end_limit): continue
             uni = c.get('uni', 'Unknown')
             if uni and uni != 'Unknown':
                 country = str(c.get('country', '')).lower()
@@ -8369,11 +8378,15 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             end_idx = len(self.courses)
         items_to_process = []
         for i, c in enumerate(self.courses):
-            if start_idx <= i < end_idx:
-                # Skip courses that were already successfully verified or definitively rejected in a previous checkpoint
-                if c.get("web_status") == "MATCH" or (c.get("web_status") == "FALSE" and c.get("reason", "") != ""):
-                    continue
-                items_to_process.append((i, c))
+            if hasattr(self, 'specific_indices') and self.specific_indices:
+                if i not in self.specific_indices: continue
+            elif not (start_idx <= i < end_idx):
+                continue
+            
+            # Skip courses that were already successfully verified or definitively rejected in a previous checkpoint
+            if c.get("web_status") == "MATCH" or (c.get("web_status") == "FALSE" and c.get("reason", "") != ""):
+                continue
+            items_to_process.append((i, c))
         retry_counts = {i: 0 for i, _ in items_to_process}
         
         while items_to_process:
@@ -8771,7 +8784,10 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         # Render sequentially
         counter = start_idx + 1
         end_val = end_idx if end_idx is not None else len(self.courses)
-        for c in self.courses[start_idx:end_val]:
+        for i, c in enumerate(self.courses):
+            if hasattr(self, 'specific_indices') and self.specific_indices:
+                if i not in self.specific_indices: continue
+            elif not (start_idx <= i < end_val): continue
             # Print if it was processed this run OR if it has a web_status (meaning it was verified in a previous checkpoint run)
             if not c.get('processed_this_run', False) and "web_status" not in c:
                 continue
@@ -8804,15 +8820,19 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
 if __name__ == "__main__":
 
 
-    specific_index = None
-    if '--index' in sys.argv:
-        idx_pos = sys.argv.index('--index')
-        try:
-            specific_index = int(sys.argv[idx_pos + 1])
-            sys.argv.pop(idx_pos)
-            sys.argv.pop(idx_pos)
-        except (IndexError, ValueError):
-            print("[!] Invalid --index provided.")
+    specific_indices = []
+    if '--index' in sys.argv or '--indexes' in sys.argv:
+        arg_name = '--index' if '--index' in sys.argv else '--indexes'
+        idx_pos = sys.argv.index(arg_name)
+        sys.argv.pop(idx_pos)
+        while idx_pos < len(sys.argv) and not sys.argv[idx_pos].startswith('-'):
+            try:
+                specific_indices.append(int(sys.argv[idx_pos]))
+                sys.argv.pop(idx_pos)
+            except ValueError:
+                break
+        if not specific_indices:
+            print("[!] Invalid --index/--indexes provided.")
             sys.exit(1)
 
     if not check_runtime_dependencies():
@@ -8841,7 +8861,7 @@ if __name__ == "__main__":
     start_idx = 0
     resume = False
     if os.path.exists(f"autonomous_verified_{os.path.basename(pdf_path)}.json"):
-        if specific_index is not None:
+        if specific_indices:
             choice = 'y'
             print("[*] Specific index mode detected. Auto-resuming from checkpoint to preserve data.")
         elif os.environ.get('CI') == 'true':
@@ -8908,14 +8928,14 @@ if __name__ == "__main__":
     max_page = max((c.get('page_num', 1) for c in agent.courses), default=1)
 
     # Ask the user for an optional manual start page
-    if specific_index is not None:
+    if specific_indices:
         pass # Skip asking for manual start page since we're using a specific index
     elif os.environ.get('CI') == 'true':
         manual_start = os.environ.get('START_PAGE', "")
     else:
         manual_start = input(f"\n[?] From which page number ({min_page}-{max_page}) do you want to start web verification? (Press Enter to use default/checkpoint): ").strip()
         
-    if specific_index is None and manual_start.isdigit():
+    if not specific_indices and manual_start.isdigit():
         start_page = int(manual_start)
         manual_idx = len(agent.courses)
         for i, c in enumerate(agent.courses):
@@ -8934,14 +8954,14 @@ if __name__ == "__main__":
     min_page = min((c.get('page_num', 1) for c in agent.courses), default=1)
     max_page = max((c.get('page_num', 1) for c in agent.courses), default=1)
     
-    if specific_index is not None:
+    if specific_indices:
         pass # Skip asking for manual end page
     elif os.environ.get('CI') == 'true':
         manual_end = os.environ.get('END_PAGE', "")
     else:
         manual_end = input(f"\n[?] Up to which page number ({min_page}-{max_page}) do you want to run web verification? (Press Enter for all remaining): ").strip()
         
-    if specific_index is None and manual_end.isdigit():
+    if not specific_indices and manual_end.isdigit():
         end_page = int(manual_end)
         for i, c in enumerate(agent.courses):
             if c.get('page_num', 1) > end_page:
@@ -8954,10 +8974,11 @@ if __name__ == "__main__":
         else:
             print(f"[*] Manually setting end index to {end_idx} (up to Page {end_page})")
 
-    if specific_index is not None:
-        start_idx = specific_index
-        end_idx = specific_index + 1
-        print(f"[*] Running ONLY for specific course index {specific_index}")
+    if specific_indices:
+        start_idx = min(specific_indices)
+        end_idx = max(specific_indices) + 1
+        print(f"[*] Running ONLY for specific course indices {specific_indices}")
+        agent.specific_indices = specific_indices
         # Force 1 browser if running locally
         if os.environ.get('CI') != 'true':
             os.environ['VERIFIER_NUM_BROWSERS'] = '1'
@@ -8987,8 +9008,8 @@ if __name__ == "__main__":
     print("\n[*] Verifying QS/NIRF rankings based on updated web extraction data...")
     agent.verify_rankings(start_idx=start_idx, end_idx=end_idx)
 
-    if specific_index is not None:
-        pdf_name = f"Single_Course_{specific_index}"
+    if specific_indices:
+        pdf_name = f"Single_Course_{specific_indices[0]}"
     elif os.environ.get('CI') == 'true':
         pdf_name = os.environ.get('PDF_NAME', "Autonomous_Course_Verification_Report")
     else:

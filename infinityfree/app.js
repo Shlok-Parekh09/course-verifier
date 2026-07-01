@@ -598,8 +598,9 @@ function renderVerificationTab() {
         tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No courses match the current filters.</td></tr>';
     } else {
         tbody.innerHTML = slice.map((c, i) => `
-            <tr onclick="openModal(${c.id})" title="Click to view details">
+            <tr onclick="openModal('${c.id}')">
                 <td>${(vfPage - 1) * PAGE_SIZE + i + 1}</td>
+                <td style="color:var(--text-muted);font-size:0.8rem;white-space:nowrap;">${c.pdf_page ? 'Pg ' + c.pdf_page : '-'}</td>
                 <td title="${escHtml(c.name)}">${escHtml(c.name)}</td>
                 <td title="${escHtml(c.university)}">${escHtml(c.university || '—')}</td>
                 <td>${escHtml(c.country || '—')}</td>
@@ -683,6 +684,7 @@ function renderSolvedTab() {
         
         tr.innerHTML = `
             <td style="color:var(--text-dim); font-size:0.8rem;">${c.id}</td>
+            <td style="color:var(--text-dim);font-size:0.8rem;white-space:nowrap;">${c.pdf_page ? 'Pg ' + c.pdf_page : '-'}</td>
             <td class="td-name">${escHtml(c.name)}</td>
             <td>${escHtml(c.university)}</td>
             <td>${escHtml(c.country || '—')}</td>
@@ -708,8 +710,9 @@ function renderCoursesTab() {
         tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No courses match the current filters.</td></tr>';
     } else {
         tbody.innerHTML = slice.map((c, i) => `
-            <tr onclick="openModal(${c.id})" title="Click to view details">
+            <tr onclick="openModal('${c.id}')">
                 <td>${(cfPage - 1) * PAGE_SIZE + i + 1}</td>
+                <td style="color:var(--text-muted);font-size:0.8rem;white-space:nowrap;">${c.pdf_page ? 'Pg ' + c.pdf_page : '-'}</td>
                 <td title="${escHtml(c.name)}">${escHtml(c.name)}</td>
                 <td title="${escHtml(c.university)}">${escHtml(c.university || '—')}</td>
                 <td>${escHtml(c.country || '—')}</td>

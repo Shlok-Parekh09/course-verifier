@@ -838,6 +838,7 @@ function renderCoursesPage() {
             const domainClick = `event.stopPropagation();courseFilter.domain='${escJs(domainCat)}';syncCourseFilters();applyCourseFilter();`;
             return `<tr onclick="showCourseModal('${c.id}')">
             <td class="col-idx">${c.id}</td>
+            <td style="color:var(--text-3);font-size:0.85rem;white-space:nowrap;">${c.pdf_page ? 'Pg ' + c.pdf_page : '-'}</td>
             <td class="course-name-cell" title="${escHtml(c.name)}"><strong>${escHtml(c.name)}</strong></td>
             <td>${escHtml(c.university || '—')}</td>
             <td>
