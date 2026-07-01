@@ -7962,8 +7962,34 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 web_language = "English"
                             print("    -> [Heuristic] Defaulted language to English.")
 
-                    # Country Match Google Search Fallback
-                    if not country_match and course_uni_check:
+                    # ── Parallel A8 (country) + A9 (Indian-college affiliation) checks ──
+                    # These two post-verify lookups are independent: A9's guard reads
+                    # course['country']/course_uni_check (not A8's country_match), and
+                    # their written variables are disjoint. Each does a googlesearch
+                    # plus one llm.generate (~12s). We run the search+LLM I/O
+                    # concurrently when BOTH are needed; all post-LLM mutation
+                    # (Anna heuristic, SequenceMatcher, flag writes) stays in this
+                    # main thread, byte-for-byte identical to the serial path.
+                    # Kill switch: VERIFIER_PARALLEL_AUX=false forces serial order.
+                    try:
+                        _parallel_aux = os.environ.get('VERIFIER_PARALLEL_AUX', 'true').lower() == 'true'
+                    except Exception:
+                        _parallel_aux = True
+
+                    pdf_country_lower = str(course.get('country', '')).lower()
+                    course_uni_lower = str(course_uni_check or '').lower()
+                    is_indian_college_bg = (
+                        'india' in pdf_country_lower and
+                        any(w in course_uni_lower for w in ['college', 'institute', 'school', 'academy']) and
+                        not any(w in course_uni_lower for w in ['university', 'iit ', 'iim ', 'nit ', 'iiit '])
+                    )
+                    _a8_needed = (not country_match and course_uni_check)
+                    _a9_needed = is_indian_college_bg
+                    course_name_short = str(course.get('name', ''))[:80]
+
+                    def _a8_country_search_and_llm():
+                        # googlesearch + LLM -> raw YES/NO response string, or None.
+                        # No outer-scope mutation; returns a value only.
                         print(f"    -> Missing country match. Searching Google in background for {course_uni_check} country...")
                         try:
                             from googlesearch import search
@@ -7974,40 +8000,21 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     g_results.append((str(g_url.title) + " " + str(g_url.description)).lower())
                                 else:
                                     g_results.append(str(g_url).lower())
-                            
+
                             g_text = " ".join(g_results)
                             target_country = str(course.get('country', '')).lower()
-                            
+
                             if target_country and target_country != "unknown" and g_text:
                                 llm = get_llm_manager()
                                 prompt = f"Based on these Google Search snippets, is the university '{course_uni_check}' located in or affiliated with the country '{target_country}'? Respond ONLY with 'YES' or 'NO'. Snippets: {g_text[:2000]}"
-                                res = llm.generate(prompt, temperature=0.0).strip().upper()
-                                if res and "YES" in res:
-                                    country_match = True
-                                    web_country = f"{course.get('country', '')} (Verified via Background AI Google Search)"
-                                    print(f"    -> [Heuristic] Country verified via background AI Google Search.")
+                                return llm.generate(prompt, temperature=0.0)
                         except Exception as e:
                             print(f"    -> [Heuristic] Background Google Search failed: {e}")
+                        return None
 
-                    course['country_verified'] = web_country
-                    course['country_match'] = country_match
-
-                    # ── Indian College University Background Search ──
-                    # If the course is from an Indian college (not a university),
-                    # search Google to find which university that college is
-                    # affiliated to for this specific course. If the PDF's
-                    # university does NOT match the found university, set
-                    # uni_match = False and state that the college is not
-                    # affiliated to the claimed university.
-                    pdf_country_lower = str(course.get('country', '')).lower()
-                    course_uni_lower = str(course_uni_check or '').lower()
-                    is_indian_college_bg = (
-                        'india' in pdf_country_lower and
-                        any(w in course_uni_lower for w in ['college', 'institute', 'school', 'academy']) and
-                        not any(w in course_uni_lower for w in ['university', 'iit ', 'iim ', 'nit ', 'iiit '])
-                    )
-                    if is_indian_college_bg:
-                        course_name_short = str(course.get('name', ''))[:80]
+                    def _a9_indian_college_search_and_llm():
+                        # googlesearch + LLM -> raw ACTUAL_UNIVERSITY/CONFIDENCE response, or None.
+                        # No outer-scope mutation; returns a value only.
                         print(f"    -> [Indian College Check] Searching affiliation for '{course_uni_check}' (course: {course_name_short})...")
                         try:
                             from googlesearch import search as g_search
@@ -8030,61 +8037,106 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     f"ACTUAL_UNIVERSITY: <university name or UNKNOWN>\n"
                                     f"CONFIDENCE: <HIGH/MEDIUM/LOW>"
                                 )
-                                res_bg = llm.generate(prompt, temperature=0.0)
-                                actual_uni = "UNKNOWN"
-                                confidence = "LOW"
-                                for line in str(res_bg).split('\n'):
-                                    if 'ACTUAL_UNIVERSITY:' in line.upper():
-                                        actual_uni = line.split(':', 1)[-1].strip()
-                                    if 'CONFIDENCE:' in line.upper():
-                                        confidence = line.split(':', 1)[-1].strip().upper()
-
-                                if actual_uni and actual_uni.upper() != 'UNKNOWN' and confidence in ('HIGH', 'MEDIUM'):
-                                    print(f"    -> [Indian College Check] Found affiliation: {actual_uni} (confidence: {confidence})")
-                                    
-                                    # Apply Anna Univ heuristic if Google Search found it
-                                    anna_inds = ['anna university', 'anna univ']
-                                    if any(ind in actual_uni.lower() for ind in anna_inds) or 'anna' in actual_uni.lower():
-                                        val_str = str(course.get('cost', '0')).lower()
-                                        cleaned = re.sub(r'[₹$£€,a-zA-Z\s]', '', val_str)
-                                        try:
-                                            pdf_cost_num = float(re.search(r'\d+(\.\d+)?', cleaned).group()) if re.search(r'\d+(\.\d+)?', cleaned) else 0.0
-                                        except:
-                                            pdf_cost_num = 0.0
-                                            
-                                        if pdf_cost_num in (200000.0, 220000.0):
-                                            cost_match = True
-                                            fmt_cost = "2,20,000" if pdf_cost_num == 220000.0 else "2,00,000"
-                                            web_cost = f"Rs. {fmt_cost} (Anna University Regulated Fee Match via Google Search)"
-                                            print("    -> [Heuristic] Applied Anna University regulated fee override via Google Search (MATCH).")
-                                            
-                                        if durations_equivalent(course.get('duration', ''), "4 Years")[0]:
-                                            duration_match = True
-                                            web_duration = "4 Years (Anna University Standard Duration)"
-                                            print("    -> [Heuristic] Applied Anna University standard 4-year duration override via Google Search (MATCH).")
-
-                                    # Check if the PDF's university matches the found university
-                                    from difflib import SequenceMatcher
-                                    sim = SequenceMatcher(None, course_uni_lower, actual_uni.lower()).ratio()
-                                    if sim < 0.45 and actual_uni.lower() not in course_uni_lower and course_uni_lower not in actual_uni.lower():
-                                        # Mismatch: college is NOT affiliated to the PDF's university
-                                        uni_match = False
-                                        uni_detail_msg = (
-                                            f"The college '{course_uni_check}' is not affiliated to the stated university for this course. "
-                                            f"It is affiliated to '{actual_uni}'."
-                                        )
-                                        llm_unid = uni_detail_msg
-                                        if not uni_match:
-                                            course['disc_reason'] = (course.get('disc_reason', '') or '').strip()
-                                            if 'University' not in course['disc_reason']:
-                                                course['disc_reason'] = (course['disc_reason'] + ' | University mismatch: ' + uni_detail_msg).strip(' |')
-                                        print(f"    -> [Indian College Check] MISMATCH! PDF says '{course_uni_check}' but actual is '{actual_uni}'. Setting uni_match=False.")
-                                    else:
-                                        print(f"    -> [Indian College Check] Affiliation matches PDF university (sim={sim:.2f}).")
-                                else:
-                                    print(f"    -> [Indian College Check] Could not determine affiliation (actual={actual_uni}, conf={confidence}).")
+                                return llm.generate(prompt, temperature=0.0)
                         except Exception as e:
                             print(f"    -> [Indian College Check] Background search failed: {e}")
+                        return None
+
+                    # Dispatch: concurrent only when both are needed (and kill switch on).
+                    _res_a8 = None
+                    _res_a9 = None
+                    if _a8_needed and _a9_needed and _parallel_aux:
+                        from concurrent.futures import ThreadPoolExecutor
+                        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="AuxLLM") as _aux_ex:
+                            _fut_a8 = _aux_ex.submit(_a8_country_search_and_llm)
+                            _fut_a9 = _aux_ex.submit(_a9_indian_college_search_and_llm)
+                            try:
+                                _res_a8 = _fut_a8.result()
+                            except Exception as e:
+                                print(f"    -> [Heuristic] Background Google Search failed: {e}")
+                                _res_a8 = None
+                            try:
+                                _res_a9 = _fut_a9.result()
+                            except Exception as e:
+                                print(f"    -> [Indian College Check] Background search failed: {e}")
+                                _res_a9 = None
+                    else:
+                        _res_a8 = _a8_country_search_and_llm() if _a8_needed else None
+                        _res_a9 = _a9_indian_college_search_and_llm() if _a9_needed else None
+
+                    # ── A8 post-processing (main thread; identical to serial path) ──
+                    if _a8_needed:
+                        res = (_res_a8 or "").strip().upper()
+                        if res and "YES" in res:
+                            country_match = True
+                            web_country = f"{course.get('country', '')} (Verified via Background AI Google Search)"
+                            print(f"    -> [Heuristic] Country verified via background AI Google Search.")
+
+                    course['country_verified'] = web_country
+                    course['country_match'] = country_match
+
+                    # ── A9 post-processing (main thread; identical to serial path) ──
+                    # If the course is from an Indian college (not a university),
+                    # search Google to find which university that college is
+                    # affiliated to for this specific course. If the PDF's
+                    # university does NOT match the found university, set
+                    # uni_match = False and state that the college is not
+                    # affiliated to the claimed university.
+                    if _a9_needed:
+                        res_bg = _res_a9
+                        actual_uni = "UNKNOWN"
+                        confidence = "LOW"
+                        if res_bg:
+                            for line in str(res_bg).split('\n'):
+                                if 'ACTUAL_UNIVERSITY:' in line.upper():
+                                    actual_uni = line.split(':', 1)[-1].strip()
+                                if 'CONFIDENCE:' in line.upper():
+                                    confidence = line.split(':', 1)[-1].strip().upper()
+
+                            if actual_uni and actual_uni.upper() != 'UNKNOWN' and confidence in ('HIGH', 'MEDIUM'):
+                                print(f"    -> [Indian College Check] Found affiliation: {actual_uni} (confidence: {confidence})")
+
+                                # Apply Anna Univ heuristic if Google Search found it
+                                anna_inds = ['anna university', 'anna univ']
+                                if any(ind in actual_uni.lower() for ind in anna_inds) or 'anna' in actual_uni.lower():
+                                    val_str = str(course.get('cost', '0')).lower()
+                                    cleaned = re.sub(r'[₹$£€,a-zA-Z\s]', '', val_str)
+                                    try:
+                                        pdf_cost_num = float(re.search(r'\d+(\.\d+)?', cleaned).group()) if re.search(r'\d+(\.\d+)?', cleaned) else 0.0
+                                    except:
+                                        pdf_cost_num = 0.0
+
+                                    if pdf_cost_num in (200000.0, 220000.0):
+                                        cost_match = True
+                                        fmt_cost = "2,20,000" if pdf_cost_num == 220000.0 else "2,00,000"
+                                        web_cost = f"Rs. {fmt_cost} (Anna University Regulated Fee Match via Google Search)"
+                                        print("    -> [Heuristic] Applied Anna University regulated fee override via Google Search (MATCH).")
+
+                                    if durations_equivalent(course.get('duration', ''), "4 Years")[0]:
+                                        duration_match = True
+                                        web_duration = "4 Years (Anna University Standard Duration)"
+                                        print("    -> [Heuristic] Applied Anna University standard 4-year duration override via Google Search (MATCH).")
+
+                                # Check if the PDF's university matches the found university
+                                from difflib import SequenceMatcher
+                                sim = SequenceMatcher(None, course_uni_lower, actual_uni.lower()).ratio()
+                                if sim < 0.45 and actual_uni.lower() not in course_uni_lower and course_uni_lower not in actual_uni.lower():
+                                    # Mismatch: college is NOT affiliated to the PDF's university
+                                    uni_match = False
+                                    uni_detail_msg = (
+                                        f"The college '{course_uni_check}' is not affiliated to the stated university for this course. "
+                                        f"It is affiliated to '{actual_uni}'."
+                                    )
+                                    llm_unid = uni_detail_msg
+                                    if not uni_match:
+                                        course['disc_reason'] = (course.get('disc_reason', '') or '').strip()
+                                        if 'University' not in course['disc_reason']:
+                                            course['disc_reason'] = (course['disc_reason'] + ' | University mismatch: ' + uni_detail_msg).strip(' |')
+                                    print(f"    -> [Indian College Check] MISMATCH! PDF says '{course_uni_check}' but actual is '{actual_uni}'. Setting uni_match=False.")
+                                else:
+                                    print(f"    -> [Indian College Check] Affiliation matches PDF university (sim={sim:.2f}).")
+                            else:
+                                print(f"    -> [Indian College Check] Could not determine affiliation (actual={actual_uni}, conf={confidence}).")
 
                     # Swayam/NPTEL cost override
                     is_nptel_swayam = "nptel.ac.in" in driver.current_url.lower() or "swayam.gov.in" in driver.current_url.lower()
