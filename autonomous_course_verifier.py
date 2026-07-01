@@ -3598,6 +3598,25 @@ CRITICAL RULES:
                         if VISION_PAGE_CAP <= 0:
                             VISION_PAGE_CAP = 8
                         vision_pages_sent = 0
+                        # ── Parallel fee-PDF OCR (accuracy-neutral) ──
+                        # Per-page vision OCR calls are independent of each
+                        # other, so we collect the pages to OCR (selection +
+                        # render + base64 encode, all serial — PyMuPDF is NOT
+                        # thread-safe), then fire their generate_with_image
+                        # calls concurrently through the LLM semaphore, then
+                        # reassemble + Tesseract-fallback in page order. Same
+                        # prompt, same images, same selection logic, same
+                        # fallback rule — only the timing changes. Kill switch:
+                        # VERIFIER_PARALLEL_FEE_OCR=false restores serial OCR.
+                        try:
+                            _parallel_fee_ocr = os.environ.get('VERIFIER_PARALLEL_FEE_OCR', 'true').lower() == 'true'
+                        except Exception:
+                            _parallel_fee_ocr = True
+
+                        _VISION_OCR_PROMPT = "Extract all the text in this image perfectly. If there are tables, extract all rows and columns accurately, preserving all numbers and fees. Output only the exact text from the image."
+
+                        # Phase 1: serial selection + render + encode (no LLM calls)
+                        pages_to_ocr = []  # ordered list of {page_idx, b64_img, gray}
                         for page_idx, page in enumerate(doc):
                             if page_idx > 60: break # Absolute max limit of 60 pages to prevent infinite loops
                             # Use higher resolution matrix (3,3) ~216 DPI to handle blurred/photo PDFs
@@ -3630,29 +3649,51 @@ CRITICAL RULES:
                             if use_vision:
                                 vision_pages_sent += 1
                                 print(f"      -> [PDF OCR] Fee keywords detected! Using Ollama Vision for perfect extraction on page {page_idx+1}...")
+                                _, buffer = cv2.imencode('.jpg', img_data)
+                                b64_img = base64.b64encode(buffer).decode('utf-8')
                             else:
                                 print(f"      -> [PDF OCR] Vision page cap ({VISION_PAGE_CAP}) reached; using Tesseract for page {page_idx+1}...")
+                                b64_img = None  # no vision call; Tesseract fallback runs in Phase 3
+                            pages_to_ocr.append({'page_idx': page_idx, 'b64_img': b64_img, 'gray': gray})
 
-                            ocr_text = None
+                        # Phase 2: fire vision OCR calls concurrently (only for pages with b64_img).
+                        # The shared _llm_semaphore already caps in-flight HTTP at OLLAMA_MAX_CONCURRENCY,
+                        # so sizing the pool to max_concurrency avoids pointless queueing.
+                        ocr_results = {}  # page_idx -> ocr_text (or None)
+                        _llm_ocr = get_llm_manager()
+
+                        def _vision_ocr_page(item):
+                            if item['b64_img'] is None:
+                                return item['page_idx'], None
                             try:
-                                if use_vision:
-                                    _, buffer = cv2.imencode('.jpg', img_data)
-                                    b64_img = base64.b64encode(buffer).decode('utf-8')
-                                    llm = get_llm_manager()
-                                    ocr_text = llm.generate_with_image("Extract all the text in this image perfectly. If there are tables, extract all rows and columns accurately, preserving all numbers and fees. Output only the exact text from the image.", b64_img)
+                                return item['page_idx'], _llm_ocr.generate_with_image(_VISION_OCR_PROMPT, item['b64_img'])
                             except Exception as e:
-                                print(f"      -> Warning: Vision API OCR failed: {e}")
+                                print(f"      -> Warning: Vision API OCR failed for page {item['page_idx']+1}: {e}")
+                                return item['page_idx'], None
 
-                            # If vision was skipped OR failed (timeout/error),
-                            # fall back to a full-resolution Tesseract pass so the
-                            # page's text isn't lost entirely. fast_text was
-                            # downscaled; re-run at full res for accuracy.
+                        _vision_pages = [it for it in pages_to_ocr if it['b64_img'] is not None]
+                        if _parallel_fee_ocr and len(_vision_pages) > 1:
+                            from concurrent.futures import ThreadPoolExecutor
+                            _ocr_workers = max(1, getattr(_llm_ocr, 'max_concurrency', 3))
+                            with ThreadPoolExecutor(max_workers=_ocr_workers, thread_name_prefix="FeeOCR") as _ocr_ex:
+                                for _pidx, _txt in _ocr_ex.map(_vision_ocr_page, _vision_pages):
+                                    ocr_results[_pidx] = _txt
+                        else:
+                            for _it in _vision_pages:
+                                _pidx, _txt = _vision_ocr_page(_it)
+                                ocr_results[_pidx] = _txt
+
+                        # Phase 3: reassemble in original page order + Tesseract fallback (serial, in order).
+                        # If vision was skipped OR failed (timeout/error), fall back to a full-resolution
+                        # Tesseract pass so the page's text isn't lost entirely. fast_text was downscaled;
+                        # re-run at full res for accuracy.
+                        for item in pages_to_ocr:
+                            ocr_text = ocr_results.get(item['page_idx'])
                             if not ocr_text or not ocr_text.strip():
                                 try:
-                                    ocr_text = pytesseract.image_to_string(gray)
+                                    ocr_text = pytesseract.image_to_string(item['gray'])
                                 except Exception:
                                     ocr_text = ""
-
                             if ocr_text:
                                 pdf_text += ocr_text + "\n"
                                 
