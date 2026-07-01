@@ -6652,30 +6652,63 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     import traceback
                     print(f"    -> [Error] Failed to initialize browser: {e}")
                     traceback.print_exc()
-        # Setup Thread Local Stdout for Sequential Logging
+        # Setup Thread-Tagged Live Stdout for streaming CI logs
         import sys
         import threading
         from io import StringIO
-        
-        class ThreadLocalStdout:
+
+        class TaggedLiveStdout:
+            """Streams each worker thread's print() output directly to the real
+            stdout, prefixing every line with '[Thread N] ' so concurrently
+            running courses stay distinguishable in the CI log. Replaces the
+            old per-course StringIO buffer that only flushed on completion
+            (which left long-running courses invisible until they finished and
+            lost all detail when a course crashed or timed out)."""
             def __init__(self, original):
                 self.original = original
                 self.local = threading.local()
+                self._lock = threading.Lock()
+            def _state(self):
+                if not hasattr(self.local, 'tag'):
+                    self.local.tag = None
+                    self.local.at_line_start = True
+                return self.local.tag, self.local.at_line_start
             def write(self, data):
-                if hasattr(self.local, 'buffer'):
-                    self.local.buffer.write(data)
-                else:
-                    self.original.write(data)
+                if not data:
+                    return 0
+                tag, at_line_start = self._state()
+                with self._lock:
+                    if tag is None:
+                        # Main thread / untagged callers: pass through plainly.
+                        self.original.write(data)
+                    else:
+                        out = []
+                        for line in data.splitlines(keepends=True):
+                            if at_line_start:
+                                out.append(f"[Thread {tag}] {line}")
+                            else:
+                                out.append(line)
+                            at_line_start = line.endswith('\n') or line.endswith('\r')
+                        self.original.write(''.join(out))
+                    # Flush every chunk so the CI log streams live (stdout is
+                    # block-buffered when not attached to a TTY).
+                    try:
+                        self.original.flush()
+                    except Exception:
+                        pass
+                self.local.at_line_start = at_line_start
+                return len(data)
             def flush(self):
-                if hasattr(self.local, 'buffer'):
-                    pass
-                else:
-                    self.original.flush()
+                with self._lock:
+                    try:
+                        self.original.flush()
+                    except Exception:
+                        pass
             def __getattr__(self, name):
                 return getattr(self.original, name)
-                
+
         original_stdout = sys.stdout
-        tl_stdout = ThreadLocalStdout(original_stdout)
+        tl_stdout = TaggedLiveStdout(original_stdout)
         sys.stdout = tl_stdout
 
         class EarlyExit(Exception): pass
@@ -6684,12 +6717,16 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
 
 
         def process_course(item):
-            sys.stdout.local.buffer = StringIO()
             import numpy as np
             i, course = item
             course['processed_this_run'] = True
             worker_id, driver, usage_count = browser_pool.get()
             usage_count += 1
+            # Tag this worker thread so every per-course print() streams live
+            # to the CI log prefixed with [Thread N] (replaces the old
+            # per-course StringIO buffer that only dumped on completion).
+            sys.stdout.local.tag = worker_id
+            sys.stdout.local.at_line_start = True
             # Register this driver as "active" so the dispatcher can quit() it
             # if the course exceeds VERIFIER_COURSE_TIMEOUT, unblocking this worker.
             with active_drivers_lock:
@@ -6699,10 +6736,10 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             
             # Removed psutil sleep loop to prevent deadlocks and CPU stalling
             
-            # Print to global stdout immediately so user knows it isn't stuck
+            # Print through the tagged wrapper so the line is prefixed with
+            # [Thread N] and streams live (flush=True for immediate CI visibility).
             course_name = course.get("name", "Unknown")
-            original_stdout.write(f"  [Thread {worker_id}] Started verifying: {course_name[:40]}...\n")
-            original_stdout.flush()
+            print(f"Started verifying: {course_name[:40]}...", flush=True)
             
 
             
@@ -6720,8 +6757,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 # If course was already verified (e.g. from a checkpoint or previous multithreaded run), skip it immediately
                 # Unverified courses have web_status="FALSE" and reason=""
                 if course.get("web_status") == "MATCH" or course.get("reason", "") != "":
-                    original_stdout.write(f"    -> [Skipped] Course already verified in checkpoint data.\n")
-                    original_stdout.flush()
+                    print("    -> [Skipped] Course already verified in checkpoint data.", flush=True)
                     raise EarlyExit()
                     
                 cache_key = f"{url}::{normalize(course.get('name', ''))}"
@@ -6736,8 +6772,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 if "ndu.digital" in url.lower():
                     ndu_text = self._get_ndu_page_text()
                     if ndu_text:
-                        original_stdout.write(f"    -> [Worker {worker_id}] Using local NDU screenshots for {course['name']}...\n")
-                        original_stdout.flush()
+                        print(f"    -> Using local NDU screenshots for {course['name']}...", flush=True)
                         c_m, s_m, l_skd, d_m, l_durd, m_m, l_modd, l_m, l_land, l_costd, co_m, l_countryd, u_m, l_unid = self._verify_details_with_llm(course, ndu_text, worker_id=worker_id)
                         
                         course['web_cost'] = l_costd if l_costd and l_costd != "Not Found" else "Tuition fees subject to policies."
@@ -6781,8 +6816,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 print(f"  [{i + 1}/{len(self.courses)}] Investigating: {url}")
                 
                 if "coursera.org" in url.lower() and "certificate" in course.get("name", "").lower():
-                    original_stdout.write(f"    -> [Coursera] Detected 'certificate' in course name. Triggering on-demand login.\n")
-                    original_stdout.flush()
+                    print("    -> [Coursera] Detected 'certificate' in course name. Triggering on-demand login.", flush=True)
                     self._perform_platform_logins(driver)
 
                 # SPEED: Domain health fast-skip if domain has 5+ recent issues
@@ -8630,9 +8664,11 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 with course_start_lock:
                     course_start_times.pop(i, None)
 
-                logs = sys.stdout.local.buffer.getvalue()
-                del sys.stdout.local.buffer
-                
+                # Per-course logs were streamed live above; nothing buffered.
+                # Clear the thread tag so the worker doesn't leak it between courses.
+                sys.stdout.local.tag = None
+                sys.stdout.local.at_line_start = True
+                logs = ""
 
                 
                 import gc
@@ -8707,12 +8743,9 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         course_idx = item[0]
                         course_name = item[1].get('name', '?') if isinstance(item, tuple) else '?'
                         try:
-                            idx, logs = future.result()
-                            try:
-                                original_stdout.write(logs)
-                            except UnicodeEncodeError:
-                                original_stdout.write(logs.encode('ascii', 'replace').decode('ascii'))
-                            original_stdout.flush()
+                            # Logs were streamed live during processing; just surface
+                            # any exception here (no buffered dump needed).
+                            future.result()
                         except BrowserCrashRetryException as e:
                             if retry_counts[course_idx] < 2:
                                 retry_counts[course_idx] += 1
