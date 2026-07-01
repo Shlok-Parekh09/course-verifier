@@ -6097,6 +6097,36 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
                 vision_max_rounds = 6
             if vision_max_rounds <= 0:
                 vision_max_rounds = 6
+
+            # ── Smart settle wait (accuracy-neutral) ──
+            # The fixed time.sleep() after each scroll/hover/click/back was a
+            # render-settle guess. Replace it with a WebDriverWait that polls
+            # document.readyState=='complete' (and, for clicks, a body innerText
+            # length change) so we return as soon as the page has actually
+            # settled. Capped at the original sleep value with a small floor for
+            # render-sensitive actions, so worst case == today's sleep and best
+            # case (content already loaded) returns ~immediately. Kill switch:
+            # VERIFIER_SMART_WAIT=false keeps the original fixed sleeps.
+            try:
+                _smart_wait = os.environ.get('VERIFIER_SMART_WAIT', 'true').lower() == 'true'
+            except Exception:
+                _smart_wait = True
+
+            def _settle_wait(cap, floor=0.0, expect_text_change=False, baseline_len=None):
+                if not _smart_wait:
+                    time.sleep(cap)
+                    return
+                if floor > 0:
+                    time.sleep(floor)
+                try:
+                    WebDriverWait(driver, max(0.1, cap - floor)).until(
+                        lambda d: d.execute_script("return document.readyState") == "complete"
+                        and (not expect_text_change
+                             or len(d.execute_script("return document.body ? document.body.innerText : ''") or "") != baseline_len)
+                    )
+                except Exception:
+                    pass  # timeout == worst case == today's full sleep
+
             for vision_round in range(vision_max_rounds):
                 self._inject_beautiful_cursor(driver)
                 print(f"    -> [Smart Agent] [Round {vision_round+1}] Scanning DOM for '{missing_info}'...")
@@ -6215,7 +6245,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         driver.execute_script("window.scrollBy(0, window.innerHeight * 0.8);")
                     else:
                         driver.execute_script("window.scrollBy(0, -window.innerHeight * 0.8);")
-                    time.sleep(1.5)
+                    _settle_wait(1.5)
                     
                 elif action == "hover":
                     eid = str(action_data.get("id"))
@@ -6239,7 +6269,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 }}
                             """
                             driver.execute_script(js_hover)
-                            time.sleep(1.5)
+                            _settle_wait(1.5, floor=0.4)
                         except Exception as e:
                             print(f"      -> [Smart Agent] Hover failed: {e}")
                     else:
@@ -6257,14 +6287,15 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             # Move cursor and click
                             driver.execute_script(f"if(window.moveBeautifulCursor) window.moveBeautifulCursor({x}, {y});")
                             time.sleep(0.5)
+                            _click_baseline = len(driver.execute_script("return document.body ? document.body.innerText : ''") or "")
                             driver.execute_script(f"var el = window.__llm_elements[{eid}]; if(el){{ el.scrollIntoView({{behavior: 'smooth', block: 'center'}}); setTimeout(() => {{ el.click(); }}, 300); }}")
-                            time.sleep(2.0)
+                            _settle_wait(2.0, floor=0.4, expect_text_change=True, baseline_len=_click_baseline)
 
                             # Handle tabs/navigation
                             if len(driver.window_handles) > 1:
                                 print(f"      -> [Smart Agent] Navigated away. Returning...")
                                 driver.back()
-                                time.sleep(1.5)
+                                _settle_wait(1.5)
 
                             # Grab new text
                             new_text = driver.execute_script("return document.body ? document.body.innerText : '';")
@@ -6276,7 +6307,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     else:
                         print(f"      -> [Smart Agent] Element ID {eid} not found on screen. Scrolling down as fallback.")
                         driver.execute_script("window.scrollBy(0, window.innerHeight * 0.8);")
-                        time.sleep(1.5)
+                        _settle_wait(1.5)
 
                 # Remove old bounding boxes before next round
                 try:
