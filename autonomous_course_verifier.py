@@ -6710,6 +6710,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     
                 url = course.get("url")
                 if not url or url == "Unknown":
+                    print(f"    -> [Skip-NoURL] {course.get('name','?')[:40]} — no valid URL in PDF.")
                     course['web_status'] = "FALSE"
                     course['reason'] = "No valid URL found in PDF."
                     course['direct_link_working'] = False
@@ -6725,6 +6726,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     
                 cache_key = f"{url}::{normalize(course.get('name', ''))}"
                 if cache_key in url_cache:
+                    print(f"    -> [Skip-Cache] {course.get('name','?')[:40]} — already in url_cache.")
                     cached = url_cache[cache_key]
                     for k in ['web_status', 'reason', 'web_name', 'web_cost', 'web_uni', 'skills_verified', 'scholarship_found', 'is_hard_error', 'issue_category', 'issue_sub_type', 'error_screenshot_path', 'retry_count']:
                         course[k] = cached.get(k, course.get(k, False))
@@ -6846,6 +6848,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         ("error" in initial_title.lower() and len(initial_body) < 500)
                     )
                     if initial_not_found:
+                        print(f"    -> [404] {url} — initial page returned error/not-found state (title: '{(initial_title or '')[:40]}').")
                         sub_type = detect_website_issue_from_page(initial_title, initial_body)
                         raw_reason = f"Initial page returned an error/not-found state. Page title: '{initial_title}'."
                         course['web_status'] = "FALSE"
