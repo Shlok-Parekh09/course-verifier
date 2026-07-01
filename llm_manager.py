@@ -12,7 +12,6 @@ load_dotenv()
 class LLMManager:
     def __init__(self):
         self.openrouter_keys = [os.environ.get(f"OPENROUTER_KEY_{i}") for i in range(1, 7) if os.environ.get(f"OPENROUTER_KEY_{i}")]
-        self.puter_keys = [os.environ.get(f"PUTER_KEY_{i}") for i in range(1, 7) if os.environ.get(f"PUTER_KEY_{i}")]
         self.gemini_keys = [os.environ.get(f"GEMINI_KEY_{i}") for i in range(1, 7) if os.environ.get(f"GEMINI_KEY_{i}")]
         self.nvidia_keys = [os.environ.get(f"NVIDIA_KEY_{i}") for i in range(1, 7) if os.environ.get(f"NVIDIA_KEY_{i}")]
         self.groq_keys = [os.environ.get(f"GROQ_API_KEY_{i}") for i in range(1, 7) if os.environ.get(f"GROQ_API_KEY_{i}")] or ([os.environ.get("GROQ_API_KEY")] if os.environ.get("GROQ_API_KEY") else [])
@@ -62,8 +61,8 @@ class LLMManager:
         # ── Diagnostic logging ──
         print(f"[LLM Manager] Keys loaded: Mistral={len(self.mistral_keys)}, NVIDIA={len(self.nvidia_keys)}, "
               f"Gemini={len(self.gemini_keys)}, OpenRouter={len(self.openrouter_keys)}, "
-              f"Groq={len(self.groq_keys)}, SambaNova={len(self.sambanova_keys)}, Puter={len(self.puter_keys)}")
-        if not any([self.mistral_keys, self.nvidia_keys, self.gemini_keys, self.openrouter_keys, self.groq_keys, self.sambanova_keys, self.puter_keys]):
+              f"Groq={len(self.groq_keys)}, SambaNova={len(self.sambanova_keys)}")
+        if not any([self.mistral_keys, self.nvidia_keys, self.gemini_keys, self.openrouter_keys, self.groq_keys, self.sambanova_keys]):
             print("[LLM Manager] ⚠ WARNING: No text-generation API keys found! All LLM calls will return None.")
 
     def _rate_limit(self, key_identifier: str, min_interval: float = 4.29):
@@ -136,7 +135,7 @@ class LLMManager:
                     if res: return res
                 print(f"      -> [LLM Manager] Worker {worker_id+1}'s OpenRouter keys failed. Failing over to NVIDIA...")
 
-            if self.nvidia_keys and provider == "nvidia":
+            if self.nvidia_keys and provider in ["auto", "nvidia"]:
                 for idx in self._get_key_sequence(worker_id, len(self.nvidia_keys)):
                     n_key = self.nvidia_keys[idx]
                     key_id = f"nvidia_{idx}"
@@ -144,17 +143,17 @@ class LLMManager:
                     self._rate_limit(key_id, min_interval=1.0)
                     res = self._call_nvidia(n_key, prompt, system, format, 0.0, timeout=timeout)
                     if res: return res
-                print(f"      -> [LLM Manager] Worker {worker_id+1}'s NVIDIA keys failed.")
+                print(f"      -> [LLM Manager] Worker {worker_id+1}'s NVIDIA keys failed. Failing over to Gemini...")
 
-            if self.puter_keys and provider == "puter":
-                for idx in self._get_key_sequence(worker_id, len(self.puter_keys)):
-                    p_key = self.puter_keys[idx]
-                    key_id = f"puter_{idx}"
-                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying Puter Key {idx+1} (Gemini 1.5 Pro)...")
-                    self._rate_limit(key_id, min_interval=1.0)
-                    res = self._call_puter(p_key, prompt, system, format, 0.0, timeout=timeout)
+            if self.gemini_keys and provider in ["auto", "gemini"]:
+                for idx in self._get_key_sequence(worker_id, len(self.gemini_keys)):
+                    g_key = self.gemini_keys[idx]
+                    key_id = f"gemini_text_{idx}"
+                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying Gemini Key {idx+1} (Gemini 2.5 Flash)...")
+                    self._rate_limit(key_id, min_interval=4.0)
+                    res = self._call_gemini(g_key, prompt, system, format, 0.0, model_name="gemini-2.5-flash")
                     if res: return res
-                print(f"      -> [LLM Manager] Worker {worker_id+1}'s Puter keys failed.")
+                print(f"      -> [LLM Manager] Worker {worker_id+1}'s Gemini keys failed.")
 
             return None
 
@@ -196,7 +195,7 @@ class LLMManager:
                 print(f"      -> [LLM Manager] OpenRouter Key {idx+1} failed. Failing over...")
 
         # Provider 4: NVIDIA
-        if provider == "nvidia":
+        if provider in ["auto", "nvidia"]:
             for idx, key in enumerate(self.nvidia_keys):
                 print(f"      -> [LLM Manager] Trying NVIDIA Key {idx+1}/{len(self.nvidia_keys)} (Llama 70B)...")
                 self._rate_limit(f"nvidia_{idx}", min_interval=1.0)
@@ -204,25 +203,16 @@ class LLMManager:
                 if result: return result
                 print(f"      -> [LLM Manager] NVIDIA Key {idx+1} failed. Failing over...")
 
-        # Provider 5: GEMINI
+        # Provider 5: GEMINI (Gemini 2.5 Flash - 1M context, final fallback)
         if provider in ["auto", "gemini"]:
             for idx, key in enumerate(self.gemini_keys):
-                print(f"      -> [LLM Manager] Trying Gemini Key {idx+1}/{len(self.gemini_keys)}...")
+                print(f"      -> [LLM Manager] Trying Gemini Key {idx+1}/{len(self.gemini_keys)} (Gemini 2.5 Flash)...")
                 self._rate_limit(f"gemini_{idx}", min_interval=1.0)
-                result = self._call_gemini(key, prompt, system, format, 0.0)
+                result = self._call_gemini(key, prompt, system, format, 0.0, model_name="gemini-2.5-flash")
                 if result: return result
                 print(f"      -> [LLM Manager] Gemini Key {idx+1} failed. Failing over...")
 
-        # Provider 6: PUTER
-        if provider == "puter":
-            for idx, key in enumerate(self.puter_keys):
-                print(f"      -> [LLM Manager] Trying Puter Key {idx+1}/{len(self.puter_keys)}...")
-                self._rate_limit(f"puter_{idx}", min_interval=1.0)
-                result = self._call_puter(key, prompt, system, format, 0.0, timeout=timeout)
-                if result: return result
-                print(f"      -> [LLM Manager] Puter Key {idx+1} failed. Failing over...")
-
-        print("      -> [LLM Manager] CRITICAL ERROR: All API keys for Mistral, Groq, SambaNova, OpenRouter, NVIDIA, Gemini, and Puter failed!")
+        print("      -> [LLM Manager] CRITICAL ERROR: All API keys for Mistral, Groq, SambaNova, OpenRouter, NVIDIA, and Gemini failed!")
         return None
 
     def generate_with_image(self, prompt: str, base64_image: str, system: Optional[str] = None, worker_id: int = None) -> Optional[str]:
@@ -367,7 +357,7 @@ class LLMManager:
             return None
 
     def _call_gemini(self, api_key: str, prompt: str, system: Optional[str], format: str, temperature: float, model_name: str = None) -> Optional[str]:
-        # Gemma 4 31B for text verification (user requested exact string)
+        # Gemma 4 31B for text verification (default)
         if not model_name:
             model_name = "gemma-4-31b-it"
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
@@ -381,7 +371,7 @@ class LLMManager:
         if format == "json": payload["generationConfig"]["responseMimeType"] = "application/json"
             
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=30)
+            resp = requests.post(url, headers=headers, json=payload, timeout=120)
             if resp.status_code == 200: return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
             print(f"      -> [LLM Manager] Gemini API Error {resp.status_code}: {resp.text}")
             if self._check_token_error(resp.text): return "ERROR_TOKEN_EXCEEDED"
@@ -415,30 +405,7 @@ class LLMManager:
             print(f"      -> [LLM Manager] Groq API Exception: {e}")
             return None
             
-    def _call_puter(self, api_key: str, prompt: str, system: Optional[str], format: str, temperature: float, timeout: int = 180) -> Optional[str]:
-        url = "https://api.puter.com/puterai/openai/v1/chat/completions"
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        messages = []
-        if system: messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
-        
-        payload = {
-            "model": "gemini-3.1-pro-preview",
-            "messages": messages,
-            "temperature": temperature
-        }
-        if format == "json": payload["response_format"] = {"type": "json_object"}
-            
-        try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
-            if resp.status_code == 200:
-                return resp.json()["choices"][0]["message"]["content"]
-            print(f"      -> [LLM Manager] Puter API Error {resp.status_code}: {resp.text[:200]}")
-            if self._check_token_error(resp.text): return "ERROR_TOKEN_EXCEEDED"
-            return None
-        except Exception as e:
-            print(f"      -> [LLM Manager] Puter API Exception: {e}")
-            return None
+
 
     def _call_sambanova(self, api_key: str, prompt: str, system: Optional[str], format: str, temperature: float) -> Optional[str]:
         url = "https://api.sambanova.ai/v1/chat/completions"

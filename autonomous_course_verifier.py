@@ -3575,7 +3575,7 @@ CRITICAL RULES:
                 try:
                     import pdfplumber
                     with pdfplumber.open(tmp_pdf_path) as pdf_file:
-                        for p in pdf_file.pages:
+                        for p in pdf_file.pages[:15]:
                             pdf_text += (p.extract_text() or "") + "\n"
                 except Exception as e:
                     print(f"      -> Warning: pdfplumber extraction failed: {e}")
@@ -3783,12 +3783,15 @@ CRITICAL RULES:
                     // Get all clickable elements but EXCLUDE those inside nav/header
                     let allButtons = document.querySelectorAll('button, [role="tab"], .nav-link, .tab-pane, summary, details summary, .accordion-button, .accordion-header, [data-toggle], [data-bs-toggle], a.collapsed, a[data-toggle="collapse"], span.collapsed, div.collapsed, .cursor-pointer');
                     
-                    for (let b of allButtons) {
+                    // Limit to 2500 elements to prevent infinite hangs on massive catalog pages
+                    let buttonsArray = Array.from(allButtons).slice(0, 2500);
+                    
+                    for (let b of buttonsArray) {
                         // SKIP elements inside <nav>, <header>, sidebars, popups, or with nav-related classes
                         let parent = b.closest('nav, header, aside, .sidebar, .popup, .modal, .offcanvas, .floating, .navbar, .main-nav, .top-nav, .site-header, .header-menu, .mega-menu, #header, #sidebar, [role="dialog"], [role="navigation"]');
                         if (parent) continue;
                         
-                        let txt = (b.innerText || b.textContent || '').toLowerCase().trim();
+                        let txt = (b.textContent || '').toLowerCase().trim();
                         if (txt.length < 2 || txt.length > 100) continue;
                         if (txt.includes('login') || txt.includes('sign in') || txt.includes('student portal')) {
                             b.remove(); // Destroy login buttons
@@ -3866,7 +3869,7 @@ CRITICAL RULES:
                     let rows = table.querySelectorAll('tr');
                     rows.forEach(function(row) {
                         let cells = row.querySelectorAll('th, td');
-                        let rowText = Array.from(cells).map(c => c.innerText.trim()).join(' | ');
+                        let rowText = Array.from(cells).map(c => (c.textContent || '').trim()).join(' | ');
                         result += rowText + '\\n';
                     });
                     result += '\\n';
@@ -3941,7 +3944,7 @@ CRITICAL RULES:
                 
             allowed_web_len = max(0, 400000 - len(excel_part))
             # Put excel_part at the very beginning of the page_text to ensure the LLM reads it first and it isn't lost in the middle/end
-            page_text_limited = excel_part + "\n" + web_part[:allowed_web_len]
+            page_text_limited = (excel_part + "\n" + web_part)[:400000]
         else:
             page_text_limited = page_text[:400000]
             
@@ -4022,6 +4025,7 @@ Rules:
    - UCL EXCEPTION: "UCL" stands for "University College London" or "University College of London". If Original University is one and the web is the other, mark uni_match as TRUE.
    - GLOBAL ABBREVIATION RULE: You must recognize standard global university abbreviations (e.g. MIT = Massachusetts Institute of Technology, LSE = London School of Economics, NUS = National University of Singapore, NTU, EPFL, UNSW, KCL, UCLA, IIT, NIT, IIM, etc.). If the Original University is an acronym and the website uses the full name (or vice versa), you MUST mark uni_match as TRUE.
    - CRITICAL: If the website explicitly states the course is provided by a COMPLETELY DIFFERENT institution than the Original University, you MUST mark university_match as FALSE. Your university_description must clearly state WHICH institution the website says provides the course.
+   - CRITICAL ANTI-HALLUCINATION RULE: You MUST determine the university ONLY from the MAIN WEBPAGE TEXT at the top of the Text section. Any text after the markers '--- EXCEL FEES DATA ---' or '--- EXCEL SYLLABUS DATA ---' is supplementary fee/syllabus data that may contain information about MANY DIFFERENT universities. You MUST NEVER use university names found in those supplementary sections to identify the course provider. The university is ALWAYS determined by the main webpage URL, header, and body text ONLY.
    - CRITICAL: If the cost is given 'per year', multiply it by the total number of years. If the cost is given 'per semester', multiply it by the total number of semesters (i.e., years * 2). You MUST calculate the total cost for the entire program duration before comparing it to the Original Cost.
    - Note: The Original Cost might contain a '?' instead of a currency symbol due to PDF extraction errors (e.g., '?20,000' usually means '€20,000' or '£20,000' depending on the country). In your descriptions, always write '€' not '?'.
    - NEVER repeat these prompt instructions in your descriptions! You MUST look extremely carefully through all provided text. The values are almost certainly in the text. DO NOT give up easily!
@@ -4064,9 +4068,18 @@ Output JSON format:
         try:
             llm = get_llm_manager()
             
-            # Default to auto (Mistral -> Groq -> SambaNova -> OpenRouter)
+            # Default to auto (Mistral -> Groq -> SambaNova -> OpenRouter -> NVIDIA -> Gemini)
             target_provider = "auto"
             target_timeout = 120
+            
+            # If prompt is extremely large (>100K chars ≈ 30K+ tokens), skip all small-context
+            # LLMs (Mistral/Groq/SambaNova/OpenRouter/NVIDIA) and go straight to Gemini 2.5 Flash
+            # which has 1M+ token context. This prevents wasting minutes cycling through keys
+            # that will all fail with ERROR_TOKEN_EXCEEDED anyway.
+            if len(prompt) > 100000:
+                print(f"      -> [Smart Router] Prompt is {len(prompt)} chars (~{len(prompt)//4} tokens). Skipping small-context LLMs, going straight to Gemini 2.5 Flash...")
+                target_provider = "gemini"
+                target_timeout = 180
             
             res_str = llm.generate(
                 prompt, 
@@ -4087,14 +4100,14 @@ Output JSON format:
                     timeout=120
                 )
                 
-            # If NVIDIA ALSO exceeds token limit (>131k), strictly fallback to Puter (Gemini 1.5 Pro)
+            # If NVIDIA ALSO exceeds token limit (>131k), strictly fallback to Gemini 2.5 Flash (1M+ context)
             if res_str == "ERROR_TOKEN_EXCEEDED":
-                print(f"      -> [LLM Manager] NVIDIA Token Limit Exceeded (>131k)! Falling back strictly to Puter...")
+                print(f"      -> [LLM Manager] NVIDIA Token Limit Exceeded (>131k)! Falling back to Gemini 2.5 Flash (1M+ context)...")
                 res_str = llm.generate(
                     prompt, 
                     worker_id=worker_id, 
                     format="json", 
-                    provider="puter", 
+                    provider="gemini", 
                     timeout=180
                 )
                 
@@ -4770,17 +4783,25 @@ Output JSON format:
             let elements = document.querySelectorAll('div, span, h3, h4, h5, h6, li, label, summary, strong, b, p, tr, td, dt, dd, [role="tab"], [role="button"], [data-toggle], [aria-expanded], a[href^="#"], button[aria-expanded], button[data-toggle]');
             let clickCount = 0;
             const MAX_CLICKS = 75;
-            for(let el of elements) {
+            
+            // Limit to first 5000 elements to prevent infinite hangs on massive catalog pages
+            let max_elements = Math.min(elements.length, 5000);
+            
+            for(let i=0; i < max_elements; i++) {
                 if (clickCount >= MAX_CLICKS) break;
+                let el = elements[i];
+                
                 // Ensure we don't accidentally click a real anchor link that bypasses our block
                 if (el.tagName.toLowerCase() === 'a' && el.href && !el.href.startsWith('javascript') && !el.href.includes('#')) continue;
                 
-                if(el.offsetParent !== null && el.textContent) {
-                    let txt = el.textContent.toLowerCase().trim();
+                let txt = el.textContent ? el.textContent.toLowerCase().trim() : "";
+                if(txt.length > 0 && txt.length < 80) {
                     let isMatch = keywords.some(k => txt.includes(k));
                     let isSafe = !avoid_keywords.some(k => txt.includes(k));
                     
-                    if(txt.length > 0 && txt.length < 80 && isMatch && isSafe) {
+                    // We removed the el.offsetParent check because it forces synchronous layout recalculation
+                    // (reflow) which completely freezes the browser for 10+ minutes on massive DOMs.
+                    if(isMatch && isSafe) {
                         try { el.click(); clickCount++; } catch(e) {}
                     }
                 }
@@ -5019,11 +5040,11 @@ Output JSON format:
             ];
             
             // Contains selector polyfill
-            const buttons = Array.from(document.querySelectorAll('button, a'));
+            const buttons = Array.from(document.querySelectorAll('button, a')).slice(0, 2500);
             const closeWords = ['accept', 'agree', 'allow all', 'continue', 'close', 'got it'];
             
             for (let b of buttons) {
-                if (b.innerText && closeWords.some(w => b.innerText.toLowerCase().trim() === w)) {
+                if (b.textContent && closeWords.some(w => b.textContent.toLowerCase().trim() === w)) {
                     if (b.tagName.toLowerCase() === 'button' && (b.type === 'submit' || !b.hasAttribute('type'))) {
                         b.type = 'button';
                     }
@@ -5068,9 +5089,10 @@ Output JSON format:
                 }, true);
 
                 var elements = document.querySelectorAll('button, div[role="tab"], div.accordion, span.toggle, summary, [aria-expanded="false"], a[href="#"], a[data-toggle]');
-                for(var i=0; i<elements.length; i++) {
+                var max_elements = Math.min(elements.length, 5000);
+                for(var i=0; i < max_elements; i++) {
                     var el = elements[i];
-                    var text = (el.innerText || el.textContent || '').toLowerCase().trim();
+                    var text = (el.textContent || '').toLowerCase().trim();
                     if(text.includes('international') || text.includes('tuition') || text.includes('fee') || 
                        text.includes('cost') || text.includes('price') || text.includes('pricing') ||
                        text.includes('duration') || text.includes('syllabus') || text.includes('module') ||
@@ -5120,7 +5142,7 @@ Output JSON format:
         seen = set()
         for selector in selectors:
             try:
-                for el in driver.find_elements(By.CSS_SELECTOR, selector):
+                for el in driver.find_elements(By.CSS_SELECTOR, selector)[:50]:
                     try:
                         marker = "|".join([
                             el.tag_name, el.get_attribute("type") or '', el.get_attribute("name") or '', 
@@ -5212,7 +5234,7 @@ Output JSON format:
         best = None
         best_score = 0.0
         try:
-            links = driver.find_elements(By.TAG_NAME, "a")
+            links = driver.find_elements(By.XPATH, "//a[position() <= 180]")
         except Exception:
             return False
 
@@ -5419,8 +5441,8 @@ Output JSON format:
                 if not clicked:
                     print(f"    -> [NIELIT Visual Agent] Could not locate visually. Falling back to JS text search...")
                     script = f'''
-                    let els = Array.from(document.querySelectorAll('*'));
-                    let target = els.find(e => e.innerText && e.innerText.toLowerCase().trim() === '{target_category.lower()}' && e.offsetParent !== null);
+                    let elsArray = Array.from(document.querySelectorAll('*')).slice(0, 2500);
+                    let target = elsArray.find(e => e.textContent && e.textContent.toLowerCase().trim() === '{target_category.lower()}');
                     if (target) {{ target.click(); return true; }} return false;
                     '''
                     driver.execute_script(script)
@@ -5865,15 +5887,19 @@ Output JSON format:
             // Remove old boxes if any
             document.querySelectorAll('.llm-vision-box').forEach(e => e.remove());
 
-            elements.forEach(el => {
-                if (!el.innerText || el.innerText.trim().length < 2) return;
+            // Limit to 2500 elements to prevent getBoundingClientRect from hanging the browser
+            let elementsArray = Array.from(elements).slice(0, 2500);
+
+            let fragment = document.createDocumentFragment();
+            elementsArray.forEach(el => {
+                if (!el.textContent || el.textContent.trim().length < 2) return;
                 
                 // Exclude elements inside sidebars, headers, popups to strictly stay on the main content
                 let parent = el.closest('nav, header, aside, .sidebar, .popup, .modal, .offcanvas, .floating, .navbar, #header, #sidebar, [role="dialog"], [role="navigation"]');
                 if (parent) return;
                 
                 // Exclude login/apply/admission links to prevent navigating to student portals
-                let txt = el.innerText.trim().toLowerCase();
+                let txt = el.textContent.trim().toLowerCase();
                 let bad_words = [
                     'login', 'sign in', 'apply', 'admission', 'register', 'enroll now',
                     'home', 'about us', 'contact', 'faculty', 'alumni', 'careers',
@@ -5893,7 +5919,7 @@ Output JSON format:
                     let id = counter++;
                     window.__llm_elements[id] = el;
                     mapping[id] = {
-                        text: el.innerText.trim().substring(0, 50),
+                        text: el.textContent.trim().substring(0, 50),
                         x: rect.left + rect.width / 2,
                         y: rect.top + rect.height / 2
                     };
@@ -5910,7 +5936,7 @@ Output JSON format:
                     box.style.pointerEvents = 'none';
                     
                     let label = document.createElement('span');
-                    label.innerText = id;
+                    label.textContent = id;
                     label.style.position = 'absolute';
                     label.style.top = '-15px';
                     label.style.left = '0px';
@@ -5920,9 +5946,10 @@ Output JSON format:
                     label.style.fontWeight = 'bold';
                     label.style.padding = '1px 3px';
                     box.appendChild(label);
-                    document.body.appendChild(box);
+                    fragment.appendChild(box);
                 }
             });
+            document.body.appendChild(fragment);
             return mapping;
         """
         try:
@@ -6995,9 +7022,10 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     cursor.style.filter = 'drop-shadow(2px 2px 3px rgba(0,0,0,0.5))';
                                     document.body.appendChild(cursor);
 
-                                    let tabs = document.querySelectorAll('*');
-                                    for (let tab of tabs) {
-                                        let txt = (tab.innerText || tab.textContent || '').toLowerCase().trim();
+                                    let tabs = document.querySelectorAll('div, span, a, button, li, h1, h2, h3, h4, h5');
+                                    let tabsArray = Array.from(tabs).slice(0, 2500);
+                                    for (let tab of tabsArray) {
+                                        let txt = (tab.textContent || '').toLowerCase().trim();
                                         if (txt === 'summary' || txt.includes('course outline') || txt.includes('course layout') || txt.includes('course certificate') || txt === 'books and references') {
                                             try { 
                                                 tab.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -7039,8 +7067,9 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 let callback = arguments[arguments.length - 1];
                                 async function run_coursera() {
                                     let buttons = document.querySelectorAll('button, a');
-                                    for (let b of buttons) {
-                                        let txt = (b.innerText || b.textContent || '').toLowerCase().trim();
+                                    let buttonsArray = Array.from(buttons).slice(0, 2500);
+                                    for (let b of buttonsArray) {
+                                        let txt = (b.textContent || '').toLowerCase().trim();
                                         if (txt.includes('enroll for free') || txt === 'enroll' || txt.includes('enroll now')) {
                                             try { b.click(); await new Promise(r => setTimeout(r, 2000)); } catch(e) {}
                                             break;
@@ -7390,8 +7419,9 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 let pdf_targets = [];
                                 let keywords = {js_keywords};
                                 let origin = window.location.origin;
-                                for (let a of links) {{
-                                    let txt = (a.innerText || '').toLowerCase();
+                                let linksArray = Array.from(links).slice(0, 2500);
+                                for (let a of linksArray) {{
+                                    let txt = (a.textContent || '').toLowerCase();
                                     let href = a.href || '';
                                     if (!href.startsWith('http')) continue;
                                     let href_lower = href.toLowerCase();
