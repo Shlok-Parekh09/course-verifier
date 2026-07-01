@@ -77,9 +77,16 @@ jobs:
           # llm_manager self-verifies the key on startup (sys.exit(1) on a
           # bad/missing key), so a bad ENV_FILE fails the job fast.
           # Ollama cloud queues requests over the plan concurrency (Pro=3).
-          # Match browsers to the LLM cap so no browser sits idle waiting on a
-          # slot. Pro → 3; Max → 10; Free → 1.
-          VERIFIER_NUM_BROWSERS: 3
+          # OLLAMA_MAX_CONCURRENCY sets the LLM semaphore that gates every
+          # generate()/generate_with_image() HTTP call, so the cloud's 3-concurrent
+          # cap is enforced regardless of how many browsers run. Browsers do NOT
+          # need to match the LLM cap — extra browsers only overlap Selenium I/O
+          # (page loads, scroll, settle) with LLM latency, raising throughput
+          # (courses/min) without touching the cloud limit. 5 Chromes fits the
+          # runner (2GB shm + 10GB swap; the non-CI default is already 6).
+          # Single-course wall-clock is unchanged by this — it only raises
+          # courses/min. Pro -> 5 browsers / 3 LLM; Max -> 10 / 10; Free -> 1 / 1.
+          VERIFIER_NUM_BROWSERS: 5
           OLLAMA_MAX_CONCURRENCY: 3
           # ── Speed levers (scrape waits) ──
           # Left at defaults so the verification process is unchanged. These are
