@@ -949,10 +949,7 @@ async function showCourseModal(courseId, fallbackName, fallbackUni) {
             progress.style.display = 'none';
         }
     }
-
-    // Delete is a real action locally; disabled on the hosted dashboard.
-    const deleteBtn = document.getElementById('delete-course-btn');
-    if (deleteBtn) deleteBtn.style.display = isLocalEnv ? '' : 'none';
+    // The Delete button has been permanently removed from both local and hosted environments.
 
     document.getElementById('course-modal').classList.add('open');
 }
@@ -1067,29 +1064,10 @@ function removeFromVerification(courseId) {
     applyVerificationFilter();
 }
 
-async function deleteCourse() {
-    const id = currentModalCourseId;
-    if (id == null) return;
-    const c = allCoursesData.find(x => String(x.id) === String(id));
-    const name = c?.name || '';
-    if (!confirm(`Delete course #${id} — "${name}"?\n\nThis reindexes all course IDs and cannot be undone.`)) return;
-    try {
-        const res = await fetch(`${API_BASE_URL}/api/course/${id}`, { method: 'DELETE' });
-        const data = await res.json();
-        if (data.status !== 'success') throw new Error(data.message || 'Delete failed');
-        document.getElementById('course-modal').classList.remove('open');
-        allCoursesData = [];        // force reload from server
-        await loadAllCourses();
-        fetchData();
-    } catch (e) {
-        alert('Delete failed: ' + (e.message || 'network error'));
-    }
-}
 
 function initModal() {
     document.getElementById('close-modal')?.addEventListener('click', () =>
         document.getElementById('course-modal').classList.remove('open'));
-    document.getElementById('delete-course-btn')?.addEventListener('click', deleteCourse);
     document.getElementById('course-modal')?.addEventListener('click', e => {
         if (e.target === document.getElementById('course-modal'))
             document.getElementById('course-modal').classList.remove('open');
@@ -1830,7 +1808,10 @@ function initUpload() {
                 alert(`✗ ${result.message}`);
             }
         } catch (e) { alert('Upload failed: ' + (e.message || 'network error')); }
-        finally { input.value = ''; }
+        finally { 
+            input.value = ''; 
+            if (label.textContent === 'Uploading…') label.textContent = orig;
+        }
     });
 }
 

@@ -4769,7 +4769,7 @@ Output JSON format:
             let isCoursera = window.location.hostname.includes('coursera.org');
             if (isCoursera) {
                 document.querySelectorAll('button, a').forEach(b => {
-                    if ((b.innerText || '').toLowerCase().includes('enroll')) {
+                    if ((b.textContent || '').toLowerCase().includes('enroll')) {
                         try { b.click(); } catch(e) {}
                     }
                 });
@@ -4856,9 +4856,9 @@ Output JSON format:
             if url: parts.append(f"=== PAGE URL: {url} ===")
         except: pass
         js_body_text = """
-            // Prefer innerText as it respects CSS layout and visible content reliably,
+            // Prefer textContent as it respects CSS layout and visible content reliably,
             // while ignoring user-select: none which breaks getSelection().toString()
-            let text = document.body.innerText || "";
+            let text = document.body.textContent || "";
             if (text.length < 100) {
                 window.getSelection().removeAllRanges();
                 let range = document.createRange();
@@ -4898,7 +4898,7 @@ Output JSON format:
             for (let iframe of iframes) {
                 try {
                     let iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-                    if (iframeDoc && iframeDoc.body) out.push(iframeDoc.body.innerText);
+                    if (iframeDoc && iframeDoc.body) out.push(iframeDoc.body.textContent);
                 } catch(e) {} // cross-origin will throw
             }
             
@@ -4922,7 +4922,7 @@ Output JSON format:
             function extractShadow(node) {
                 let text = "";
                 if (node.shadowRoot) {
-                    text += node.shadowRoot.innerText + "\\n";
+                    text += node.shadowRoot.textContent + "\\n";
                     node.shadowRoot.querySelectorAll('*').forEach(child => {
                         text += extractShadow(child);
                     });
@@ -5465,12 +5465,12 @@ Output JSON format:
                         let cards = document.querySelectorAll('.course-card, .card, [class*="course"], [class*="Card"]');
                         let out = [];
                         if (cards.length > 0) {
-                            cards.forEach(c => { if(c.innerText && c.innerText.length > 20) out.push(c.innerText); });
+                            cards.forEach(c => { if(c.textContent && c.textContent.length > 20) out.push(c.textContent); });
                         }
                         // Fallback: get the main content area text
                         if (out.length === 0) {
                             let main = document.querySelector('main, .main-content, #content, .container') || document.body;
-                            out.push(main.innerText);
+                            out.push(main.textContent);
                         }
                         return out.join('\\n---CARD---\\n');
                     """
@@ -5479,11 +5479,11 @@ Output JSON format:
                         all_text += dom_text + "\n"
                     else:
                         # Fallback to full body text
-                        all_text += (driver.execute_script("return document.body ? document.body.innerText : '';") or "") + "\n"
+                        all_text += (driver.execute_script("return document.body ? document.body.textContent : '';") or "") + "\n"
                 except Exception as e:
                     print(f"    -> [NIELIT] DOM extraction failed for page {page}: {e}")
                     try:
-                        all_text += (driver.execute_script("return document.body ? document.body.innerText : '';") or "") + "\n"
+                        all_text += (driver.execute_script("return document.body ? document.body.textContent : '';") or "") + "\n"
                     except: pass
                 
                 # OCR extraction for images/corner texts as requested
@@ -5536,7 +5536,7 @@ Output JSON format:
                         print(f"    -> [NIELIT] Attempting to navigate to page {next_page_num}...")
                         script = f'''
                         let els = Array.from(document.querySelectorAll('a, button, li, span'));
-                        let target = els.find(e => e.innerText && e.innerText.trim() === "{next_page_num}" && e.offsetParent !== null && (e.className.includes('page') || e.closest('.pagination') !== null));
+                        let target = els.find(e => e.textContent && e.textContent.trim() === "{next_page_num}" && e.offsetParent !== null && (e.className.includes('page') || e.closest('.pagination') !== null));
                         if (target) {{
                             target.scrollIntoView({{block: 'center'}});
                             target.click();
@@ -6177,7 +6177,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 time.sleep(1.5)
 
                             # Grab new text
-                            new_text = driver.execute_script("return document.body ? document.body.innerText : '';")
+                            new_text = driver.execute_script("return document.body ? document.body.textContent : '';")
                             if new_text and len(new_text) > 100:
                                 extra_parts.append(new_text)
                                 
@@ -6416,34 +6416,35 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 except Exception: pass
             os.makedirs(fresh_profile, exist_ok=True)
             
-            try:
-                driver = uc.Chrome(options=options, user_data_dir=fresh_profile, version_main=get_chrome_main_version(), user_multi_procs=True)
+            with browser_init_lock:
                 try:
-                    driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {"latitude": 28.6139, "longitude": 77.2090, "accuracy": 100})
-                except: pass
-            except Exception as e:
-                    print(f"    -> Warning: Parallel profile creation failed ({e}). Retrying with fresh options...")
-                    options2 = uc.ChromeOptions()
-                    options2.page_load_strategy = 'eager'
-                    options2.set_capability("unhandledPromptBehavior", "dismiss")
-                    options2.add_argument('--disable-blink-features=AutomationControlled')
-                    options2.add_argument('--window-size=1280,800')
-                    options2.add_argument('--ignore-certificate-errors')
-                    options2.set_capability('acceptInsecureCerts', True)
-                    options2.add_argument('--disable-print-preview')
-                    options2.add_argument('--kiosk-printing')
-                    options2.add_argument('--disable-gpu')
-                    options2.add_argument('--disable-dev-shm-usage')
-                    options2.add_argument('--no-sandbox')
-                    fresh_profile2 = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"chrome_profile_fallback_{b_idx}")
-                    if os.path.exists(fresh_profile2):
-                        try: shutil.rmtree(fresh_profile2)
-                        except Exception: pass
-                    os.makedirs(fresh_profile2, exist_ok=True)
-                    driver = uc.Chrome(options=options2, user_data_dir=fresh_profile2, version_main=get_chrome_main_version(), user_multi_procs=True)
+                    driver = uc.Chrome(options=options, user_data_dir=fresh_profile, version_main=get_chrome_main_version(), user_multi_procs=True)
                     try:
                         driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {"latitude": 28.6139, "longitude": 77.2090, "accuracy": 100})
                     except: pass
+                except Exception as e:
+                        print(f"    -> Warning: Parallel profile creation failed ({e}). Retrying with fresh options...")
+                        options2 = uc.ChromeOptions()
+                        options2.page_load_strategy = 'eager'
+                        options2.set_capability("unhandledPromptBehavior", "dismiss")
+                        options2.add_argument('--disable-blink-features=AutomationControlled')
+                        options2.add_argument('--window-size=1280,800')
+                        options2.add_argument('--ignore-certificate-errors')
+                        options2.set_capability('acceptInsecureCerts', True)
+                        options2.add_argument('--disable-print-preview')
+                        options2.add_argument('--kiosk-printing')
+                        options2.add_argument('--disable-gpu')
+                        options2.add_argument('--disable-dev-shm-usage')
+                        options2.add_argument('--no-sandbox')
+                        fresh_profile2 = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"chrome_profile_fallback_{b_idx}")
+                        if os.path.exists(fresh_profile2):
+                            try: shutil.rmtree(fresh_profile2)
+                            except Exception: pass
+                        os.makedirs(fresh_profile2, exist_ok=True)
+                        driver = uc.Chrome(options=options2, user_data_dir=fresh_profile2, version_main=get_chrome_main_version(), user_multi_procs=True)
+                        try:
+                            driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {"latitude": 28.6139, "longitude": 77.2090, "accuracy": 100})
+                        except: pass
             driver.set_page_load_timeout(30)
             driver.set_script_timeout(30)
             
@@ -6479,8 +6480,25 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     browser_pool.put((b_idx, driver, 0))
                 except Exception as e:
                     import traceback
-                    print(f"    -> [Error] Failed to initialize browser: {e}")
+                    print(f"    -> [Error] Failed to initialize browser: {e}. Retrying...")
                     traceback.print_exc()
+                    
+                    # Keep retrying until we get a valid browser so the pool never deadlocks
+                    success = False
+                    while not success:
+                        try:
+                            # We don't know which b_idx failed easily, but we can just use a dummy one or random one.
+                            # Wait, we need to pass a valid b_idx. We can extract it if we pass it with the future, 
+                            # but for now we'll just use a random ID or 99 to ensure it starts.
+                            import random
+                            retry_idx = random.randint(10, 99)
+                            retry_idx, driver = init_browser_parallel(retry_idx)
+                            browser_pool.put((retry_idx, driver, 0))
+                            success = True
+                            print(f"    -> [Success] Recovered failed browser initialization.")
+                        except Exception as retry_e:
+                            print(f"    -> [!] Retry failed: {retry_e}. Trying again in 2s...")
+                            time.sleep(2)
         # Setup Thread Local Stdout for Sequential Logging
         import sys
         import threading
@@ -6653,7 +6671,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     except Exception:
                         pass
                     try:
-                        initial_body = driver.execute_script("return document.body ? document.body.innerText.substring(0, 2000) : '';") or ""
+                        initial_body = driver.execute_script("return document.body ? document.body.textContent.substring(0, 2000) : '';") or ""
                     except Exception:
                         pass
                     initial_error_text = f"{initial_title}\n{initial_body}".lower()
@@ -6725,7 +6743,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         last_len = -1
                         stable_count = 0
                         for _ in range(10): # max 10s wait for dynamic content
-                            current_len = len(driver.execute_script("return document.body ? document.body.innerText : '';"))
+                            current_len = len(driver.execute_script("return document.body ? document.body.textContent : '';"))
                             if current_len > 0 and current_len == last_len:
                                 stable_count += 1
                                 if stable_count >= 2:
@@ -6891,8 +6909,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     let btns = Array.from(document.querySelectorAll('button, a, [role="button"]') || []);
                                     async function run() {
                                         for (let b of btns) {
-                                            if (b.innerText) {
-                                                let t = b.innerText.toLowerCase();
+                                            if (b.textContent) {
+                                                let t = b.textContent.toLowerCase();
                                                 if (t.includes('enroll for free') || t.includes('enroll now') || (t.includes('enroll') && b.tagName === 'BUTTON')) {
                                                     if (window.moveBeautifulCursorToElement) window.moveBeautifulCursorToElement(b);
                                                     await new Promise(r => setTimeout(r, 400));
@@ -6913,7 +6931,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     try:
                                         js_extract_modal = """
                                             let modal = document.querySelector('[role="dialog"], .ReactModalPortal, .rc-MetagenModal, .css-1xy8ceb, div[data-e2e="course-enroll-modal"], div[aria-modal="true"]');
-                                            return modal ? modal.innerText : '';
+                                            return modal ? modal.textContent : '';
                                         """
                                         modal_text = driver.execute_script(js_extract_modal)
                                         if modal_text and len(modal_text) > 10:
@@ -7100,7 +7118,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     // Try all <li> tab items and <a> links that might reveal course fees
                                     let all_tabs = document.querySelectorAll('li, a[href="#"], a[data-toggle], [role="tab"], .nav-item, .tab-item, .program-tab');
                                     for (let tab of all_tabs) {{
-                                        let txt = (tab.innerText || tab.textContent || '').toLowerCase().trim();
+                                        let txt = (tab.textContent || tab.textContent || '').toLowerCase().trim();
                                         if (txt.includes('fee') || txt.includes('cost') || txt.includes('program') || 
                                             txt.includes('tuition') || txt.includes('diploma') || txt.includes('cyber') ||
                                             txt.includes('security') || txt.includes('admission') || txt.includes('overview') ||
@@ -7116,7 +7134,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     for (let s of selects) {{
                                         let options = Array.from(s.options);
                                         for (let opt of options) {{
-                                            let optTxt = (opt.innerText || opt.text || '').toLowerCase();
+                                            let optTxt = (opt.textContent || opt.text || '').toLowerCase();
                                             if (optTxt.includes('fee') || optTxt.includes('tuition') || optTxt.includes('cost') ||
                                                 optTxt.includes('diploma') || optTxt.includes('cyber') || optTxt.includes('security') ||
                                                 optTxt.includes('program') || optTxt.includes('syllabus') || optTxt.includes('curriculum') ||
@@ -7156,7 +7174,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 async function run_intl() {
                                     let targets = document.querySelectorAll('button, a, div, span, label, li');
                                     for (let t of targets) {
-                                        let txt = (t.innerText || '').toLowerCase();
+                                        let txt = (t.textContent || '').toLowerCase();
                                         if(txt.includes('international student') || txt.includes("i'm an international student") || txt === 'international' || txt === 'overseas') {
                                             try { t.click(); await new Promise(r => setTimeout(r, 500)); } catch(e){}
                                         }
@@ -7164,7 +7182,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     let selects = document.querySelectorAll('select');
                                     for (let s of selects) {
                                         let options = Array.from(s.options);
-                                        let india_opt = options.find(o => o.innerText.toLowerCase().includes('india'));
+                                        let india_opt = options.find(o => o.textContent.toLowerCase().includes('india'));
                                         if(india_opt) {
                                             try {
                                                 s.value = india_opt.value;
@@ -7205,7 +7223,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                         let navParent = b.closest('nav, header, .navbar, .main-nav, .top-nav, .site-header, .header-menu, .mega-menu, .main-menu, .primary-menu, #main-nav, #header');
                                         if (navParent) continue;
                                         
-                                        let txt = (b.innerText || '').toLowerCase().trim();
+                                        let txt = (b.textContent || '').toLowerCase().trim();
                                         if (txt.length < 2 || txt.length > 160) continue;
                                         if (txt.includes('login') || txt.includes('sign in') || txt.includes('apply now')) continue;
                                         
@@ -7233,11 +7251,11 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                             let targetId = b.getAttribute('aria-controls') || b.getAttribute('data-bs-target') || b.getAttribute('data-target') || b.getAttribute('href');
                                             if (targetId && targetId.startsWith('#')) {{
                                                 let targetEl = document.getElementById(targetId.substring(1)) || document.querySelector(targetId);
-                                                if (targetEl && targetEl.innerText) extractedContent.push(targetEl.innerText);
-                                            }} else if (b.nextElementSibling && b.nextElementSibling.innerText) {{
-                                                extractedContent.push(b.nextElementSibling.innerText);
-                                            }} else if (b.parentElement && b.parentElement.innerText) {{
-                                                extractedContent.push(b.parentElement.innerText);
+                                                if (targetEl && targetEl.textContent) extractedContent.push(targetEl.textContent);
+                                            }} else if (b.nextElementSibling && b.nextElementSibling.textContent) {{
+                                                extractedContent.push(b.nextElementSibling.textContent);
+                                            }} else if (b.parentElement && b.parentElement.textContent) {{
+                                                extractedContent.push(b.parentElement.textContent);
                                             }}
                                         }} catch(e) {{}}
                                     }}
@@ -7276,7 +7294,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     // Try simple math captchas (e.g. 5 + 3 = ?)
                                     let labels = document.querySelectorAll('label, span, div');
                                     for (let l of labels) {
-                                        let txt = l.innerText.toLowerCase();
+                                        let txt = l.textContent.toLowerCase();
                                         if (txt.includes('+') && txt.includes('=')) {
                                             let parts = txt.match(/(\\d+)\\s*\\+\\s*(\\d+)/);
                                             if (parts) {
@@ -7291,7 +7309,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     }
                                     let submit_btns = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
                                     for (let b of submit_btns) {
-                                        let bt = (b.innerText || b.value || '').toLowerCase();
+                                        let bt = (b.textContent || b.value || '').toLowerCase();
                                         if (bt.includes('download') || bt.includes('submit') || bt.includes('get details') || bt.includes('get fee')) {
                                             try { b.click(); } catch(e) {}
                                         }
@@ -8328,7 +8346,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 new_options.add_argument('--disable-dev-shm-usage')
                                 new_options.add_argument('--no-sandbox')
                                 ud_dir = os.path.join(tempfile.gettempdir(), f"uc_profile_rec_{random.randint(1000, 9999)}")
-                                driver = uc.Chrome(options=new_options, user_data_dir=ud_dir, version_main=get_chrome_main_version(), user_multi_procs=True)
+                                with browser_init_lock:
+                                    driver = uc.Chrome(options=new_options, user_data_dir=ud_dir, version_main=get_chrome_main_version(), user_multi_procs=True)
                                 driver.set_page_load_timeout(30)
                                 driver.set_script_timeout(30)
                                 try:
@@ -8385,11 +8404,16 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     try: driver.quit()
                     except: pass
                     time.sleep(0.5)  # Brief pause to let OS reclaim memory
-                    try:
-                        worker_id, driver = init_browser_parallel(worker_id)
-                        usage_count = 0
-                    except Exception as e:
-                        print(f"    -> [!] Failed to restart browser {worker_id}: {e}")
+                    # Keep retrying until successful so the pool doesn't lose a thread
+                    success = False
+                    while not success:
+                        try:
+                            worker_id, driver = init_browser_parallel(worker_id)
+                            usage_count = 0
+                            success = True
+                        except Exception as e:
+                            print(f"    -> [!] Failed to restart browser {worker_id}: {e}. Retrying in 2s...")
+                            time.sleep(2)
                         
                 browser_pool.put((worker_id, driver, usage_count))
                 
