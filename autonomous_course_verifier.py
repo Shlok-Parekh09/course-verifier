@@ -2187,6 +2187,19 @@ class AutonomousCourseVerifier:
             text_blocks = [b for b in blocks if b[6] == 0]
             links = page.get_links()
 
+            # ── DIAGRAM / OVERVIEW PAGE GUARD ─────────────────────────────
+            # Pages like domain mind-maps, sub-domain diagrams, or "System &
+            # Endpoint Security" overview pages contain no course data at all.
+            # Detect them early by checking the full page text for at least one
+            # course-data keyword.  If none are found, skip the whole page so
+            # no floating items or partial blocks are emitted from it.
+            page_full_text = " ".join(b[4] for b in text_blocks)
+            COURSE_KEYWORDS = ("Mode:", "Cost:", "Fees:", "Duration:", "http://", "https://", "www.")
+            if not any(kw in page_full_text for kw in COURSE_KEYWORDS):
+                print(f"    [SKIP] Page {page_num + 1} — no course data detected (likely a diagram/overview page). Skipping.")
+                continue
+            # ──────────────────────────────────────────────────────────────
+
             # Assign blocks to quadrants or flag as floating
             for b in text_blocks:
                 b_rect = fitz.Rect(b[:4])

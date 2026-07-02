@@ -37,8 +37,7 @@ jobs:
           - {start: 807, end: 846}
           - {start: 847, end: 886}
           - {start: 887, end: 926}
-          - {start: 927, end: 966}
-          - {start: 967, end: 978} # Final chunk with the remaining 12 pages
+          - {start: 927, end: 965}
 
     env:
       CI: true
