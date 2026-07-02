@@ -1,0 +1,118 @@
+name: Cloud Course Verifier (Chunked 7-978)
+
+on:
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    strategy:
+      max-parallel: 1 # Forces sequential execution (one chunk at a time)
+      fail-fast: false # Prevents one failed chunk from canceling the rest
+      matrix:
+        chunk:
+          - {start: 7, end: 46}
+          - {start: 47, end: 86}
+          - {start: 87, end: 126}
+          - {start: 127, end: 166}
+          - {start: 167, end: 206}
+          - {start: 207, end: 246}
+          - {start: 247, end: 286}
+          - {start: 287, end: 326}
+          - {start: 327, end: 366}
+          - {start: 367, end: 406}
+          - {start: 407, end: 446}
+          - {start: 447, end: 486}
+          - {start: 487, end: 526}
+          - {start: 527, end: 566}
+          - {start: 567, end: 606}
+          - {start: 607, end: 646}
+          - {start: 647, end: 686}
+          - {start: 687, end: 726}
+          - {start: 727, end: 766}
+          - {start: 767, end: 806}
+          - {start: 807, end: 846}
+          - {start: 847, end: 886}
+          - {start: 887, end: 926}
+          - {start: 927, end: 965}
+
+    env:
+      CI: true
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Load All API Keys
+        env:
+          ENV_FILE: ${{ secrets.ENV_FILE }}
+        run: |
+          echo "$ENV_FILE" > .env
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install System Dependencies (Chrome & Xvfb)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr libtesseract-dev xvfb x11-utils
+          sudo mount -t tmpfs -o size=2g tmpfs /dev/shm || true
+          pkill -9 chrome 2>/dev/null || true
+          google-chrome --version || true
+
+      - name: Increase Swap Space
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 10
+
+      - name: Install Python Dependencies
+        run: |
+          pip install -r requirements-verifier.txt python-dotenv gdown
+
+      - name: Download PDF from Google Drive
+        run: |
+          gdown "1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd" -O link_compile.pdf
+
+      - name: Run Verification (Virtual Display)
+        env:
+          START_PAGE: ${{ matrix.chunk.start }}
+          END_PAGE: ${{ matrix.chunk.end }}
+          PDF_NAME: autonomous_verified_report
+          DISPLAY: ":99"
+          CI: true
+          VERIFIER_NO_FORCE_EXIT: true
+          VERIFIER_NUM_BROWSERS: 3
+          OLLAMA_MAX_CONCURRENCY: 3
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+          OLLAMA_API_URL: ${{ secrets.OLLAMA_API_URL }}
+          OLLAMA_MODEL: ${{ secrets.OLLAMA_MODEL }}
+        run: |
+          Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset &
+          sleep 3
+          python autonomous_course_verifier.py || echo "::warning::Verifier exited with non-zero status, but checkpoint should be saved"
+
+      - name: Remove input PDF before upload
+        if: always()
+        run: |
+          rm -f link_compile.pdf
+
+      - name: Upload Results as Zip
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-results-${{ matrix.chunk.start }}-to-${{ matrix.chunk.end }}
+          path: |
+            *.pdf
+            autonomous_verified_*.json
+
+      - name: Upload Affiliation DB
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: affiliation-db-${{ matrix.chunk.start }}-to-${{ matrix.chunk.end }}
+          path: affiliation_db.json
