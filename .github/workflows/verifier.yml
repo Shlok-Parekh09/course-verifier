@@ -116,3 +116,85 @@ jobs:
         with:
           name: affiliation-db-${{ matrix.chunk.start }}-to-${{ matrix.chunk.end }}
           path: affiliation_db.json
+
+  # ── Final merge: collect all 24 chunk JSONs → one file ──────────────────────
+  merge-json:
+    name: "Merge All 24 Chunk JSONs → merged_run.json"
+    needs: verify
+    runs-on: ubuntu-latest
+    # Always run this job even if some verify chunks failed
+    if: always()
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      # Download all verification-results-* artifacts into ./chunk_artifacts/
+      # Each artifact lands in its own sub-folder:
+      #   chunk_artifacts/verification-results-7-to-46/autonomous_verified_*.json
+      - name: Download All Chunk Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: verification-results-*
+          path: chunk_artifacts
+          merge-multiple: false
+
+      # Merge every chunk JSON into one sorted, deduplicated file
+      - name: Merge JSON Files
+        run: |
+          python3 - <<'PYEOF'
+          import os, json, glob
+
+          merged = []
+          seen_keys = set()
+
+          # Find all JSON files across every chunk sub-folder
+          json_files = sorted(glob.glob("chunk_artifacts/**/*.json", recursive=True))
+
+          if not json_files:
+              print("::warning::No JSON files found in downloaded artifacts!")
+          else:
+              print(f"Found {len(json_files)} JSON file(s) across all chunks.")
+
+          for jf in json_files:
+              try:
+                  with open(jf, encoding="utf-8") as f:
+                      data = json.load(f)
+                  if not isinstance(data, list):
+                      print(f"  [!] Skipping {jf} (not a JSON array)")
+                      continue
+                  added = 0
+                  for course in data:
+                      # Deduplicate by (name, uni, page_num, box_index)
+                      key = (
+                          str(course.get("name", "")).strip().lower(),
+                          str(course.get("uni",  "")).strip().lower(),
+                          course.get("page_num"),
+                          course.get("box_index"),
+                      )
+                      if key not in seen_keys:
+                          seen_keys.add(key)
+                          merged.append(course)
+                          added += 1
+                  print(f"  + {os.path.basename(jf)}: {len(data)} entries, {added} new after dedup")
+              except Exception as e:
+                  print(f"  [!] Error reading {jf}: {e}")
+
+          # Sort by page_num then box_index (preserves original PDF order)
+          merged.sort(key=lambda c: (c.get("page_num", 0), c.get("box_index", 0)))
+
+          out = "merged_run.json"
+          with open(out, "w", encoding="utf-8") as f:
+              json.dump(merged, f, indent=2, ensure_ascii=False)
+
+          print(f"\n[OK] Merged {len(merged)} total courses -> {out}")
+          PYEOF
+
+      # Upload the single merged JSON as its own artifact
+      - name: Upload Merged JSON
+        uses: actions/upload-artifact@v4
+        with:
+          name: merged-run-json
+          path: merged_run.json
