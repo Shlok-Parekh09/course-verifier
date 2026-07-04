@@ -37,8 +37,8 @@ class LLMManager:
 
         # nemotron-3-nano:30b is the sweet spot for this verifier — 20K-char
         # page prompts in ~11–14s with valid JSON. See memory: ollama-cloud-model-choice.
-        self.ollama_model = os.environ.get("OLLAMA_MODEL", "nemotron-3-nano:30b")
-        self.ollama_vision_model = os.environ.get("OLLAMA_VISION_MODEL", "gemma4:31b-cloud")
+        self.ollama_model = os.environ.get("OLLAMA_MODEL", "gemini-3-flash-preview:cloud")
+        self.ollama_vision_model = os.environ.get("OLLAMA_VISION_MODEL", "gemini-3-flash-preview:cloud")
 
         # Track last call time per key to enforce rate limits
         self.last_call = {}

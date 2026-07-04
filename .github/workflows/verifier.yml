@@ -90,7 +90,8 @@ jobs:
           OLLAMA_MAX_CONCURRENCY: 3
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
           OLLAMA_API_URL: ${{ secrets.OLLAMA_API_URL }}
-          OLLAMA_MODEL: ${{ secrets.OLLAMA_MODEL }}
+          OLLAMA_MODEL: "gemini-3-flash-preview:cloud"
+          OLLAMA_VISION_MODEL: "gemini-3-flash-preview:cloud"
         run: |
           Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset &
           sleep 3
