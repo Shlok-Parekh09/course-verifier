@@ -10,7 +10,7 @@ jobs:
       contents: write
     
     strategy:
-      max-parallel: 1 # Forces sequential execution (one chunk at a time)
+      max-parallel: 3 # Run 3 chunks concurrently to match Ollama Pro concurrency
       fail-fast: false # Prevents one failed chunk from canceling the rest
       matrix:
         chunk:
