@@ -56,11 +56,14 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
+          cache: "pip"                      # ← cache pip packages between runs
+          cache-dependency-path: requirements-verifier.txt
 
       - name: Install System Dependencies (Chrome & Xvfb)
         run: |
           sudo apt-get update
-          sudo apt-get install -y tesseract-ocr libtesseract-dev xvfb x11-utils
+          sudo apt-get install -y tesseract-ocr libtesseract-dev xvfb x11-utils \
+            xkb-data x11-xkb-utils
           sudo mount -t tmpfs -o size=2g tmpfs /dev/shm || true
           pkill -9 chrome 2>/dev/null || true
           google-chrome --version || true
@@ -72,9 +75,18 @@ jobs:
 
       - name: Install Python Dependencies
         run: |
+          pip install --upgrade pip
           pip install -r requirements-verifier.txt python-dotenv gdown
 
+      - name: Cache Input PDF
+        id: cache-pdf
+        uses: actions/cache@v4
+        with:
+          path: link_compile.pdf
+          key: link-compile-pdf-1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd
+
       - name: Download PDF from Google Drive
+        if: steps.cache-pdf.outputs.cache-hit != 'true'
         run: |
           gdown "1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd" -O link_compile.pdf
 
@@ -97,7 +109,7 @@ jobs:
           OLLAMA_VISION_MODEL: "gemma4:31b-cloud"
           OLLAMA_NAV_VISION_MODEL: "gemma3:4b"
         run: |
-          Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset &
+          Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset 2>/dev/null &
           sleep 3
           python autonomous_course_verifier.py || echo "::warning::Verifier exited with non-zero status, but checkpoint should be saved"
 

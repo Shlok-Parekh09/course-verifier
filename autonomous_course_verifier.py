@@ -1876,18 +1876,50 @@ class AutonomousCourseVerifier:
         from selenium.webdriver.common.action_chains import ActionChains
         
         from selenium.common.exceptions import TimeoutException
-        
-        try:
-            driver.set_page_load_timeout(30)
-            driver.get(url)
-        except TimeoutException:
+        import threading as _threading
+
+        _PAGE_LOAD_HARD_TIMEOUT = 35  # seconds — kills the get() thread if Selenium hangs
+
+        _load_exc = [None]
+
+        def _do_get():
+            try:
+                driver.set_page_load_timeout(30)
+                driver.get(url)
+            except TimeoutException:
+                _load_exc[0] = "timeout"
+            except Exception as _e:
+                _load_exc[0] = _e
+
+        _t = _threading.Thread(target=_do_get, daemon=True)
+        _t.start()
+        _t.join(timeout=_PAGE_LOAD_HARD_TIMEOUT)
+
+        if _t.is_alive():
+            # Browser is totally frozen — stop the page and move on
+            print(f"    -> [!] Hard timeout ({_PAGE_LOAD_HARD_TIMEOUT}s) reached for {url}. Stopping page load...")
+            try:
+                driver.execute_script("window.stop();")
+            except Exception:
+                pass
+        elif _load_exc[0] == "timeout":
             print(f"    -> [!] Page load timed out for {url}. Attempting to proceed with whatever loaded...")
             try:
                 driver.execute_script("window.stop();")
-            except:
+            except Exception:
                 pass
-        except Exception as e:
-            print(f"    -> [!] Error loading page {url}: {e}")
+        elif _load_exc[0] is not None:
+            err_str = str(_load_exc[0]).lower()
+            # "The operation was canceled" / ERR_ABORTED / WebDriverException on hung CAPTCHA pages
+            if any(kw in err_str for kw in ("canceled", "cancelled", "aborted", "err_aborted",
+                                             "session deleted", "disconnected", "no such window")):
+                print(f"    -> [!] Page load aborted/canceled for {url}: {_load_exc[0]}")
+                try:
+                    driver.execute_script("window.stop();")
+                except Exception:
+                    pass
+            else:
+                print(f"    -> [!] Error loading page {url}: {_load_exc[0]}")
             
         time.sleep(3)
 
