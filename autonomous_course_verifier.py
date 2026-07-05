@@ -101,6 +101,32 @@ subprocess.run = _safe_sub_run
 subprocess.check_output = _safe_sub_check_output
 subprocess.check_call = _safe_sub_check_call
 # ----------------------------------------------------
+
+# --- GLOBAL SAFE-PRINT PATCH (Windows cp1252 consoles) ---
+# Web text and LLM output contain Unicode characters that the default
+# Windows console (cp1252) cannot encode, raising 'charmap' errors.
+# Patch builtins.print so any failing line falls back to the raw stdout
+# buffer with UTF-8 replacement instead of crashing/hanging the agent.
+import builtins
+_orig_print = print
+
+def _safe_print(*args, **kwargs):
+    try:
+        return _orig_print(*args, **kwargs)
+    except UnicodeEncodeError:
+        sep = kwargs.get('sep', ' ')
+        end = kwargs.get('end', '\n')
+        file = kwargs.get('file', sys.stdout)
+        text = sep.join(str(a) for a in args) + end
+        try:
+            file.buffer.write(text.encode('utf-8', errors='replace'))
+        except Exception:
+            pass
+
+builtins.print = _safe_print
+# ----------------------------------------------------
+
+
 import tempfile
 import warnings
 import colorsys
@@ -2039,7 +2065,13 @@ class AutonomousCourseVerifier:
         os.makedirs(self.screenshots_dir, exist_ok=True)
 
         self.model = None
-        return _challenge_seen
+        # NOTE: We intentionally do NOT return challenge status. Previous code
+        # hard-aborted the course on a persisting bot challenge, which caused a
+        # regression: sites that uc could solve later (or that produced enough
+        # challenge-page text for the LLM to handle) were wrongly marked as
+        # website_issue. We keep the faster bypass loop, but let the normal
+        # extraction + LLM pipeline decide the outcome as before.
+        return False
 
     def _preflight_url_check(self, url):
         """Fast HEAD/GET request to weed out dead links before opening the browser."""
@@ -5544,7 +5576,7 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
                     print("    -> [Login Sequence] Coursera Login completed (or challenged).")
                     try:
                         cookies = driver.get_cookies()
-                        with open(cookie_file, 'w') as f:
+                        with open(cookie_file, 'w', encoding='utf-8') as f:
                             json.dump(cookies, f)
                         print("    -> [Login Sequence] Saved Coursera cookies for future threads.")
                     except Exception as e:
@@ -6198,24 +6230,16 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
             original_url = driver.current_url.split('#')[0]
             original_window = driver.current_window_handle
 
-            # ── Bot/WAF early-exit: do not burn 4 vision rounds on a challenge page ──
-            # undetected_chromedriver usually solves Cloudflare in the initial page
-            # load. If it hasn't, a challenge page sits here. Wait once for it to
-            # clear; if it persists, bail out and let the normal flow classify the
-            # course as a website_issue (blocked_by_waf / timeout).
+            # ── Bot/WAF guard: if the page is a challenge page, give uc a short
+            # chance to solve it. We do NOT hard-abort here because the normal
+            # extraction pipeline may still produce a MATCH (as in v0/v1/v2).
+            # Only skip the vision agent if the page has no interactive elements
+            # at all (can't explore a blank challenge page).
             if self._is_bot_challenge_page(driver):
                 print("    -> [Smart Agent] Bot/WAF challenge page detected. Waiting once for uc to solve...")
-                time.sleep(8)
+                time.sleep(5)
                 if self._is_bot_challenge_page(driver):
-                    print("    -> [Smart Agent] Challenge still present after wait. Aborting vision exploration.")
-                    try:
-                        domain = urlparse(driver.current_url).netloc
-                        if domain:
-                            self.domain_health.mark_captcha(domain)
-                    except Exception:
-                        pass
-                    return ""
-                print("    -> [Smart Agent] Challenge cleared. Proceeding with vision exploration.")
+                    print("    -> [Smart Agent] Challenge still present. Will attempt exploration if elements exist.")
 
             # ── Agentic Loop: Observe -> Think -> Act ──
             # Default lowered from 6 -> 4 to cut the serial LLM floor. The loop
@@ -6486,16 +6510,16 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     driver.execute_script("document.querySelectorAll('.llm-vision-box').forEach(e => e.remove());")
                 except: pass
 
-                # Recheck for bot challenge before next round starts.
+                # Recheck for bot challenge before next round starts. Only abort
+                # if no clickable elements were found — if there are elements, the
+                # agent can still be useful even on a partially-loaded page.
                 if vision_round + 1 < vision_max_rounds and self._is_bot_challenge_page(driver):
-                    print("    -> [Smart Agent] Bot/WAF challenge detected mid-exploration. Aborting remaining rounds.")
-                    try:
-                        domain = urlparse(driver.current_url).netloc
-                        if domain:
-                            self.domain_health.mark_captcha(domain)
-                    except Exception:
-                        pass
-                    break
+                    element_mapping = self._inject_bounding_boxes(driver)
+                    if not element_mapping:
+                        print("    -> [Smart Agent] Bot/WAF challenge detected mid-exploration and no elements found. Aborting remaining rounds.")
+                        break
+                    else:
+                        print("    -> [Smart Agent] Challenge markers present but clickable elements exist. Continuing exploration.")
 
         except Exception as e:
             print(f"    -> [Vision] Agent exploration error: {e}")
@@ -7004,26 +7028,6 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
 
                 parsed_domain = urlparse(url).netloc
 
-                # SPEED: Domain has repeatedly thrown captchas -> skip browser load entirely
-                if parsed_domain and self.domain_health.should_skip_captcha(parsed_domain, threshold=3):
-                    print(f"    -> [SKIP] Domain '{parsed_domain}' has repeated bot/captcha challenges. Fast-skipping.")
-                    raw_reason = f"Fast-skip: Domain '{parsed_domain}' repeatedly presented a bot/captcha challenge."
-                    course['web_status'] = "FALSE"
-                    course['reason'] = self._generate_description_locally(course['name'], raw_reason, is_error=True)
-                    course['direct_link_working'] = False
-                    course['is_hard_error'] = True
-                    course['error_screenshot_path'] = self._save_website_error_screenshot(driver, i, "blocked_by_waf")
-                    self._classify_and_set_issue(course)
-                    url_cache[cache_key] = {
-                        "web_status": "FALSE", "reason": course['reason'],
-                        "direct_link_working": False, "is_hard_error": True,
-                        "issue_category": course.get('issue_category', ''),
-                        "issue_sub_type": course.get('issue_sub_type', ''),
-                        "error_screenshot_path": course.get('error_screenshot_path', ''),
-                        "retry_count": course.get('retry_count', 0)
-                    }
-                    raise EarlyExit()
-
                 # SPEED: Domain health fast-skip if domain has 5+ recent issues
                 if parsed_domain and self.domain_health.should_skip(parsed_domain):
                     print(f"    -> [SKIP] Domain '{parsed_domain}' has repeated failures. Fast-skipping.")
@@ -7062,30 +7066,10 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 try:
                     if PRE_NAV_JITTER > 0:
                         time.sleep(random.uniform(0.5, PRE_NAV_JITTER))  # Fast: uc handles bot detection
-                    challenge_persisted = self._safe_get(driver, url)
-
-                    # If the page is still a bot challenge after all bypass attempts,
-                    # mark the domain and classify fast. Do not continue to extract/verify.
-                    if challenge_persisted:
-                        print(f"    -> [Bot Challenge] Could not resolve captcha/WAF for {url}")
-                        if parsed_domain:
-                            self.domain_health.mark_captcha(parsed_domain)
-                        raw_reason = "The website presented a bot/captcha challenge that could not be bypassed."
-                        course['web_status'] = "FALSE"
-                        course['reason'] = self._generate_description_locally(course['name'], raw_reason, is_error=True)
-                        course['direct_link_working'] = False
-                        course['is_hard_error'] = True
-                        course['error_screenshot_path'] = self._save_website_error_screenshot(driver, i, "blocked_by_waf")
-                        self._classify_and_set_issue(course)
-                        url_cache[cache_key] = {
-                            "web_status": "FALSE", "reason": course['reason'],
-                            "direct_link_working": False, "is_hard_error": True,
-                            "issue_category": course.get('issue_category', ''),
-                            "issue_sub_type": course.get('issue_sub_type', ''),
-                            "error_screenshot_path": course.get('error_screenshot_path', ''),
-                            "retry_count": course.get('retry_count', 0)
-                        }
-                        raise EarlyExit()
+                    # _safe_get now always returns False; it tries to bypass
+                    # captchas quickly but no longer hard-aborts the course.
+                    # The normal extraction/LLM pipeline below decides the outcome.
+                    self._safe_get(driver, url)
 
                     initial_title = ""
                     initial_body = ""

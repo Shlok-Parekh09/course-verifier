@@ -35,9 +35,9 @@ class LLMManager:
             raw_ollama_url = raw_ollama_url[:-4]
         self.ollama_api_url = raw_ollama_url
 
-        # Text model: nemotron-3-nano:30b is the sweet spot for this verifier —
-        # 20K-char page prompts in ~11–14s with valid JSON. See memory:
-        # ollama-cloud-model-choice. Override via OLLAMA_MODEL env var.
+        # Text model: nemotron-3-nano:30b is the fast option for 20K-char page
+        # prompts. gemini-3-flash-preview:cloud is slower but can be used as a
+        # fallback via OLLAMA_MODEL if nemotron misbehaves.
         self.ollama_model = os.environ.get("OLLAMA_MODEL", "nemotron-3-nano:30b")
 
         # Vision model used for accuracy-critical OCR (fee tables, scanned PDFs).
@@ -199,7 +199,7 @@ class LLMManager:
 
     def generate(self, prompt: str, system: Optional[str] = None, format: str = "text",
                  temperature: float = 0.0, provider: str = "auto", worker_id: int = None,
-                 model_name: str = None, timeout: int = 120) -> Optional[str]:
+                 model_name: str = None, timeout: int = None) -> Optional[str]:
         """Text generation via Ollama only.
 
         ``provider`` and ``model_name`` are accepted for backward compatibility
@@ -219,6 +219,16 @@ class LLMManager:
             text_rate = 0.2
         if text_rate > 0:
             self._rate_limit(key_id, min_interval=text_rate)
+        # Large fee-page prompts (20K chars) can exceed the old 120s read timeout
+        # on Ollama cloud. Allow override; default 180s gives the fast model headroom
+        # without letting a single stalled call freeze the batch.
+        if timeout is None:
+            try:
+                timeout = int(os.environ.get("OLLAMA_TEXT_TIMEOUT", "180"))
+            except ValueError:
+                timeout = 180
+        if timeout <= 0:
+            timeout = 180
         with self._count_lock:
             self.text_call_count += 1
         result = self._call_ollama(prompt, system, format, temperature,
