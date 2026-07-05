@@ -94,7 +94,7 @@ jobs:
           # Navigation-only vision uses a small lightweight model to speed up
           # the 3-4 serial action-decision rounds per hard course.
           OLLAMA_MODEL: "nemotron-3-nano:30b"
-          OLLAMA_VISION_MODEL: "gemini-3-flash-preview:cloud"
+          OLLAMA_VISION_MODEL: "gemma4:31b-cloud"
           OLLAMA_NAV_VISION_MODEL: "gemma3:4b"
         run: |
           Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset &
@@ -202,4 +202,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: merged-run-json
-          path: merged_run.json
+          path: merged_run.json
