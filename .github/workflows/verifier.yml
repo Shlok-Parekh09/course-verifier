@@ -108,6 +108,9 @@ jobs:
           OLLAMA_MODEL: "nemotron-3-nano:30b"
           OLLAMA_VISION_MODEL: "gemma4:31b-cloud"
           OLLAMA_NAV_VISION_MODEL: "gemma3:4b"
+          # URLs that consistently hang or crash (e.g. CAPTCHA loops, broken servers).
+          # Comma-separated. The verifier marks these FALSE and moves on immediately.
+          VERIFIER_SKIP_URLS: "https://cmies.eng.cmu.ac.th/informaion-systems-and-cybersecurity/"
         run: |
           Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset 2>/dev/null &
           sleep 3

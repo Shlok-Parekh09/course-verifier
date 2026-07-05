@@ -6998,6 +6998,17 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 if course.get("web_status") == "MATCH" or course.get("reason", "") != "":
                     print("    -> [Skipped] Course already verified in checkpoint data.", flush=True)
                     raise EarlyExit()
+
+                # --- MANUAL URL SKIP LIST (VERIFIER_SKIP_URLS env var) ---
+                # Comma-separated list of URLs to hard-skip (e.g. sites that always hang/crash).
+                _skip_urls_raw = os.environ.get("VERIFIER_SKIP_URLS", "")
+                _skip_urls = [u.strip() for u in _skip_urls_raw.split(",") if u.strip()]
+                if any(url.strip().rstrip("/") == s.rstrip("/") for s in _skip_urls):
+                    print(f"    -> [Skip-Blocklist] {url} — listed in VERIFIER_SKIP_URLS. Marking skipped.", flush=True)
+                    course['web_status'] = "FALSE"
+                    course['reason'] = "URL in VERIFIER_SKIP_URLS blocklist — skipped intentionally."
+                    course['is_hard_error'] = True
+                    raise EarlyExit()
                     
                 cache_key = f"{url}::{normalize(course.get('name', ''))}"
                 if cache_key in url_cache:
