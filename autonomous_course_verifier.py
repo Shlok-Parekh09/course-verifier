@@ -441,6 +441,19 @@ class DomainHealthCache:
                 "issue_count": self._cache.get(self._key(domain), {}).get("issue_count", 0) + 1
             }
 
+    def mark_captcha(self, domain):
+        """Track bot/captcha challenges separately so we can skip them fast."""
+        with self._lock:
+            key = self._key(domain)
+            prev = self._cache.get(key, {})
+            self._cache[key] = {
+                "category": ISSUE_CATEGORY_WEBSITE,
+                "sub_type": "blocked_by_waf",
+                "timestamp": time.time(),
+                "issue_count": prev.get("issue_count", 0) + 1,
+                "captcha_count": prev.get("captcha_count", 0) + 1,
+            }
+
     def get_health(self, domain):
         with self._lock:
             entry = self._cache.get(self._key(domain))
@@ -464,6 +477,13 @@ class DomainHealthCache:
             return False
         # If we saw 5+ issues on this domain recently, skip with fast fail
         return health.get("issue_count", 0) >= 5
+
+    def should_skip_captcha(self, domain, threshold=3):
+        """Skip browser load if this domain has repeatedly thrown captchas."""
+        health = self.get_health(domain)
+        if not health:
+            return False
+        return health.get("captcha_count", 0) >= threshold
 
 
 # Shared domain-health singleton
@@ -1900,18 +1920,63 @@ class AutonomousCourseVerifier:
             pass
 
         self._inject_beautiful_cursor(driver)
-        
+
         # Cloudflare Turnstile / "just a moment" challenge bypass.
         # Undetected-chromedriver usually solves the JS challenge automatically if given
-        # enough time; the mouse movement simulates human presence. We retry up to 5
-        # times with increasing waits, and attempt to click the Turnstile checkbox.
-        for attempt in range(5):
+        # enough time. We allow a few short attempts, but we bail out as soon as the
+        # page renders real content instead of burning all attempts. Env knobs:
+        #   VERIFIER_CAPTCHA_MAX_ATTEMPTS  (default 3, old was 5)
+        #   VERIFIER_CAPTCHA_WAIT_BASE     (default 4s, wait = base + attempt*2)
+        #   VERIFIER_CAPTCHA_MOUSE_MOVE    (default false — mouse moves are expensive)
+        #   VERIFIER_CAPTCHA_CLICK_IFRAME  (default true)
+        try:
+            _captcha_max_attempts = int(os.environ.get('VERIFIER_CAPTCHA_MAX_ATTEMPTS', '3'))
+        except ValueError:
+            _captcha_max_attempts = 3
+        if _captcha_max_attempts <= 0:
+            _captcha_max_attempts = 3
+        try:
+            _captcha_wait_base = int(os.environ.get('VERIFIER_CAPTCHA_WAIT_BASE', '4'))
+        except ValueError:
+            _captcha_wait_base = 4
+        if _captcha_wait_base <= 0:
+            _captcha_wait_base = 4
+        _captcha_mouse_move = os.environ.get('VERIFIER_CAPTCHA_MOUSE_MOVE', 'false').lower() == 'true'
+        _captcha_click_iframe = os.environ.get('VERIFIER_CAPTCHA_CLICK_IFRAME', 'true').lower() == 'true'
+
+        # Helper: does the page look like it has real content now?
+        def _has_real_content():
             try:
-                page_src = driver.page_source.lower()
-                if "verify you are human" in page_src or "just a moment" in page_src or "attention required" in page_src or "checking your browser" in page_src:
-                    print(f"    -> [!] Captcha/Bot Challenge detected (attempt {attempt+1}/5). Attempting bypass...")
-                    
-                    # Simulate human-like mouse movement across the page
+                title = (driver.title or "").lower()
+                body_text = driver.execute_script("return document.body ? document.body.innerText : ''") or ""
+                page_src = (driver.page_source or "").lower()
+                # A rendered page has a meaningful title (not the challenge titles) and
+                # more than ~300 chars of body text with no challenge markers.
+                if any(m in page_src for m in self._BOT_CHALLENGE_MARKERS):
+                    return False
+                if title and title not in ("", "just a moment...", "attention required!", "please wait...", "checking your browser..."):
+                    if len(body_text) > 300:
+                        return True
+                    # If body is small but there is no challenge marker, it may be a
+                    # sparse real page (e.g. a redirect page); treat as resolved.
+                    if len(body_text) > 50:
+                        return True
+            except Exception:
+                pass
+            return False
+
+        _challenge_seen = False
+        for attempt in range(_captcha_max_attempts):
+            try:
+                page_src = (driver.page_source or "").lower()
+                if not any(marker in page_src for marker in self._BOT_CHALLENGE_MARKERS):
+                    break
+
+                _challenge_seen = True
+                print(f"    -> [!] Captcha/Bot Challenge detected (attempt {attempt+1}/{_captcha_max_attempts}). Attempting bypass...")
+
+                # Simulate human-like mouse movement across the page (optional, off by default)
+                if _captcha_mouse_move:
                     try:
                         body = driver.find_element(By.TAG_NAME, 'body')
                         ac = ActionChains(driver)
@@ -1919,8 +1984,9 @@ class AutonomousCourseVerifier:
                             ac.move_to_element_with_offset(body, random.randint(10, 200), random.randint(10, 200)).perform()
                             time.sleep(random.uniform(0.3, 0.8))
                     except: pass
-                    
-                    # Find and click the Cloudflare Turnstile / hCaptcha checkbox iframe
+
+                # Find and click the Cloudflare Turnstile / hCaptcha checkbox iframe
+                if _captcha_click_iframe:
                     iframes = driver.find_elements(By.TAG_NAME, "iframe")
                     clicked_captcha = False
                     for iframe in iframes:
@@ -1946,20 +2012,34 @@ class AutonomousCourseVerifier:
                                 except: pass
                             if clicked_captcha:
                                 break
-                    
-                    # Wait longer on later attempts to let the JS challenge self-resolve
-                    wait_time = 4 + attempt * 2  # 4, 6, 8, 10, 12s
-                    print(f"    -> Waiting {wait_time}s for challenge to resolve...")
-                    time.sleep(wait_time)
+
+                # Wait, but poll for early content resolution every second so we
+                # don't sit through the full wait once the challenge is solved.
+                wait_time = _captcha_wait_base + attempt * 2  # e.g. 4, 6, 8s
+                print(f"    -> Waiting up to {wait_time}s for challenge to resolve...")
+                for _elapsed in range(wait_time):
+                    time.sleep(1)
+                    if _has_real_content():
+                        print(f"    -> [OK] Challenge resolved after ~{_elapsed+1}s on attempt {attempt+1}.")
+                        _challenge_seen = False
+                        break
                 else:
-                    break
+                    # Loop completed without early break; content still not real.
+                    continue
+                break
             except Exception as e:
                 try: driver.switch_to.default_content()
                 except: pass
                 break
+
+        if _challenge_seen and not any(marker in (driver.page_source or "").lower() for marker in self._BOT_CHALLENGE_MARKERS):
+            # Challenge resolved on the last attempt; don't mark domain as bad.
+            _challenge_seen = False
+
         os.makedirs(self.screenshots_dir, exist_ok=True)
 
         self.model = None
+        return _challenge_seen
 
     def _preflight_url_check(self, url):
         """Fast HEAD/GET request to weed out dead links before opening the browser."""
@@ -6091,6 +6171,24 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
             pass
 
 
+    _BOT_CHALLENGE_MARKERS = [
+        "just a moment", "checking your browser", "attention required",
+        "verify you are human", "cf-challenge-page", "challenge-platform",
+        "datadome", "ddgi", "ray-id", "please wait", "cloudflare",
+        "security check", "verifying you are human", "browser check",
+        "anti-bot", "bot detection", "captcha",
+    ]
+
+    def _is_bot_challenge_page(self, driver):
+        """Return True if the current page looks like a bot/WAF challenge."""
+        try:
+            page_src = (driver.page_source or "").lower()
+            body_text = (driver.execute_script("return document.body ? document.body.innerText : ''") or "").lower()
+            combined = page_src + " " + body_text
+            return any(marker in combined for marker in self._BOT_CHALLENGE_MARKERS)
+        except Exception:
+            return False
+
     def _vision_based_tab_exploration(self, driver, course_name="", missing_info="", country=""):
         """Use LLM Manager to intelligently browse the page, scroll, and click relevant tabs."""
         extra_parts = []
@@ -6100,16 +6198,34 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
             original_url = driver.current_url.split('#')[0]
             original_window = driver.current_window_handle
 
+            # ── Bot/WAF early-exit: do not burn 4 vision rounds on a challenge page ──
+            # undetected_chromedriver usually solves Cloudflare in the initial page
+            # load. If it hasn't, a challenge page sits here. Wait once for it to
+            # clear; if it persists, bail out and let the normal flow classify the
+            # course as a website_issue (blocked_by_waf / timeout).
+            if self._is_bot_challenge_page(driver):
+                print("    -> [Smart Agent] Bot/WAF challenge page detected. Waiting once for uc to solve...")
+                time.sleep(8)
+                if self._is_bot_challenge_page(driver):
+                    print("    -> [Smart Agent] Challenge still present after wait. Aborting vision exploration.")
+                    try:
+                        domain = urlparse(driver.current_url).netloc
+                        if domain:
+                            self.domain_health.mark_captcha(domain)
+                    except Exception:
+                        pass
+                    return ""
+                print("    -> [Smart Agent] Challenge cleared. Proceeding with vision exploration.")
+
             # ── Agentic Loop: Observe -> Think -> Act ──
-            # Max rounds is configurable (default 6). Lower it (e.g. 3-4) to cut
-            # per-course LLM cost once you've confirmed accuracy holds; the loop
-            # often finishes early via the "finish" action before the cap anyway.
+            # Default lowered from 6 -> 4 to cut the serial LLM floor. The loop
+            # still exits early on "finish". Raise back via VERIFIER_VISION_MAX_ROUNDS.
             try:
-                vision_max_rounds = int(os.environ.get('VERIFIER_VISION_MAX_ROUNDS', '6'))
+                vision_max_rounds = int(os.environ.get('VERIFIER_VISION_MAX_ROUNDS', '4'))
             except ValueError:
-                vision_max_rounds = 6
+                vision_max_rounds = 4
             if vision_max_rounds <= 0:
-                vision_max_rounds = 6
+                vision_max_rounds = 4
 
             # ── Smart settle wait (accuracy-neutral) ──
             # The fixed time.sleep() after each scroll/hover/click/back was a
@@ -6185,13 +6301,33 @@ Return ONLY valid JSON in this exact format:
 CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSATION, REASONING, OR EXPLANATION.
 """
                 print(f"      -> [Smart Agent] Taking screenshot and asking Vision LLM for next action...")
-                
+
+                # Use the lightweight navigation vision model by default. If it
+                # returns garbage JSON, fall back to the accuracy-critical vision
+                # model for this round. Kill switch: VERIFIER_USE_NAV_VISION=false
+                # routes every navigation round through the main vision model.
                 try:
-                    b64_img = driver.get_screenshot_as_base64()
-                    response_text = llm.generate_with_image(
+                    _use_nav_vision = os.environ.get('VERIFIER_USE_NAV_VISION', 'true').lower() == 'true'
+                except Exception:
+                    _use_nav_vision = True
+
+                def _get_nav_action_response(b64_img, use_nav=True):
+                    try:
+                        if use_nav and hasattr(llm, 'generate_nav_with_image'):
+                            return llm.generate_nav_with_image(
+                                prompt=agent_prompt,
+                                base64_image=b64_img
+                            )
+                    except Exception as e:
+                        print(f"      -> [Smart Agent] Nav vision model failed: {e}. Falling back to main vision model.")
+                    return llm.generate_with_image(
                         prompt=agent_prompt,
                         base64_image=b64_img
                     )
+
+                try:
+                    b64_img = driver.get_screenshot_as_base64()
+                    response_text = _get_nav_action_response(b64_img, use_nav=_use_nav_vision)
                 except Exception as e:
                     print(f"      -> [Smart Agent] Failed to use vision API: {e}. Falling back to text-only API.")
                     response_text = llm.generate(
@@ -6199,51 +6335,69 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         format="json",
                         temperature=0.0
                     )
-                
+
                 if not response_text:
                     print("      -> [Smart Agent] LLM Manager failed.")
                     break
-                    
-                try:
+
+                def _parse_action_response(response_text, allow_fallback=True):
+                    """Parse JSON action; optionally retry with main vision model."""
                     import ast
                     try:
-                        action_data = json.loads(response_text)
-                    except json.JSONDecodeError:
-                        action_data = ast.literal_eval(response_text)
-                except Exception:
+                        try:
+                            return json.loads(response_text)
+                        except json.JSONDecodeError:
+                            return ast.literal_eval(response_text)
+                    except Exception:
+                        pass
                     # Try to extract JSON if there's markdown wrap
-                    pass # removed local import re
                     match = re.search(r'\{.*\}', response_text, re.DOTALL)
                     if match:
                         try:
                             json_str = match.group(0)
                             try:
-                                action_data = json.loads(json_str)
+                                return json.loads(json_str)
                             except json.JSONDecodeError:
-                                action_data = ast.literal_eval(json_str)
+                                return ast.literal_eval(json_str)
                         except Exception:
-                            print(f"      -> [Smart Agent] Invalid JSON from LLM: {response_text}")
-                            break
-                    else:
-                        print(f"      -> [Smart Agent] Invalid JSON from LLM: {response_text}")
-                        # Fallback heuristic: search for the ID in the last relevant line
-                        lines = response_text.strip().split('\n')
-                        found_id = None
-                        for line in reversed(lines):
-                            if re.search(r'(click|id|action)', line, re.IGNORECASE):
-                                nums = re.findall(r'\d+', line)
-                                if nums:
-                                    found_id = nums[-1]
-                                    break
-                        if not found_id:
-                            nums = re.findall(r'\d+', response_text)
-                            if nums: found_id = nums[-1]
-                            
-                        if found_id:
-                            action_data = {"action": "click", "id": int(found_id)}
-                            print(f"      -> [Smart Agent Fallback] Deduced click on ID {found_id}")
-                        else:
-                            break
+                            pass
+                    # Fallback heuristic: search for the ID in the last relevant line
+                    lines = response_text.strip().split('\n')
+                    found_id = None
+                    for line in reversed(lines):
+                        if re.search(r'(click|id|action)', line, re.IGNORECASE):
+                            nums = re.findall(r'\d+', line)
+                            if nums:
+                                found_id = nums[-1]
+                                break
+                    if not found_id:
+                        nums = re.findall(r'\d+', response_text)
+                        if nums:
+                            found_id = nums[-1]
+                    if found_id:
+                        print(f"      -> [Smart Agent Fallback] Deduced click on ID {found_id}")
+                        return {"action": "click", "id": int(found_id)}
+                    return None
+
+                action_data = _parse_action_response(response_text, allow_fallback=True)
+
+                # If the lightweight nav model gave unparseable output, retry this
+                # single round with the main vision model before giving up.
+                if action_data is None and _use_nav_vision:
+                    print("      -> [Smart Agent] Nav model returned unparseable JSON. Retrying with main vision model...")
+                    try:
+                        b64_img = driver.get_screenshot_as_base64()
+                        response_text = llm.generate_with_image(
+                            prompt=agent_prompt,
+                            base64_image=b64_img
+                        )
+                        action_data = _parse_action_response(response_text, allow_fallback=False)
+                    except Exception as e:
+                        print(f"      -> [Smart Agent] Main vision model retry failed: {e}")
+
+                if action_data is None:
+                    print(f"      -> [Smart Agent] Invalid JSON from LLM: {response_text}")
+                    break
 
                 action = action_data.get("action")
                 
@@ -6310,11 +6464,16 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 driver.back()
                                 _settle_wait(1.5)
 
+                            # If click triggered a bot challenge, stop wasting rounds.
+                            if self._is_bot_challenge_page(driver):
+                                print("      -> [Smart Agent] Bot/WAF challenge appeared after click. Aborting vision exploration.")
+                                break
+
                             # Grab new text
                             new_text = driver.execute_script("return document.body ? document.body.innerText : '';")
                             if new_text and len(new_text) > 100:
                                 extra_parts.append(new_text)
-                                
+
                         except Exception as e:
                             print(f"      -> [Smart Agent] Click failed: {e}")
                     else:
@@ -6326,6 +6485,17 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 try:
                     driver.execute_script("document.querySelectorAll('.llm-vision-box').forEach(e => e.remove());")
                 except: pass
+
+                # Recheck for bot challenge before next round starts.
+                if vision_round + 1 < vision_max_rounds and self._is_bot_challenge_page(driver):
+                    print("    -> [Smart Agent] Bot/WAF challenge detected mid-exploration. Aborting remaining rounds.")
+                    try:
+                        domain = urlparse(driver.current_url).netloc
+                        if domain:
+                            self.domain_health.mark_captcha(domain)
+                    except Exception:
+                        pass
+                    break
 
         except Exception as e:
             print(f"    -> [Vision] Agent exploration error: {e}")
@@ -6832,8 +7002,29 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     print("    -> [Coursera] Detected 'certificate' in course name. Triggering on-demand login.", flush=True)
                     self._perform_platform_logins(driver)
 
-                # SPEED: Domain health fast-skip if domain has 5+ recent issues
                 parsed_domain = urlparse(url).netloc
+
+                # SPEED: Domain has repeatedly thrown captchas -> skip browser load entirely
+                if parsed_domain and self.domain_health.should_skip_captcha(parsed_domain, threshold=3):
+                    print(f"    -> [SKIP] Domain '{parsed_domain}' has repeated bot/captcha challenges. Fast-skipping.")
+                    raw_reason = f"Fast-skip: Domain '{parsed_domain}' repeatedly presented a bot/captcha challenge."
+                    course['web_status'] = "FALSE"
+                    course['reason'] = self._generate_description_locally(course['name'], raw_reason, is_error=True)
+                    course['direct_link_working'] = False
+                    course['is_hard_error'] = True
+                    course['error_screenshot_path'] = self._save_website_error_screenshot(driver, i, "blocked_by_waf")
+                    self._classify_and_set_issue(course)
+                    url_cache[cache_key] = {
+                        "web_status": "FALSE", "reason": course['reason'],
+                        "direct_link_working": False, "is_hard_error": True,
+                        "issue_category": course.get('issue_category', ''),
+                        "issue_sub_type": course.get('issue_sub_type', ''),
+                        "error_screenshot_path": course.get('error_screenshot_path', ''),
+                        "retry_count": course.get('retry_count', 0)
+                    }
+                    raise EarlyExit()
+
+                # SPEED: Domain health fast-skip if domain has 5+ recent issues
                 if parsed_domain and self.domain_health.should_skip(parsed_domain):
                     print(f"    -> [SKIP] Domain '{parsed_domain}' has repeated failures. Fast-skipping.")
                     course['web_status'] = "FALSE"
@@ -6871,8 +7062,31 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 try:
                     if PRE_NAV_JITTER > 0:
                         time.sleep(random.uniform(0.5, PRE_NAV_JITTER))  # Fast: uc handles bot detection
-                    self._safe_get(driver, url)
-                    
+                    challenge_persisted = self._safe_get(driver, url)
+
+                    # If the page is still a bot challenge after all bypass attempts,
+                    # mark the domain and classify fast. Do not continue to extract/verify.
+                    if challenge_persisted:
+                        print(f"    -> [Bot Challenge] Could not resolve captcha/WAF for {url}")
+                        if parsed_domain:
+                            self.domain_health.mark_captcha(parsed_domain)
+                        raw_reason = "The website presented a bot/captcha challenge that could not be bypassed."
+                        course['web_status'] = "FALSE"
+                        course['reason'] = self._generate_description_locally(course['name'], raw_reason, is_error=True)
+                        course['direct_link_working'] = False
+                        course['is_hard_error'] = True
+                        course['error_screenshot_path'] = self._save_website_error_screenshot(driver, i, "blocked_by_waf")
+                        self._classify_and_set_issue(course)
+                        url_cache[cache_key] = {
+                            "web_status": "FALSE", "reason": course['reason'],
+                            "direct_link_working": False, "is_hard_error": True,
+                            "issue_category": course.get('issue_category', ''),
+                            "issue_sub_type": course.get('issue_sub_type', ''),
+                            "error_screenshot_path": course.get('error_screenshot_path', ''),
+                            "retry_count": course.get('retry_count', 0)
+                        }
+                        raise EarlyExit()
+
                     initial_title = ""
                     initial_body = ""
                     try:

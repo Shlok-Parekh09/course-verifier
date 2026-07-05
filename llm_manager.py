@@ -35,10 +35,21 @@ class LLMManager:
             raw_ollama_url = raw_ollama_url[:-4]
         self.ollama_api_url = raw_ollama_url
 
-        # nemotron-3-nano:30b is the sweet spot for this verifier — 20K-char
-        # page prompts in ~11–14s with valid JSON. See memory: ollama-cloud-model-choice.
-        self.ollama_model = os.environ.get("OLLAMA_MODEL", "gemini-3-flash-preview:cloud")
+        # Text model: nemotron-3-nano:30b is the sweet spot for this verifier —
+        # 20K-char page prompts in ~11–14s with valid JSON. See memory:
+        # ollama-cloud-model-choice. Override via OLLAMA_MODEL env var.
+        self.ollama_model = os.environ.get("OLLAMA_MODEL", "nemotron-3-nano:30b")
+
+        # Vision model used for accuracy-critical OCR (fee tables, scanned PDFs).
+        # Keep this on a strong vision model even if it's slower.
         self.ollama_vision_model = os.environ.get("OLLAMA_VISION_MODEL", "gemini-3-flash-preview:cloud")
+
+        # Lightweight navigation-only vision model for the action-decision rounds
+        # (click/scroll/finish). This is called 3-6 times per hard course, strictly
+        # serial, so a small fast model is a big wall-clock win. If it returns
+        # unparseable JSON the caller can fall back to the main vision model.
+        # Override via OLLAMA_NAV_VISION_MODEL env var.
+        self.ollama_nav_vision_model = os.environ.get("OLLAMA_NAV_VISION_MODEL", "gemma3:4b")
 
         # Track last call time per key to enforce rate limits
         self.last_call = {}
@@ -91,6 +102,7 @@ class LLMManager:
         # ── Diagnostic logging ──
         print(f"[LLM Manager] Ollama-only mode | url={self.ollama_api_url} | "
               f"text_model={self.ollama_model} | vision_model={self.ollama_vision_model} | "
+              f"nav_vision_model={self.ollama_nav_vision_model} | "
               f"auth={'bearer' if self.ollama_api_key else 'none'} | "
               f"max_concurrency={max_conc}")
         if not self.ollama_api_url:
@@ -218,7 +230,7 @@ class LLMManager:
 
     def generate_with_image(self, prompt: str, base64_image: str,
                             system: Optional[str] = None, worker_id: int = None) -> Optional[str]:
-        """Vision extraction via Ollama only."""
+        """Vision extraction via Ollama only (accuracy-critical OCR path)."""
         with self._vision_lock:
             current_call_idx = self.vision_call_counter
             self.vision_call_counter += 1
@@ -232,6 +244,28 @@ class LLMManager:
         if result:
             return result
         print("      -> [LLM Manager] CRITICAL ERROR: Ollama vision call failed!")
+        return None
+
+    def generate_nav_with_image(self, prompt: str, base64_image: str,
+                                system: Optional[str] = None, worker_id: int = None) -> Optional[str]:
+        """Fast navigation-only vision call (click/scroll/finish decisions)."""
+        with self._vision_lock:
+            current_call_idx = self.vision_call_counter
+            self.vision_call_counter += 1
+
+        print(f"      -> [LLM Manager] Nav vision call index: {current_call_idx} "
+              f"-> Ollama ({self.ollama_nav_vision_model})")
+        # Navigation rounds are strictly serial and low-stakes; use a tighter
+        # rate limit so we don't unnecessarily pace a fast small model.
+        self._rate_limit(f"ollama_nav_vision_{current_call_idx}", min_interval=2.0)
+        with self._count_lock:
+            self.vision_call_count += 1
+        result = self._call_ollama_vision(prompt, base64_image, system,
+                                          model=self.ollama_nav_vision_model,
+                                          format="json")
+        if result:
+            return result
+        print("      -> [LLM Manager] Nav vision call failed; caller should fall back.")
         return None
 
     def _call_ollama(self, prompt: str, system: Optional[str], format: str,
@@ -281,13 +315,14 @@ class LLMManager:
         finally:
             self._llm_semaphore.release()
 
-    def _call_ollama_vision(self, prompt: str, base64_image: str, system: Optional[str]) -> Optional[str]:
+    def _call_ollama_vision(self, prompt: str, base64_image: str, system: Optional[str],
+                            *, model: str = None, format: str = None) -> Optional[str]:
         url = f"{self.ollama_api_url}/api/generate"
-        # 31B cloud vision model under concurrent worker load routinely
-        # exceeds the old 60s read timeout (see "Read timed out (read
-        # timeout=60)" in CI logs). Give it real headroom and retry once on a
-        # transient timeout/error so a single slow page doesn't drop the whole
-        # fee extraction. Overridable via OLLAMA_VISION_TIMEOUT.
+        # Vision calls under concurrent worker load routinely exceed the old
+        # 60s read timeout (see "Read timed out (read timeout=60)" in CI
+        # logs). Give it real headroom and retry once on a transient
+        # timeout/error so a single slow page doesn't drop extraction.
+        # Overridable via OLLAMA_VISION_TIMEOUT.
         try:
             vision_timeout = int(os.environ.get("OLLAMA_VISION_TIMEOUT", "120"))
         except ValueError:
@@ -295,8 +330,11 @@ class LLMManager:
         if vision_timeout <= 0:
             vision_timeout = 120
 
+        if not model:
+            model = self.ollama_vision_model
+
         payload = {
-            "model": self.ollama_vision_model,
+            "model": model,
             "prompt": prompt,
             "stream": False,
             "images": [base64_image],
@@ -306,6 +344,8 @@ class LLMManager:
         }
         if system:
             payload["system"] = system
+        if format == "json":
+            payload["format"] = "json"
 
         headers = {"Content-Type": "application/json"}
         if self.ollama_api_key:

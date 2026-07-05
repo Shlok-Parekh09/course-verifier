@@ -90,6 +90,10 @@ jobs:
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
           OLLAMA_API_URL: ${{ secrets.OLLAMA_API_URL }}
           OLLAMA_MODEL: ${{ secrets.OLLAMA_MODEL }}
+          # Accuracy-critical OCR vision model. Navigation-only rounds use a
+          # smaller/faster model to cut the serial vision floor.
+          OLLAMA_VISION_MODEL: ${{ secrets.OLLAMA_VISION_MODEL }}
+          OLLAMA_NAV_VISION_MODEL: ${{ secrets.OLLAMA_NAV_VISION_MODEL }}
           # ── Speed levers (scrape waits) ──
           # Left at defaults so the verification process is unchanged. These are
           # env-overridable knobs (VERIFIER_SPA_WAIT, VERIFIER_JS_FALLBACK_WAIT,

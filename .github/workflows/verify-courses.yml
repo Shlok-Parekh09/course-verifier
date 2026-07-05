@@ -93,6 +93,10 @@ jobs:
           # OLLAMA_* keys come from the ENV_FILE secret written to .env above,
           # then read via load_dotenv(). llm_manager self-verifies the key on
           # startup (sys.exit(1) on a bad/missing key).
+          # Make sure ENV_FILE also sets:
+          #   OLLAMA_MODEL=nemotron-3-nano:30b
+          #   OLLAMA_VISION_MODEL=gemini-3-flash-preview:cloud
+          #   OLLAMA_NAV_VISION_MODEL=gemma3:4b
           DISPLAY: ":99"
         run: |
           if ! grep -qE '^OLLAMA_API_KEY=.' .env; then
