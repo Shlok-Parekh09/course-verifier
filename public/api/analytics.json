@@ -2,8 +2,8 @@
   "status": "success",
   "data": {
     "course_category": {
-      "Free": 25,
-      "Free to Audit": 23,
+      "Free": 33,
+      "Free to Audit": 15,
       "High Value Low Cost": 52,
       "Diploma": 89,
       "Bachelor's Degree": 1891,
@@ -25,14 +25,14 @@
     },
     "domain_pivot": {
       "Free": {
-        "Total": 25,
-        "Indian": 5,
-        "International": 20
+        "Total": 33,
+        "Indian": 11,
+        "International": 22
       },
       "Free to Audit": {
-        "Total": 23,
-        "Indian": 6,
-        "International": 17
+        "Total": 15,
+        "Indian": 0,
+        "International": 15
       },
       "High Value Low Cost": {
         "Total": 52,

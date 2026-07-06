@@ -30,7 +30,7 @@ except Exception:
     pass
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024 # 50 MB
+app.config['MAX_CONTENT_LENGTH'] = 1024 * 1024 * 1024 # 1 GB
 
 # CORS — allow the Firebase-hosted static site (and any other client) to call
 # this dashboard API cross-origin. Set CORS_ALLOW_ORIGIN to a specific origin
@@ -1089,38 +1089,7 @@ def api_data():
     payload = _get_cached_data_payload()
     return jsonify(payload)
 
-@app.route("/api/course/<int:course_id>", methods=["DELETE", "OPTIONS"])
-def delete_course(course_id):
-    if request.method == "OPTIONS": return "", 204
-    global global_courses
-    
-    idx_to_delete = None
-    for i, c in enumerate(global_courses):
-        if c.get('id') == course_id:
-            idx_to_delete = i
-            break
-            
-    if idx_to_delete is not None:
-        del global_courses[idx_to_delete]
-        
-        # Re-index all courses so numbers change sequentially
-        for i, c in enumerate(global_courses):
-            c['id'] = i + 1
-            
-        # Resync everything to Firestore (since IDs changed)
-        save_courses(global_courses)
-        _invalidate_data_cache()
-        
-        # Delete the extra document at the end since size decreased by 1
-        if db is not None:
-            try:
-                db.courses.delete_one({'id': str(len(global_courses) + 1)})
-            except Exception as e:
-                print("Error deleting document from MongoDB:", e)
-            
-        return jsonify({"status": "success", "message": "Course deleted and IDs updated"})
-    else:
-        return jsonify({"status": "error", "message": "Course not found"}), 404
+
 
 @app.route("/api/course/<int:course_id>/solve", methods=["POST", "OPTIONS"])
 def solve_course_issue(course_id):
@@ -1554,9 +1523,15 @@ def upload_data():
                     c['issue_category'] = ISSUE_CATEGORY_VERIFIED
                     c['issue_sub_type'] = ''
                 else:
-                    c['status'] = 'Discrepancy'
-                    c['issue_category'] = ISSUE_CATEGORY_COURSE
-                    c['disc_reason'] = "Mismatch: " + ", ".join(fails)
+                    pdf_text = " ".join(str(v).lower() for row in c.get('pdf_table', []) if isinstance(row, dict) for v in row.values())
+                    if 'page load error' in pdf_text or 'website unreachable' in pdf_text or 'llm fallback' in pdf_text:
+                        c['status'] = 'Error'
+                        c['issue_category'] = ISSUE_CATEGORY_WEBSITE
+                        c['disc_reason'] = "Website Unreachable / Error"
+                    else:
+                        c['status'] = 'Discrepancy'
+                        c['issue_category'] = ISSUE_CATEGORY_COURSE
+                        c['disc_reason'] = "Mismatch: " + ", ".join(fails)
                 
                 c['issue_sub_type'] = derive_issue_sub_type(c)
                 updates += 1
