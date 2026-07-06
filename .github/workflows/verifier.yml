@@ -161,6 +161,30 @@ jobs:
           path: chunk_artifacts
           merge-multiple: false
 
+      # Fallback for 87-to-126 if it failed in the current run
+      - name: Download Fallback Chunk 87-to-126
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          FALLBACK_RUN_ID: 28643647783
+        run: |
+          if [ ! -d "chunk_artifacts/verification-results-87-to-126" ]; then
+            echo "::warning::Chunk 87-to-126 missing. Fetching artifact from fallback run $FALLBACK_RUN_ID ..."
+            ART_ID=$(gh api "repos/$REPO/actions/runs/$FALLBACK_RUN_ID/artifacts?per_page=100" \
+              --jq '.artifacts[] | select(.name == "verification-results") | .id')
+            if [ -n "$ART_ID" ]; then
+              echo "  -> Downloading fallback (id=$ART_ID)"
+              mkdir -p "chunk_artifacts/verification-results-87-to-126"
+              gh api "repos/$REPO/actions/artifacts/$ART_ID/zip" > /tmp/fallback.zip
+              unzip -q -o /tmp/fallback.zip -d "chunk_artifacts/verification-results-87-to-126" || true
+              rm -f /tmp/fallback.zip
+            else
+              echo "::warning::Could not find fallback artifact in run $FALLBACK_RUN_ID"
+            fi
+          else
+            echo "[*] Chunk 87-to-126 is present from the current run. No fallback needed."
+          fi
+
       # Merge every chunk JSON into one sorted, deduplicated file
       - name: Merge JSON Files
         run: |
@@ -178,6 +202,8 @@ jobs:
           else:
               print(f"Found {len(json_files)} JSON file(s) across all chunks.")
 
+          merged_dict = {}
+
           for jf in json_files:
               try:
                   with open(jf, encoding="utf-8") as f:
@@ -186,21 +212,33 @@ jobs:
                       print(f"  [!] Skipping {jf} (not a JSON array)")
                       continue
                   added = 0
+                  updated = 0
                   for course in data:
-                      # Deduplicate by (name, uni, page_num, box_index)
                       key = (
                           str(course.get("name", "")).strip().lower(),
                           str(course.get("uni",  "")).strip().lower(),
                           course.get("page_num"),
                           course.get("box_index"),
                       )
-                      if key not in seen_keys:
-                          seen_keys.add(key)
-                          merged.append(course)
+                      
+                      if key not in merged_dict:
+                          merged_dict[key] = course
                           added += 1
-                  print(f"  + {os.path.basename(jf)}: {len(data)} entries, {added} new after dedup")
+                      else:
+                          # Overwrite if the NEW one was actually processed
+                          is_processed = course.get("processed_this_run") or course.get("reason", "") != ""
+                          old_is_processed = merged_dict[key].get("processed_this_run") or merged_dict[key].get("reason", "") != ""
+                          
+                          if is_processed and not old_is_processed:
+                              merged_dict[key] = course
+                              updated += 1
+
+                  print(f"  + {os.path.basename(jf)}: {len(data)} entries, {added} new, {updated} updated")
               except Exception as e:
                   print(f"  [!] Error reading {jf}: {e}")
+
+          # Convert back to list
+          merged = list(merged_dict.values())
 
           # Sort by page_num then box_index (preserves original PDF order)
           merged.sort(key=lambda c: (c.get("page_num", 0), c.get("box_index", 0)))
