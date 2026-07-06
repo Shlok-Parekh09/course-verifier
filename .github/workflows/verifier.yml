@@ -170,8 +170,8 @@ jobs:
           merged = []
           seen_keys = set()
 
-          # Find all JSON files across every chunk sub-folder
-          json_files = sorted(glob.glob("chunk_artifacts/**/*.json", recursive=True))
+          # Find only the link_compile JSON files (not floating_items or other JSONs)
+          json_files = sorted(glob.glob("chunk_artifacts/**/*link_compile*.json", recursive=True))
 
           if not json_files:
               print("::warning::No JSON files found in downloaded artifacts!")

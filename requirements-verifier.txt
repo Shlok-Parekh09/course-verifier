@@ -24,3 +24,5 @@ cloudscraper
 rapidfuzz
 openpyxl
 psutil
+deep-translator
+spacy
