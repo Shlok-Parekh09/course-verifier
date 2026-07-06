@@ -128,6 +128,8 @@ jobs:
               print(f"  - {jf}")
           print()
 
+          merged_dict = {}
+
           for jf in json_files:
               try:
                   with open(jf, encoding="utf-8") as f:
@@ -136,6 +138,7 @@ jobs:
                       print(f"  [!] Skipping {jf} (not a JSON array)")
                       continue
                   added = 0
+                  updated = 0
                   for course in data:
                       key = (
                           str(course.get("name", "")).strip().lower(),
@@ -143,13 +146,26 @@ jobs:
                           course.get("page_num"),
                           course.get("box_index"),
                       )
-                      if key not in seen_keys:
-                          seen_keys.add(key)
-                          merged.append(course)
+                      
+                      if key not in merged_dict:
+                          merged_dict[key] = course
                           added += 1
-                  print(f"  + {os.path.basename(jf)}: {len(data)} entries, {added} new after dedup")
+                      else:
+                          # If we already have it, overwrite if the NEW one was actually processed
+                          # (e.g. has a reason, or processed_this_run=true)
+                          is_processed = course.get("processed_this_run") or course.get("reason", "") != ""
+                          old_is_processed = merged_dict[key].get("processed_this_run") or merged_dict[key].get("reason", "") != ""
+                          
+                          if is_processed and not old_is_processed:
+                              merged_dict[key] = course
+                              updated += 1
+
+                  print(f"  + {os.path.basename(jf)}: {len(data)} entries, {added} new, {updated} updated")
               except Exception as e:
                   print(f"  [!] Error reading {jf}: {e}")
+
+          # Convert back to list
+          merged = list(merged_dict.values())
 
           # Sort by page_num then box_index (original PDF order)
           merged.sort(key=lambda c: (c.get("page_num", 0), c.get("box_index", 0)))
