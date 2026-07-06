@@ -10,7 +10,7 @@ jobs:
       contents: write
     
     strategy:
-      max-parallel: 1 # Forces sequential execution (one chunk at a time)
+      max-parallel: 3 # Run 3 chunks concurrently to match Ollama Pro concurrency
       fail-fast: false # Prevents one failed chunk from canceling the rest
       matrix:
         chunk:
@@ -56,11 +56,14 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
+          cache: "pip"                      # ← cache pip packages between runs
+          cache-dependency-path: requirements-verifier.txt
 
       - name: Install System Dependencies (Chrome & Xvfb)
         run: |
           sudo apt-get update
-          sudo apt-get install -y tesseract-ocr libtesseract-dev xvfb x11-utils
+          sudo apt-get install -y tesseract-ocr libtesseract-dev xvfb x11-utils \
+            xkb-data x11-xkb-utils
           sudo mount -t tmpfs -o size=2g tmpfs /dev/shm || true
           pkill -9 chrome 2>/dev/null || true
           google-chrome --version || true
@@ -72,9 +75,18 @@ jobs:
 
       - name: Install Python Dependencies
         run: |
+          pip install --upgrade pip
           pip install -r requirements-verifier.txt python-dotenv gdown
 
+      - name: Cache Input PDF
+        id: cache-pdf
+        uses: actions/cache@v4
+        with:
+          path: link_compile.pdf
+          key: link-compile-pdf-1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd
+
       - name: Download PDF from Google Drive
+        if: steps.cache-pdf.outputs.cache-hit != 'true'
         run: |
           gdown "1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd" -O link_compile.pdf
 
@@ -90,9 +102,17 @@ jobs:
           OLLAMA_MAX_CONCURRENCY: 3
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
           OLLAMA_API_URL: ${{ secrets.OLLAMA_API_URL }}
-          OLLAMA_MODEL: ${{ secrets.OLLAMA_MODEL }}
+          # Fast text model + accuracy-critical OCR vision model.
+          # Navigation-only vision uses a small lightweight model to speed up
+          # the 3-4 serial action-decision rounds per hard course.
+          OLLAMA_MODEL: "nemotron-3-nano:30b"
+          OLLAMA_VISION_MODEL: "gemma4:31b-cloud"
+          OLLAMA_NAV_VISION_MODEL: "gemma3:4b"
+          # URLs that consistently hang or crash (e.g. CAPTCHA loops, broken servers).
+          # Comma-separated. The verifier marks these FALSE and moves on immediately.
+          VERIFIER_SKIP_URLS: "https://cmies.eng.cmu.ac.th/informaion-systems-and-cybersecurity/"
         run: |
-          Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset &
+          Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset 2>/dev/null &
           sleep 3
           python autonomous_course_verifier.py || echo "::warning::Verifier exited with non-zero status, but checkpoint should be saved"
 
@@ -116,3 +136,123 @@ jobs:
         with:
           name: affiliation-db-${{ matrix.chunk.start }}-to-${{ matrix.chunk.end }}
           path: affiliation_db.json
+
+  # ── Final merge: collect all 24 chunk JSONs → one file ──────────────────────
+  merge-json:
+    name: "Merge All 24 Chunk JSONs → merged_run.json"
+    needs: verify
+    runs-on: ubuntu-latest
+    # Always run this job even if some verify chunks failed
+    if: always()
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      # Download all verification-results-* artifacts into ./chunk_artifacts/
+      # Each artifact lands in its own sub-folder:
+      #   chunk_artifacts/verification-results-7-to-46/autonomous_verified_*.json
+      - name: Download All Chunk Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: verification-results-*
+          path: chunk_artifacts
+          merge-multiple: false
+
+      # Fallback for 87-to-126 if it failed in the current run
+      - name: Download Fallback Chunk 87-to-126
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          FALLBACK_RUN_ID: 28643647783
+        run: |
+          if [ ! -d "chunk_artifacts/verification-results-87-to-126" ]; then
+            echo "::warning::Chunk 87-to-126 missing. Fetching artifact from fallback run $FALLBACK_RUN_ID ..."
+            ART_ID=$(gh api "repos/$REPO/actions/runs/$FALLBACK_RUN_ID/artifacts?per_page=100" \
+              --jq '.artifacts[] | select(.name == "verification-results") | .id')
+            if [ -n "$ART_ID" ]; then
+              echo "  -> Downloading fallback (id=$ART_ID)"
+              mkdir -p "chunk_artifacts/verification-results-87-to-126"
+              gh api "repos/$REPO/actions/artifacts/$ART_ID/zip" > /tmp/fallback.zip
+              unzip -q -o /tmp/fallback.zip -d "chunk_artifacts/verification-results-87-to-126" || true
+              rm -f /tmp/fallback.zip
+            else
+              echo "::warning::Could not find fallback artifact in run $FALLBACK_RUN_ID"
+            fi
+          else
+            echo "[*] Chunk 87-to-126 is present from the current run. No fallback needed."
+          fi
+
+      # Merge every chunk JSON into one sorted, deduplicated file
+      - name: Merge JSON Files
+        run: |
+          python3 - <<'PYEOF'
+          import os, json, glob
+
+          merged = []
+          seen_keys = set()
+
+          # Find only the link_compile JSON files (not floating_items or other JSONs)
+          json_files = sorted(glob.glob("chunk_artifacts/**/*link_compile*.json", recursive=True))
+
+          if not json_files:
+              print("::warning::No JSON files found in downloaded artifacts!")
+          else:
+              print(f"Found {len(json_files)} JSON file(s) across all chunks.")
+
+          merged_dict = {}
+
+          for jf in json_files:
+              try:
+                  with open(jf, encoding="utf-8") as f:
+                      data = json.load(f)
+                  if not isinstance(data, list):
+                      print(f"  [!] Skipping {jf} (not a JSON array)")
+                      continue
+                  added = 0
+                  updated = 0
+                  for course in data:
+                      key = (
+                          str(course.get("name", "")).strip().lower(),
+                          str(course.get("uni",  "")).strip().lower(),
+                          course.get("page_num"),
+                          course.get("box_index"),
+                      )
+                      
+                      if key not in merged_dict:
+                          merged_dict[key] = course
+                          added += 1
+                      else:
+                          # Overwrite if the NEW one was actually processed
+                          is_processed = course.get("processed_this_run") or course.get("reason", "") != ""
+                          old_is_processed = merged_dict[key].get("processed_this_run") or merged_dict[key].get("reason", "") != ""
+                          
+                          if is_processed and not old_is_processed:
+                              merged_dict[key] = course
+                              updated += 1
+
+                  print(f"  + {os.path.basename(jf)}: {len(data)} entries, {added} new, {updated} updated")
+              except Exception as e:
+                  print(f"  [!] Error reading {jf}: {e}")
+
+          # Convert back to list
+          merged = list(merged_dict.values())
+
+          # Sort by page_num then box_index (preserves original PDF order)
+          merged.sort(key=lambda c: (c.get("page_num", 0), c.get("box_index", 0)))
+
+          out = "merged_run.json"
+          with open(out, "w", encoding="utf-8") as f:
+              json.dump(merged, f, indent=2, ensure_ascii=False)
+
+          print(f"\n[OK] Merged {len(merged)} total courses -> {out}")
+          PYEOF
+
+      # Upload the single merged JSON as its own artifact
+      - name: Upload Merged JSON
+        uses: actions/upload-artifact@v4
+        with:
+          name: merged-run-json
+          path: merged_run.json
