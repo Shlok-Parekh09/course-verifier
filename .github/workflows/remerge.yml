@@ -83,6 +83,29 @@ jobs:
           echo ""
           echo "[*] All JSON files found:"
           find chunk_artifacts -name "*.json" | sort
+      # ── Download fallback chunk 87-to-126 from a previous run ───────────────
+      - name: Download Fallback Chunk 87-to-126
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          FALLBACK_RUN_ID: 28643647783
+        run: |
+          echo "[*] Fetching artifact verification-results-87-to-126 from fallback run $FALLBACK_RUN_ID ..."
+          ART_ID=$(gh api "repos/$REPO/actions/runs/$FALLBACK_RUN_ID/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.name == "verification-results-87-to-126") | .id')
+          if [ -n "$ART_ID" ]; then
+            echo "  -> Downloading fallback (id=$ART_ID)"
+            mkdir -p "chunk_artifacts/verification-results-87-to-126"
+            # Overwrite if it somehow downloaded a corrupted/empty one in the previous step
+            gh api "repos/$REPO/actions/artifacts/$ART_ID/zip" > /tmp/fallback.zip
+            unzip -q -o /tmp/fallback.zip -d "chunk_artifacts/verification-results-87-to-126" || true
+            rm -f /tmp/fallback.zip
+          else
+            echo "::warning::Could not find fallback artifact in run $FALLBACK_RUN_ID"
+          fi
+          
+          echo "[*] All JSON files found after fallback:"
+          find chunk_artifacts -name "*.json" | sort
 
       # ── Merge only the link_compile JSONs ───────────────────────────────────
       - name: Merge JSON Files
