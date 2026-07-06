@@ -92,7 +92,7 @@ jobs:
         run: |
           echo "[*] Fetching artifact verification-results-87-to-126 from fallback run $FALLBACK_RUN_ID ..."
           ART_ID=$(gh api "repos/$REPO/actions/runs/$FALLBACK_RUN_ID/artifacts?per_page=100" \
-            --jq '.artifacts[] | select(.name == "verification-results-87-to-126") | .id')
+            --jq '.artifacts[] | select(.name == "verification-results") | .id')
           if [ -n "$ART_ID" ]; then
             echo "  -> Downloading fallback (id=$ART_ID)"
             mkdir -p "chunk_artifacts/verification-results-87-to-126"
