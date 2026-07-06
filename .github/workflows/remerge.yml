@@ -1,0 +1,148 @@
+name: Re-Merge Chunk JSONs (Manual)
+
+# Run this manually when the main verifier workflow has already completed
+# and you want to re-merge the chunk artifacts into merged_run.json
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: >
+          GitHub Actions Run ID of the completed verifier workflow to pull
+          artifacts from. Leave blank to use the most recent successful run.
+        required: false
+        default: ""
+
+jobs:
+  remerge:
+    name: "Download Artifacts → Merge link_compile JSONs → Upload"
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read      # needed to list/download artifacts from other runs
+      contents: write
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      # ── Resolve which run to pull artifacts from ────────────────────────────
+      - name: Resolve Run ID
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_RUN_ID: ${{ github.event.inputs.run_id }}
+          REPO: ${{ github.repository }}
+          WORKFLOW_FILE: "verifier.yml"
+        run: |
+          if [ -n "$INPUT_RUN_ID" ]; then
+            echo "run_id=$INPUT_RUN_ID" >> "$GITHUB_OUTPUT"
+            echo "[*] Using provided run ID: $INPUT_RUN_ID"
+          else
+            echo "[*] No run ID provided — finding most recent successful verifier run ..."
+            RUN_ID=$(gh api \
+              "repos/$REPO/actions/workflows/$WORKFLOW_FILE/runs?status=completed&per_page=5" \
+              --jq '[.workflow_runs[] | select(.conclusion=="success" or .conclusion=="partial")][0].id')
+            if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+              # Fallback: any completed run
+              RUN_ID=$(gh api \
+                "repos/$REPO/actions/workflows/$WORKFLOW_FILE/runs?status=completed&per_page=1" \
+                --jq '.workflow_runs[0].id')
+            fi
+            echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+            echo "[*] Resolved run ID: $RUN_ID"
+          fi
+
+      # ── Download all verification-results-* artifacts from that run ─────────
+      - name: Download All Chunk Artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ steps.resolve.outputs.run_id }}
+        run: |
+          echo "[*] Fetching artifact list for run $RUN_ID ..."
+          mkdir -p chunk_artifacts
+
+          # List all artifacts for the run, filter by name pattern
+          ARTIFACTS=$(gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.name | startswith("verification-results-")) | {id:.id, name:.name}')
+
+          echo "$ARTIFACTS" | while IFS= read -r artifact_line; do
+            ART_ID=$(echo "$artifact_line" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d['id'])")
+            ART_NAME=$(echo "$artifact_line" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d['name'])")
+            echo "  -> Downloading: $ART_NAME (id=$ART_ID)"
+            mkdir -p "chunk_artifacts/$ART_NAME"
+            gh api "repos/$REPO/actions/artifacts/$ART_ID/zip" > /tmp/artifact.zip
+            unzip -q /tmp/artifact.zip -d "chunk_artifacts/$ART_NAME" || true
+            rm -f /tmp/artifact.zip
+          done
+
+          echo ""
+          echo "[*] Downloaded artifact folders:"
+          ls chunk_artifacts/
+          echo ""
+          echo "[*] All JSON files found:"
+          find chunk_artifacts -name "*.json" | sort
+
+      # ── Merge only the link_compile JSONs ───────────────────────────────────
+      - name: Merge JSON Files
+        run: |
+          python3 - <<'PYEOF'
+          import os, json, glob
+
+          merged    = []
+          seen_keys = set()
+
+          # IMPORTANT: Only pick *link_compile*.json — NOT floating_items or other JSONs
+          json_files = sorted(glob.glob("chunk_artifacts/**/*link_compile*.json", recursive=True))
+
+          if not json_files:
+              print("::error::No link_compile JSON files found in downloaded artifacts!")
+              raise SystemExit(1)
+
+          print(f"Found {len(json_files)} link_compile JSON file(s):")
+          for jf in json_files:
+              print(f"  - {jf}")
+          print()
+
+          for jf in json_files:
+              try:
+                  with open(jf, encoding="utf-8") as f:
+                      data = json.load(f)
+                  if not isinstance(data, list):
+                      print(f"  [!] Skipping {jf} (not a JSON array)")
+                      continue
+                  added = 0
+                  for course in data:
+                      key = (
+                          str(course.get("name", "")).strip().lower(),
+                          str(course.get("uni",  "")).strip().lower(),
+                          course.get("page_num"),
+                          course.get("box_index"),
+                      )
+                      if key not in seen_keys:
+                          seen_keys.add(key)
+                          merged.append(course)
+                          added += 1
+                  print(f"  + {os.path.basename(jf)}: {len(data)} entries, {added} new after dedup")
+              except Exception as e:
+                  print(f"  [!] Error reading {jf}: {e}")
+
+          # Sort by page_num then box_index (original PDF order)
+          merged.sort(key=lambda c: (c.get("page_num", 0), c.get("box_index", 0)))
+
+          out = "merged_run.json"
+          with open(out, "w", encoding="utf-8") as f:
+              json.dump(merged, f, indent=2, ensure_ascii=False)
+
+          size_mb = os.path.getsize(out) / (1024 * 1024)
+          print(f"\n[OK] Merged {len(merged)} total courses -> {out}  ({size_mb:.2f} MB)")
+          PYEOF
+
+      # ── Upload the merged JSON ───────────────────────────────────────────────
+      - name: Upload Merged JSON
+        uses: actions/upload-artifact@v4
+        with:
+          name: merged-run-json
+          path: merged_run.json
+          overwrite: true
