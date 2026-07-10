@@ -43,6 +43,10 @@ from autonomous_course_verifier import AutonomousCourseVerifier
 
 THRESHOLD = 4  # need at least this many "true" votes out of 5
 
+# AI-review verdicts with confidence above this ceiling are considered
+# sufficiently certain that no AI fields are written back to the course.
+AI_REVIEW_WRITE_MAX = 0.80
+
 # All boolean fields in the JSON schema
 BOOLEAN_FIELDS = [
     "has_qs_badge",
@@ -68,9 +72,15 @@ BOOLEAN_FIELDS = [
 # web_status is stored as string "TRUE" / "FALSE" / "MATCH" - treat as boolean
 BOOL_STRING_FIELDS = ["web_status"]
 
-# String fields picked from the "best" run rather than voted on
+# Categorical string fields that should be chosen by majority vote, not by length.
+CATEGORICAL_FIELDS = {
+    "issue_category",
+    "issue_sub_type",
+}
+
+# Free-text string fields where we prefer the most informative processed value.
 STRING_FIELDS = [
-    "reason", "issue_category", "issue_sub_type",
+    "reason",
     "web_name", "web_cost", "web_uni", "skills_verified",
     "qs_detail", "nirf_detail", "language", "fee_url",
     "logos_found", "country_verified", "web_duration",
@@ -87,18 +97,46 @@ IDENTITY_FIELDS = [
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _first_non_empty(*values):
+    """Return the first non-empty string value, or empty string."""
+    for v in values:
+        if v is not None:
+            s = str(v).strip()
+            if s:
+                return s
+    return ""
+
+
 def make_key(course):
     name = str(course.get("name", "")).strip().lower()
-    uni  = str(course.get("uni",  "")).strip().lower()
+    # Different verifier outputs use either 'uni' (newer schema) or
+    # 'university' (older schema). Try both so the same course matches.
+    uni = _first_non_empty(course.get("uni"), course.get("university")).lower()
+    # Append domain when name+uni is empty so completely empty courses still
+    # have a (poor but distinct) key instead of colliding at "|||".
+    if not name and not uni:
+        domain = str(course.get("domain", "")).strip().lower()
+        return f"|||{domain}"
     return f"{name}|||{uni}"
+
+
+def normalize_course(course):
+    """Make variant schemas compatible with the merger's expected keys."""
+    # Older outputs store the institute under 'university' instead of 'uni'.
+    if not str(course.get("uni", "")).strip() and course.get("university"):
+        course["uni"] = course["university"]
+    return course
 
 
 def load_json(path):
     print(f"  [+] Loading: {path}")
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
+    if not isinstance(data, list):
+        raise ValueError(f"{path}: expected a JSON list of courses, got {type(data).__name__}")
+    data = [c for c in data if c is not None]
     print(f"      -> {len(data)} courses loaded.")
-    return data
+    return [normalize_course(c) for c in data]
 
 
 def bool_val(v):
@@ -127,19 +165,27 @@ def bool_string_consensus(values, threshold=None):
     return "FALSE"
 
 
+def _plausible_value(v):
+    """Return True if v looks like a real, non-placeholder string value."""
+    if v is None:
+        return False
+    s = str(v).strip()
+    return s and s.lower() not in ("", "none", "nan", "n/a")
+
+
 def best_string(field, slots, ref_course):
+    """Pick the best free-text value from the runs that processed the course."""
     candidates = []
     for c in slots:
         v = c.get(field, "")
-        if v is None:
-            v = ""
-        v = str(v).strip()
-        if v and v.lower() not in ("", "none", "nan", "n/a"):
-            candidates.append((v, bool(c.get("processed_this_run", False))))
+        if _plausible_value(v):
+            candidates.append((str(v).strip(), bool(c.get("processed_this_run", False))))
 
     processed_vals = [v for v, proc in candidates if proc]
     if processed_vals:
-        return max(processed_vals, key=len)
+        # Prefer the longest non-empty processed value (more informative),
+        # but break ties deterministically by alphabetical order.
+        return max(sorted(processed_vals), key=len)
 
     if candidates:
         counts = Counter(v for v, _ in candidates)
@@ -148,35 +194,112 @@ def best_string(field, slots, ref_course):
     return ref_course.get(field, "")
 
 
+def consensus_string(field, slots, ref_course):
+    """Choose a categorical string by majority vote across all runs.
+
+    Falls back to the reference value if every run is missing the field.
+    """
+    values = []
+    for c in slots:
+        v = c.get(field)
+        if _plausible_value(v):
+            values.append(str(v).strip())
+
+    if values:
+        counts = Counter(values)
+        # Tie-break by preferring the value from the most processed runs, then
+        # by alphabetical order for deterministic output.
+        max_count = max(counts.values())
+        top = [v for v, cnt in counts.items() if cnt == max_count]
+        if len(top) == 1:
+            return top[0]
+        # Tie-break: which top value appears more often in processed runs?
+        processed_counts = Counter()
+        for c in slots:
+            v = c.get(field)
+            if _plausible_value(v) and c.get("processed_this_run"):
+                processed_counts[str(v).strip()] += 1
+        best_top = max(top, key=lambda v: (processed_counts.get(v, 0), v))
+        return best_top
+
+    return ref_course.get(field, "")
+
+
 # ── Core merge logic ──────────────────────────────────────────────────────────
 
-def merge_courses(all_runs):
+def _build_run_lookups(all_runs):
+    """Build per-run occurrence-aware lookup structures.
+
+    Each run is represented as a dict mapping (key, occurrence_index) to the
+    course object, plus a plain key->first-occurrence fallback. This preserves
+    genuinely different courses that share the same (name+uni) key.
+    """
+    lookups = []
+    duplicate_keys_total = 0
+    for run in all_runs:
+        key_to_occurrences = {}
+        first_occurrence = {}
+        seen_count = {}
+        for c in run:
+            k = make_key(c)
+            occ = seen_count.get(k, 0)
+            seen_count[k] = occ + 1
+            key_to_occurrences.setdefault(k, []).append((occ, c))
+            if occ == 0:
+                first_occurrence[k] = c
+            else:
+                duplicate_keys_total += 1
+        lookups.append({
+            "by_key_occ": {(k, occ): c for k, occurrences in key_to_occurrences.items() for occ, c in occurrences},
+            "first_occurrence": first_occurrence,
+            "seen_count": seen_count,
+        })
+    return lookups, duplicate_keys_total
+
+
+def merge_courses(all_runs, warn_on_duplicate_keys=True):
     n_runs = len(all_runs)
     print(f"\n[*] Merging {n_runs} runs ...")
 
-    run_dicts = []
-    for run in all_runs:
-        d = {}
-        for c in run:
-            k = make_key(c)
-            if k not in d:
-                d[k] = c
-        run_dicts.append(d)
+    # Build occurrence-aware lookups so duplicate (name+uni) groups are kept
+    # distinct instead of collapsing to the first occurrence.
+    lookups, duplicate_keys_total = _build_run_lookups(all_runs)
+
+    if warn_on_duplicate_keys and duplicate_keys_total:
+        print(f"    [!] {duplicate_keys_total} duplicate (name+uni) keys found across runs; "
+              f"occurrence-aware matching is used to keep them distinct.")
 
     reference_run = all_runs[0]
+    ref_lookup = lookups[0]
+
+    # Precompute occurrence number for every course in the reference run.
+    ref_occurrence = []
+    seen_so_far = {}
+    for c in reference_run:
+        k = make_key(c)
+        ref_occurrence.append(seen_so_far.get(k, 0))
+        seen_so_far[k] = seen_so_far.get(k, 0) + 1
+
     merged = []
     stats = {f: {"changed": 0} for f in BOOLEAN_FIELDS + BOOL_STRING_FIELDS}
 
     for idx, ref_course in enumerate(reference_run):
         key = make_key(ref_course)
+        occ = ref_occurrence[idx]
 
         slots = []
-        for ri, rd in enumerate(run_dicts):
-            if key in rd:
-                slots.append(rd[key])
+        for ri, lu in enumerate(lookups):
+            if (key, occ) in lu["by_key_occ"]:
+                slots.append(lu["by_key_occ"][(key, occ)])
+            elif key in lu["first_occurrence"]:
+                # Key exists but occurrence count differs; fallback to first
+                # occurrence so we still get same-course data rather than index.
+                slots.append(lu["first_occurrence"][key])
             elif idx < len(all_runs[ri]):
+                # Positional fallback
                 slots.append(all_runs[ri][idx])
             else:
+                # Run is shorter than the reference; duplicate ref_course values
                 slots.append(ref_course)
 
         mc = {}
@@ -201,7 +324,11 @@ def merge_courses(all_runs):
             if str(ref_course.get(f, "FALSE")).upper() != result:
                 stats[f]["changed"] += 1
 
-        # String fields - best value
+        # Categorical fields - majority vote
+        for f in CATEGORICAL_FIELDS:
+            mc[f] = consensus_string(f, slots, ref_course)
+
+        # Free-text string fields - best informative value
         for f in STRING_FIELDS:
             mc[f] = best_string(f, slots, ref_course)
 
@@ -237,8 +364,10 @@ def build_agent(courses, output_name):
     agent.output_pdf      = f"{output_name}.pdf"
     agent.excel_name      = f"{output_name}.xlsx"
     agent.courses         = courses
+    # generate_pdf_report references these attributes; give them safe defaults.
     agent.screenshots_dir = ""
     agent.floating_items  = []
+    agent.input_pdf       = f"{output_name}.pdf"
     return agent
 
 
@@ -283,20 +412,36 @@ _AI_REVIEW_FIELDS = [
 
 
 def collect_split_votes(merged, all_runs):
-    """Return merged courses where the 5 runs disagreed on important fields."""
-    run_dicts = []
-    for run in all_runs:
-        d = {}
-        for c in run:
-            k = make_key(c)
-            if k not in d:
-                d[k] = c
-        run_dicts.append(d)
+    """Return merged courses where the 5 runs disagreed on important fields.
+
+    Uses the same occurrence-aware matching as merge_courses so duplicate
+    (name+uni) groups are reviewed against their correct counterparts.
+    """
+    lookups, _ = _build_run_lookups(all_runs)
+
+    # Precompute reference-run occurrence numbers.
+    ref_seen = {}
+    ref_occurrence = []
+    for c in all_runs[0]:
+        k = make_key(c)
+        ref_occurrence.append(ref_seen.get(k, 0))
+        ref_seen[k] = ref_seen.get(k, 0) + 1
 
     borderline = []
     for idx, mc in enumerate(merged):
         key = make_key(mc)
-        slots = [rd.get(key, {}) for rd in run_dicts]
+        occ = ref_occurrence[idx]
+
+        slots = []
+        for lu in lookups:
+            if (key, occ) in lu["by_key_occ"]:
+                slots.append(lu["by_key_occ"][(key, occ)])
+            elif key in lu["first_occurrence"]:
+                slots.append(lu["first_occurrence"][key])
+            elif idx < len(all_runs[len(slots)]):
+                slots.append(all_runs[len(slots)][idx])
+            else:
+                slots.append({})
 
         votes = {}
 
@@ -444,16 +589,40 @@ def call_ollama_review(batch, demo=False):
     return {}
 
 
+def _clamp_confidence(v):
+    """Return confidence as a float in [0.0, 1.0]; invalid values become 0.0."""
+    try:
+        c = float(v)
+    except (TypeError, ValueError):
+        return 0.0
+    if c < 0.0:
+        return 0.0
+    if c > 1.0:
+        return 1.0
+    return c
+
+
 def attach_ai_results(merged, ai_results, threshold=0.5):
-    """Write AI review fields back into the merged course list."""
+    """Write AI review fields back into the merged course list.
+
+    Courses whose AI confidence is greater than AI_REVIEW_WRITE_MAX do not
+    receive any AI review annotation (no field is written).
+    """
+    written = 0
+    valid_statuses = {"AGREE", "DISAGREE", "REVIEW"}
     for idx_str, res in ai_results.items():
         try:
             idx = int(idx_str)
         except ValueError:
             continue
         if 0 <= idx < len(merged):
-            confidence = float(res.get("confidence", 0.0))
+            confidence = _clamp_confidence(res.get("confidence", 0.0))
+            # Do not write AI review fields when confidence is above 75%
+            if confidence > AI_REVIEW_WRITE_MAX:
+                continue
             status = str(res.get("status", "REVIEW")).upper()
+            if status not in valid_statuses:
+                status = "REVIEW"
             note = str(res.get("note", "")).strip()
             # Downgrade status to REVIEW if confidence is below threshold
             if status == "AGREE" and confidence < threshold:
@@ -461,6 +630,8 @@ def attach_ai_results(merged, ai_results, threshold=0.5):
             merged[idx]["ai_confidence"] = confidence
             merged[idx]["ai_status"] = status
             merged[idx]["ai_note"] = note
+            written += 1
+    return written
 
 
 def run_ai_review(merged, all_runs, batch_size=20, threshold=0.5, demo=False, sample_limit=0):
@@ -489,12 +660,11 @@ def run_ai_review(merged, all_runs, batch_size=20, threshold=0.5, demo=False, sa
         if res:
             ai_results.update(res)
 
-    attach_ai_results(merged, ai_results, threshold=threshold)
-    reviewed = sum(1 for c in merged if "ai_status" in c)
+    written = attach_ai_results(merged, ai_results, threshold=threshold)
     flagged = sum(1 for c in merged if c.get("ai_status") == "REVIEW")
-    print(f"    AI reviewed {reviewed} courses, flagged {flagged} for manual review.")
-    if reviewed < len(borderline):
-        print(f"    [!] Warning: only {reviewed}/{len(borderline)} borderline courses received an AI verdict.")
+    print(f"    AI reviewed {written} courses, flagged {flagged} for manual review.")
+    if written < len(borderline):
+        print(f"    [!] Note: {len(borderline) - written} high-confidence courses were not annotated.")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -590,14 +760,20 @@ def main():
 
     # 6. Generate PDF (same format as main workflow)
     print(f"\n[*] Generating PDF: {args.out}.pdf ...")
-    agent = build_agent(merged, args.out)
+    try:
+        agent = build_agent(merged, args.out)
 
-    # Ensure every course with web_status is included in the PDF output
-    for c in agent.courses:
-        if not c.get("processed_this_run", False) and "web_status" in c:
-            c["processed_this_run"] = True
+        # Ensure every course with web_status is included in the PDF output
+        for c in agent.courses:
+            if not c.get("processed_this_run", False) and "web_status" in c:
+                c["processed_this_run"] = True
 
-    agent.generate_pdf_report(start_idx=0, end_idx=len(merged), pdf_name=args.out)
+        agent.generate_pdf_report(start_idx=0, end_idx=len(merged), pdf_name=args.out)
+    except Exception as e:
+        print(f"\n[!] PDF generation failed: {e}")
+        print(f"    JSON output is still available at: {out_json}")
+        # Do not claim success for the PDF.
+        sys.exit(1)
 
     print(f"\n[✓] All done!")
     print(f"    JSON : {out_json}")
