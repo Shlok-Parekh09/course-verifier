@@ -23,3 +23,7 @@ dnspython==2.6.1
 cloudscraper
 rapidfuzz
 openpyxl
+psutil
+deep-translator
+spacy
+google-generativeai
