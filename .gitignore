@@ -23,6 +23,7 @@ chrome_profile_fallback_*/
 !public/api/courses.json
 !public/api/data.json
 !public/api/analytics.json
+!test5/*.json
 *_floating_items.json
 master_dashboard_results.json
 verification_screenshots/
