@@ -273,6 +273,230 @@ def prompt_json_files(n=5):
     return files
 
 
+# ── AI trust layer (Ollama) ───────────────────────────────────────────────────
+
+# Fields the AI reviewer should focus on when the 5 runs disagree.
+_AI_REVIEW_FIELDS = [
+    "cost_match", "duration_match", "mode_match", "lang_match",
+    "sk_match", "uni_match", "country_match", "direct_link_working",
+]
+
+
+def collect_split_votes(merged, all_runs):
+    """Return merged courses where the 5 runs disagreed on important fields."""
+    run_dicts = []
+    for run in all_runs:
+        d = {}
+        for c in run:
+            k = make_key(c)
+            if k not in d:
+                d[k] = c
+        run_dicts.append(d)
+
+    borderline = []
+    for idx, mc in enumerate(merged):
+        key = make_key(mc)
+        slots = [rd.get(key, {}) for rd in run_dicts]
+
+        votes = {}
+
+        # web_status is the most important aggregate signal
+        ws_votes = Counter(
+            str(s.get("web_status", "FALSE")).strip().upper()
+            for s in slots if s.get("web_status")
+        )
+        if len(ws_votes) > 1:
+            votes["web_status"] = dict(ws_votes)
+
+        # boolean match fields
+        for f in _AI_REVIEW_FIELDS:
+            cnt = Counter(bool(s.get(f, False)) for s in slots)
+            if len(cnt) > 1:
+                votes[f] = {str(k): v for k, v in cnt.items()}
+
+        if not votes:
+            continue
+
+        # Collect up to 5 distinct, non-empty reason snippets
+        reasons = []
+        for s in slots:
+            r = str(s.get("reason", "")).strip()
+            if r and r not in reasons:
+                reasons.append(r[:300])
+                if len(reasons) >= 5:
+                    break
+
+        borderline.append({
+            "idx": idx,
+            "name": str(mc.get("name", "")),
+            "uni": str(mc.get("uni", "")),
+            "url": str(mc.get("url", "")),
+            "consensus_web_status": str(mc.get("web_status", "FALSE")),
+            "votes": votes,
+            "reasons": reasons,
+        })
+
+    return borderline
+
+
+def build_ai_prompt(batch):
+    """Build a JSON-mode prompt asking Ollama to review a batch of split-vote courses."""
+    prompt = (
+        "You are a strict data-quality reviewer for a course verification system. "
+        "Five independent runs verified the same course catalog. The list below contains "
+        "courses where the runs disagreed. For each course, review the vote tallies and "
+        "the conflicting reason snippets, then judge whether the merged consensus result "
+        "is trustworthy.\n\n"
+        "Return ONLY a raw JSON object. Do NOT add markdown code fences (no ```json), "
+        "no explanations, and no text outside the JSON. The output must be valid JSON "
+        "that Python's json.loads() can parse directly.\n\n"
+        "Map each course index (the integer \"idx\" value) to an object with exactly these keys:\n"
+        "  - \"confidence\": float between 0.0 and 1.0\n"
+        "  - \"status\": one of \"AGREE\", \"DISAGREE\", or \"REVIEW\"\n"
+        "  - \"note\": a single concise sentence explaining the verdict\n\n"
+        "Example shape for one course:\n"
+        '{"0": {"confidence": 0.65, "status": "REVIEW", "note": "Mixed votes on web_status and cost_match make the consensus uncertain."}}\n\n'
+        "Courses:\n"
+    )
+    prompt += json.dumps(batch, ensure_ascii=False, indent=2)
+    prompt += "\n\nReturn raw JSON:"
+    return prompt
+
+
+def _parse_ai_json(raw):
+    """Try several strategies to extract a JSON object from the model output."""
+    if not raw:
+        return None
+    text = raw.strip()
+
+    # 1. Direct parse
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+
+    # 2. Strip markdown code fences
+    import re
+    m = re.search(r'```(?:json)?\s*(\{.*\})\s*```', text, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except Exception:
+            pass
+
+    # 3. Look for the first { ... } object in the text
+    m = re.search(r'\{.*\}', text, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except Exception:
+            pass
+
+    # 4. Try to repair common single-quote mistakes
+    try:
+        repaired = text.replace("'", '"')
+        return json.loads(repaired)
+    except Exception:
+        pass
+
+    return None
+
+
+def call_ollama_review(batch, demo=False):
+    """Send one batch to Ollama (with Google AI Studio fallback) and return results."""
+    if demo:
+        return {
+            str(item["idx"]): {
+                "confidence": 0.55,
+                "status": "REVIEW",
+                "note": "Demo mode: AI review code path is active (no Ollama call was made).",
+            }
+            for item in batch
+        }
+
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from llm_manager import get_llm_manager
+        mgr = get_llm_manager()
+    except Exception as e:
+        print(f"    [!] Could not initialize LLM manager: {e}")
+        return {}
+
+    prompt = build_ai_prompt(batch)
+    raw = mgr.generate(prompt, format="json", temperature=0.0)
+    if raw:
+        parsed = _parse_ai_json(raw)
+        if parsed is not None:
+            return parsed
+        print("    [!] Could not parse LLM JSON response; batch will be retried once.")
+    else:
+        print("    [!] LLM AI review returned empty response; retrying batch once.")
+
+    # One explicit retry (model fallbacks already happened inside generate())
+    raw = mgr.generate(prompt, format="json", temperature=0.0)
+    if raw:
+        parsed = _parse_ai_json(raw)
+        if parsed is not None:
+            return parsed
+        print("    [!] Could not parse LLM JSON response on retry.")
+    else:
+        print("    [!] LLM AI review returned empty response on retry.")
+    return {}
+
+
+def attach_ai_results(merged, ai_results, threshold=0.5):
+    """Write AI review fields back into the merged course list."""
+    for idx_str, res in ai_results.items():
+        try:
+            idx = int(idx_str)
+        except ValueError:
+            continue
+        if 0 <= idx < len(merged):
+            confidence = float(res.get("confidence", 0.0))
+            status = str(res.get("status", "REVIEW")).upper()
+            note = str(res.get("note", "")).strip()
+            # Downgrade status to REVIEW if confidence is below threshold
+            if status == "AGREE" and confidence < threshold:
+                status = "REVIEW"
+            merged[idx]["ai_confidence"] = confidence
+            merged[idx]["ai_status"] = status
+            merged[idx]["ai_note"] = note
+
+
+def run_ai_review(merged, all_runs, batch_size=20, threshold=0.5, demo=False, sample_limit=0):
+    """Run the optional Ollama AI review pass over split-vote courses."""
+    borderline = collect_split_votes(merged, all_runs)
+    if not borderline:
+        print("\n[*] AI review: no split-vote courses found.")
+        return
+
+    if sample_limit and 0 < sample_limit < len(borderline):
+        borderline = borderline[:sample_limit]
+        print(f"\n[*] AI review: {len(borderline)} split-vote courses (sample limited).")
+    else:
+        print(f"\n[*] AI review: {len(borderline)} courses have split votes.")
+
+    print(f"    Batch size: {batch_size} | confidence threshold: {threshold}")
+    if demo:
+        print("    Running in DEMO mode (no Ollama API calls).")
+
+    ai_results = {}
+    total_batches = (len(borderline) + batch_size - 1) // batch_size
+    for i in range(0, len(borderline), batch_size):
+        batch = borderline[i:i + batch_size]
+        print(f"    Reviewing batch {i // batch_size + 1}/{total_batches} ({len(batch)} courses)...")
+        res = call_ollama_review(batch, demo=demo)
+        if res:
+            ai_results.update(res)
+
+    attach_ai_results(merged, ai_results, threshold=threshold)
+    reviewed = sum(1 for c in merged if "ai_status" in c)
+    flagged = sum(1 for c in merged if c.get("ai_status") == "REVIEW")
+    print(f"    AI reviewed {reviewed} courses, flagged {flagged} for manual review.")
+    if reviewed < len(borderline):
+        print(f"    [!] Warning: only {reviewed}/{len(borderline)} borderline courses received an AI verdict.")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
@@ -290,6 +514,26 @@ def main():
     parser.add_argument(
         "--threshold", type=int, default=4,
         help="Minimum votes for a boolean to be True (default: 4 of 5)."
+    )
+    parser.add_argument(
+        "--ai-review", action="store_true",
+        help="Run an Ollama AI review pass over split-vote courses and add ai_confidence/ai_status/ai_note fields."
+    )
+    parser.add_argument(
+        "--ai-batch-size", type=int, default=10,
+        help="Number of split-vote courses sent to Ollama in each batch (default: 10)."
+    )
+    parser.add_argument(
+        "--ai-threshold", type=float, default=0.5,
+        help="Confidence threshold below which a course is flagged for manual review (default: 0.5)."
+    )
+    parser.add_argument(
+        "--ai-demo", action="store_true",
+        help="Test the AI review code path without calling Ollama (returns placeholder REVIEW notes)."
+    )
+    parser.add_argument(
+        "--sample-limit", type=int, default=0,
+        help="Review only the first N borderline courses (0 = all). Useful for CI sanity checks."
     )
     args = parser.parse_args()
 
@@ -329,6 +573,20 @@ def main():
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(merged, f, indent=2, ensure_ascii=False)
     print(f"[*] Saved: {out_json}")
+
+    # 5b. Optional Ollama AI review pass for split-vote courses
+    if args.ai_review or args.ai_demo:
+        run_ai_review(
+            merged, all_runs,
+            batch_size=args.ai_batch_size,
+            threshold=args.ai_threshold,
+            demo=args.ai_demo,
+            sample_limit=args.sample_limit
+        )
+        # Re-save JSON now that it contains AI review fields
+        with open(out_json, "w", encoding="utf-8") as f:
+            json.dump(merged, f, indent=2, ensure_ascii=False)
+        print(f"[*] Updated {out_json} with AI review fields.")
 
     # 6. Generate PDF (same format as main workflow)
     print(f"\n[*] Generating PDF: {args.out}.pdf ...")

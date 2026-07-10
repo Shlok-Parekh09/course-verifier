@@ -9330,7 +9330,6 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             draw_row('Free Box', free_pdf_val, safe_val(free_web_val), free_status if not is_hard_error else 'FALSE')
             
             has_scholarship = course.get('has_scholarship_box', False)
-            has_scholarship = course.get('has_scholarship_box', False)
             is_nptel = 'nptel.ac.in' in str(course.get('url', '')).lower() or 'onlinecourses.nptel.ac.in' in str(course.get('url', '')).lower()
             is_swayam = 'swayam2.ac.in' in str(course.get('url', '')).lower() or 'onlinecourses.swayam2.ac.in' in str(course.get('url', '')).lower()
             is_india = str(course.get('country', '')).lower() in ['india', 'in', 'ind', 'bharat']
@@ -9389,6 +9388,29 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             if len(desc) > 700:
                 desc = desc[:697] + "..."
             pdf.multi_cell(0, 5, desc, border='LRB')
+
+            # ── AI trust banner (only shown when consensus was reviewed by Ollama) ──
+            if "ai_status" in course or "ai_confidence" in course:
+                ai_status = str(course.get("ai_status", "")).upper()
+                ai_confidence = course.get("ai_confidence")
+                try:
+                    ai_confidence = float(ai_confidence) if ai_confidence is not None else None
+                except (ValueError, TypeError):
+                    ai_confidence = None
+
+                if ai_status == "REVIEW" or (ai_confidence is not None and ai_confidence < 0.5):
+                    pdf.ln(4)
+                    pdf.set_fill_color(254, 243, 199)   # light amber
+                    pdf.set_text_color(146, 64, 14)    # dark amber
+                    pdf.set_font(font_name, 'B', 10)
+                    note = str(course.get("ai_note", "")).strip()
+                    if not note:
+                        note = "AI reviewer recommends manual review."
+                    banner = f"AI Review ({ai_status}"
+                    if ai_confidence is not None:
+                        banner += f", confidence {ai_confidence:.0%}"
+                    banner += f"): {note}"
+                    pdf.multi_cell(0, 6, safe_latin(banner), border='LRB', fill=True)
 
         # Render sequentially
         counter = start_idx + 1

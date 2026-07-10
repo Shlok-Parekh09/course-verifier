@@ -10,21 +10,98 @@ from dotenv import load_dotenv
 # Load .env variables
 load_dotenv()
 
-class LLMManager:
-    """LLM manager routed exclusively through the Ollama API.
+# ── Google AI Studio fallback helpers ───────────────────────────────────────────
 
-    Both text generation (``generate``) and vision extraction
-    (``generate_with_image``) call Ollama only — the previous multi-provider
-    failover (Mistral/Groq/SambaNova/OpenRouter/NVIDIA/Gemini/Puter) has been
-    removed. The public method signatures are unchanged so existing callers in
-    ``autonomous_course_verifier.py`` keep working; provider/model_name
-    parameters are accepted for compatibility but ignored (single backend).
+def _load_google_ai():
+    """Lazy-load google.generativeai; return None if not installed."""
+    try:
+        import google.generativeai as genai
+        return genai
+    except Exception:
+        return None
+
+
+def _google_ai_generate(prompt: str, model_name: str = "gemini-1.5-flash",
+                        api_key: str = None, temperature: float = 0.0,
+                        timeout: int = 120) -> Optional[str]:
+    """Call Google AI Studio generative API. Returns raw text or None."""
+    genai = _load_google_ai()
+    if genai is None:
+        print("      -> [LLM Manager] Google AI fallback not available: google-generativeai not installed.")
+        return None
+    if not api_key:
+        api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        print("      -> [LLM Manager] Google AI fallback not available: GOOGLE_API_KEY not set.")
+        return None
+
+    try:
+        genai.configure(api_key=api_key, transport="rest")
+        model = genai.GenerativeModel(model_name)
+        generation_config = genai.types.GenerationConfig(
+            temperature=temperature,
+            response_mime_type="application/json",
+        )
+        print(f"      -> [LLM Manager] Calling Google AI Studio ({model_name})...")
+        resp = model.generate_content(
+            prompt,
+            generation_config=generation_config,
+            request_options={"timeout": timeout},
+        )
+        if not resp or not resp.candidates:
+            print("      -> [LLM Manager] Google AI returned no candidates.")
+            return None
+        return resp.text
+    except Exception as e:
+        print(f"      -> [LLM Manager] Google AI API Exception: {e}")
+        return None
+
+
+class LLMManager:
+    """LLM manager with Ollama primary backend and Google AI Studio fallback.
+
+    Text generation tries Ollama first, then a configured list of Ollama
+    fallback models, and finally Google AI Studio (gemini-1.5-flash). Vision
+    calls remain Ollama-only. Public method signatures are unchanged.
     """
 
     def __init__(self):
-        # ── Ollama (the only LLM backend) ──
+        # ── Ollama (primary LLM backend) ──
         # Cloud (ollama.com) when an API key is present, else local Ollama.
         self.ollama_api_key = os.environ.get("OLLAMA_API_KEY")
+        default_url = "https://ollama.com" if self.ollama_api_key else "http://localhost:11434"
+        raw_ollama_url = os.environ.get("OLLAMA_API_URL", default_url)
+
+        # Normalize the URL so any secret shape resolves to the base host.
+        if raw_ollama_url.endswith("/api/generate"):
+            raw_ollama_url = raw_ollama_url[:-13]
+        elif raw_ollama_url.endswith("/api"):
+            raw_ollama_url = raw_ollama_url[:-4]
+        self.ollama_api_url = raw_ollama_url
+
+        # Text model: nemotron-3-nano:30b is the fast option for 20K-char page
+        # prompts. gemini-3-flash-preview:cloud is slower but can be used as a
+        # fallback via OLLAMA_MODEL if nemotron misbehaves.
+        self.ollama_model = os.environ.get("OLLAMA_MODEL", "nemotron-3-nano:30b")
+
+        # Ordered list of Ollama-hosted fallback models. If the primary model
+        # fails (rate limit, timeout, model error), we try each in turn before
+        # falling back to Google AI Studio.
+        raw_fallbacks = os.environ.get("OLLAMA_FALLBACK_MODELS", "")
+        if raw_fallbacks.strip():
+            self.ollama_fallback_models = [m.strip() for m in raw_fallbacks.split(",") if m.strip()]
+        else:
+            self.ollama_fallback_models = [
+                "gemma4:31b-cloud",
+                "gemma4:26b-cloud",
+                "gemini-3-flash-preview:cloud",
+            ]
+
+        # Google AI Studio fallback (last resort)
+        self.google_api_key = os.environ.get("GOOGLE_API_KEY")
+        # Default to gemini-3-flash-preview because that model is available and
+        # within quota for this Google AI Studio key. Override via GOOGLE_MODEL.
+        self.google_model = os.environ.get("GOOGLE_MODEL", "gemini-3-flash-preview")
         default_url = "https://ollama.com" if self.ollama_api_key else "http://localhost:11434"
         raw_ollama_url = os.environ.get("OLLAMA_API_URL", default_url)
 
@@ -99,21 +176,27 @@ class LLMManager:
         except Exception:
             pass  # default adapter is fine if construction fails
 
+        # Storage for the most recent Ollama error text (used by fallback logic)
+        self._last_ollama_error = ""
+
         # ── Diagnostic logging ──
-        print(f"[LLM Manager] Ollama-only mode | url={self.ollama_api_url} | "
-              f"text_model={self.ollama_model} | vision_model={self.ollama_vision_model} | "
-              f"nav_vision_model={self.ollama_nav_vision_model} | "
-              f"auth={'bearer' if self.ollama_api_key else 'none'} | "
-              f"max_concurrency={max_conc}")
+        fb_summary = ", ".join(self.ollama_fallback_models) if self.ollama_fallback_models else "none"
+        print(f"[LLM Manager] Ollama primary | url={self.ollama_api_url} | "
+              f"text_model={self.ollama_model} | fallback_models=[{fb_summary}] | "
+              f"google_fallback={'enabled' if self.google_api_key else 'disabled'} | "
+              f"auth={'bearer' if self.ollama_api_key else 'none'} | max_concurrency={max_conc}")
         if not self.ollama_api_url:
             print("[LLM Manager] [!] WARNING: OLLAMA_API_URL not set; targeting localhost:11434.")
 
         # Verify the Ollama endpoint + API key actually work before the run
-        # starts. If they don't, halt immediately — every subsequent LLM call
-        # would silently return None and waste the entire verification run.
-        self._verify_ollama_access()
+        # starts when no fallback is configured. With fallbacks enabled we
+        # only warn on failure so the run can try Google AI Studio if needed.
+        if not self.ollama_fallback_models and not self.google_api_key:
+            self._verify_ollama_access()
+        else:
+            self._verify_ollama_access(soft_fail=True)
 
-    def _verify_ollama_access(self, attempts: int = 2):
+    def _verify_ollama_access(self, attempts: int = 2, soft_fail: bool = False):
         """Verify the Ollama API key actually works via POST /api/generate.
 
         The public ``/api/tags`` and ``/api/version`` endpoints return 200 even
@@ -169,7 +252,12 @@ class LLMManager:
                       f"failed ({last_err}); retrying in 3s...")
                 time.sleep(3)
 
-        # All attempts failed — stop the run.
+        # All attempts failed.
+        if soft_fail:
+            print(f"[LLM Manager] [WARN] Ollama API key check failed: {last_err}. "
+                  "Continuing because fallback models / Google AI Studio are configured.")
+            return
+
         print(f"[LLM Manager] [FAIL] Ollama API key check FAILED: {last_err}")
         print(f"[LLM Manager] [FAIL] Endpoint: {url} | "
               f"key set: {'yes' if self.ollama_api_key else 'no'}")
@@ -197,31 +285,35 @@ class LLMManager:
         err = text.lower()
         return "context" in err or "token" in err or "too large" in err or "exceeds" in err
 
+    def _is_retryable_error(self, err_text: str) -> bool:
+        """Return True if the Ollama error text indicates a transient failure."""
+        if not err_text:
+            return False
+        text = err_text.lower()
+        return any(s in text for s in [
+            "timeout", "connection", "reset", "rate", "too many requests",
+            "name resolution", "temporary", "503", "502", "504", "429",
+        ])
+
     def generate(self, prompt: str, system: Optional[str] = None, format: str = "text",
                  temperature: float = 0.0, provider: str = "auto", worker_id: int = None,
                  model_name: str = None, timeout: int = None) -> Optional[str]:
-        """Text generation via Ollama only.
+        """Text generation with Ollama primary + Ollama/Google fallbacks.
 
         ``provider`` and ``model_name`` are accepted for backward compatibility
-        with existing call sites but are ignored — every call routes to Ollama.
+        but only ``model_name`` is honored for the Ollama primary attempt.
         """
         who = f"Worker {worker_id + 1} " if worker_id is not None else ""
         key_id = f"ollama_text_{worker_id if worker_id is not None else 0}"
-        model = model_name or self.ollama_model
-        print(f"      -> [LLM Manager] {who}calling Ollama ({model})...")
-        # The global _llm_semaphore already gates concurrency to the plan limit,
-        # so the per-worker spacing is just a mild anti-burst throttle. Default
-        # lowered from 1.0s to 0.2s (VERIFIER_TEXT_RATE_LIMIT) — ~0.8s saved per
-        # text call per worker with no effect on the cloud concurrency cap.
+
+        # Anti-burst throttle (per-worker). The global semaphore gates total concurrency.
         try:
             text_rate = float(os.environ.get("VERIFIER_TEXT_RATE_LIMIT", "0.2"))
         except ValueError:
             text_rate = 0.2
         if text_rate > 0:
             self._rate_limit(key_id, min_interval=text_rate)
-        # Large fee-page prompts (20K chars) can exceed the old 120s read timeout
-        # on Ollama cloud. Allow override; default 180s gives the fast model headroom
-        # without letting a single stalled call freeze the batch.
+
         if timeout is None:
             try:
                 timeout = int(os.environ.get("OLLAMA_TEXT_TIMEOUT", "180"))
@@ -229,13 +321,47 @@ class LLMManager:
                 timeout = 180
         if timeout <= 0:
             timeout = 180
+
+        # 1. Primary Ollama model
+        models_to_try = [model_name or self.ollama_model]
+
+        # 2. Ollama fallback models (only if this is the default text path)
+        if not model_name:
+            models_to_try.extend(self.ollama_fallback_models)
+
         with self._count_lock:
             self.text_call_count += 1
-        result = self._call_ollama(prompt, system, format, temperature,
-                                   timeout=timeout, model=model)
-        if result:
-            return result
-        print(f"      -> [LLM Manager] {who}Ollama text call failed.")
+
+        last_err_text = ""
+        for idx, model in enumerate(models_to_try):
+            print(f"      -> [LLM Manager] {who}calling Ollama ({model})...")
+            result = self._call_ollama(prompt, system, format, temperature,
+                                       timeout=timeout, model=model)
+            if result and result != "ERROR_TOKEN_EXCEEDED":
+                return result
+            if result == "ERROR_TOKEN_EXCEEDED":
+                # Token errors won't be fixed by switching models on the same backend
+                print(f"      -> [LLM Manager] {who}token limit hit on {model}; stopping.")
+                return None
+            err_text = self._last_ollama_error or ""
+            last_err_text = err_text
+            print(f"      -> [LLM Manager] {who}Ollama text call failed ({model}).")
+            if not self._is_retryable_error(err_text):
+                # Hard error (auth, bad model name, malformed request) — don't burn fallbacks
+                break
+
+        # 3. Last resort: Google AI Studio
+        if self.google_api_key and _load_google_ai():
+            print(f"      -> [LLM Manager] {who}Ollama exhausted; trying Google AI Studio fallback...")
+            return _google_ai_generate(
+                prompt,
+                model_name=self.google_model,
+                api_key=self.google_api_key,
+                temperature=temperature,
+                timeout=timeout,
+            )
+
+        print(f"      -> [LLM Manager] {who}All text generation attempts failed. Last Ollama error: {last_err_text[:160]}")
         return None
 
     def generate_with_image(self, prompt: str, base64_image: str,
@@ -310,16 +436,20 @@ class LLMManager:
                 if data.get("error"):
                     err = str(data["error"])
                     print(f"      -> [LLM Manager] Ollama error: {err[:200]}")
+                    self._last_ollama_error = err
                     if self._check_token_error(err):
                         return "ERROR_TOKEN_EXCEEDED"
                     return None
+                self._last_ollama_error = ""
                 return data.get("response")
             txt = resp.text or ""
+            self._last_ollama_error = txt
             print(f"      -> [LLM Manager] Ollama API Error {resp.status_code}: {txt[:200]}")
             if self._check_token_error(txt):
                 return "ERROR_TOKEN_EXCEEDED"
             return None
         except Exception as e:
+            self._last_ollama_error = str(e)
             print(f"      -> [LLM Manager] Ollama API Exception: {e}")
             return None
         finally:
@@ -401,13 +531,14 @@ class LLMManager:
         return None
 
     def usage_summary(self) -> str:
-        """One-line Ollama quota usage report for end-of-run logging."""
+        """One-line usage report for end-of-run logging."""
         with self._count_lock:
             t, v = self.text_call_count, self.vision_call_count
         total = t + v
-        return (f"[LLM Manager] Ollama usage this run: {total} calls "
-                f"({t} text + {v} vision) | max_concurrency={self.max_concurrency} | "
-                f"text_model={self.ollama_model} | vision_model={self.ollama_vision_model}")
+        fb_summary = ", ".join(self.ollama_fallback_models) if self.ollama_fallback_models else "none"
+        return (f"[LLM Manager] Usage: {total} calls ({t} text + {v} vision) | "
+                f"max_concurrency={self.max_concurrency} | text_model={self.ollama_model} | "
+                f"fallbacks=[{fb_summary}] | google_fallback={'enabled' if self.google_api_key else 'disabled'}")
 
 # Global Singleton for easy import
 _llm_manager = None
