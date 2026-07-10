@@ -101,6 +101,32 @@ subprocess.run = _safe_sub_run
 subprocess.check_output = _safe_sub_check_output
 subprocess.check_call = _safe_sub_check_call
 # ----------------------------------------------------
+
+# --- GLOBAL SAFE-PRINT PATCH (Windows cp1252 consoles) ---
+# Web text and LLM output contain Unicode characters that the default
+# Windows console (cp1252) cannot encode, raising 'charmap' errors.
+# Patch builtins.print so any failing line falls back to the raw stdout
+# buffer with UTF-8 replacement instead of crashing/hanging the agent.
+import builtins
+_orig_print = print
+
+def _safe_print(*args, **kwargs):
+    try:
+        return _orig_print(*args, **kwargs)
+    except UnicodeEncodeError:
+        sep = kwargs.get('sep', ' ')
+        end = kwargs.get('end', '\n')
+        file = kwargs.get('file', sys.stdout)
+        text = sep.join(str(a) for a in args) + end
+        try:
+            file.buffer.write(text.encode('utf-8', errors='replace'))
+        except Exception:
+            pass
+
+builtins.print = _safe_print
+# ----------------------------------------------------
+
+
 import tempfile
 import warnings
 import colorsys
@@ -441,6 +467,19 @@ class DomainHealthCache:
                 "issue_count": self._cache.get(self._key(domain), {}).get("issue_count", 0) + 1
             }
 
+    def mark_captcha(self, domain):
+        """Track bot/captcha challenges separately so we can skip them fast."""
+        with self._lock:
+            key = self._key(domain)
+            prev = self._cache.get(key, {})
+            self._cache[key] = {
+                "category": ISSUE_CATEGORY_WEBSITE,
+                "sub_type": "blocked_by_waf",
+                "timestamp": time.time(),
+                "issue_count": prev.get("issue_count", 0) + 1,
+                "captcha_count": prev.get("captcha_count", 0) + 1,
+            }
+
     def get_health(self, domain):
         with self._lock:
             entry = self._cache.get(self._key(domain))
@@ -464,6 +503,13 @@ class DomainHealthCache:
             return False
         # If we saw 5+ issues on this domain recently, skip with fast fail
         return health.get("issue_count", 0) >= 5
+
+    def should_skip_captcha(self, domain, threshold=3):
+        """Skip browser load if this domain has repeatedly thrown captchas."""
+        health = self.get_health(domain)
+        if not health:
+            return False
+        return health.get("captcha_count", 0) >= threshold
 
 
 # Shared domain-health singleton
@@ -1830,18 +1876,50 @@ class AutonomousCourseVerifier:
         from selenium.webdriver.common.action_chains import ActionChains
         
         from selenium.common.exceptions import TimeoutException
-        
-        try:
-            driver.set_page_load_timeout(30)
-            driver.get(url)
-        except TimeoutException:
+        import threading as _threading
+
+        _PAGE_LOAD_HARD_TIMEOUT = 35  # seconds — kills the get() thread if Selenium hangs
+
+        _load_exc = [None]
+
+        def _do_get():
+            try:
+                driver.set_page_load_timeout(30)
+                driver.get(url)
+            except TimeoutException:
+                _load_exc[0] = "timeout"
+            except Exception as _e:
+                _load_exc[0] = _e
+
+        _t = _threading.Thread(target=_do_get, daemon=True)
+        _t.start()
+        _t.join(timeout=_PAGE_LOAD_HARD_TIMEOUT)
+
+        if _t.is_alive():
+            # Browser is totally frozen — stop the page and move on
+            print(f"    -> [!] Hard timeout ({_PAGE_LOAD_HARD_TIMEOUT}s) reached for {url}. Stopping page load...")
+            try:
+                driver.execute_script("window.stop();")
+            except Exception:
+                pass
+        elif _load_exc[0] == "timeout":
             print(f"    -> [!] Page load timed out for {url}. Attempting to proceed with whatever loaded...")
             try:
                 driver.execute_script("window.stop();")
-            except:
+            except Exception:
                 pass
-        except Exception as e:
-            print(f"    -> [!] Error loading page {url}: {e}")
+        elif _load_exc[0] is not None:
+            err_str = str(_load_exc[0]).lower()
+            # "The operation was canceled" / ERR_ABORTED / WebDriverException on hung CAPTCHA pages
+            if any(kw in err_str for kw in ("canceled", "cancelled", "aborted", "err_aborted",
+                                             "session deleted", "disconnected", "no such window")):
+                print(f"    -> [!] Page load aborted/canceled for {url}: {_load_exc[0]}")
+                try:
+                    driver.execute_script("window.stop();")
+                except Exception:
+                    pass
+            else:
+                print(f"    -> [!] Error loading page {url}: {_load_exc[0]}")
             
         time.sleep(3)
 
@@ -1900,18 +1978,63 @@ class AutonomousCourseVerifier:
             pass
 
         self._inject_beautiful_cursor(driver)
-        
+
         # Cloudflare Turnstile / "just a moment" challenge bypass.
         # Undetected-chromedriver usually solves the JS challenge automatically if given
-        # enough time; the mouse movement simulates human presence. We retry up to 5
-        # times with increasing waits, and attempt to click the Turnstile checkbox.
-        for attempt in range(5):
+        # enough time. We allow a few short attempts, but we bail out as soon as the
+        # page renders real content instead of burning all attempts. Env knobs:
+        #   VERIFIER_CAPTCHA_MAX_ATTEMPTS  (default 3, old was 5)
+        #   VERIFIER_CAPTCHA_WAIT_BASE     (default 4s, wait = base + attempt*2)
+        #   VERIFIER_CAPTCHA_MOUSE_MOVE    (default false — mouse moves are expensive)
+        #   VERIFIER_CAPTCHA_CLICK_IFRAME  (default true)
+        try:
+            _captcha_max_attempts = int(os.environ.get('VERIFIER_CAPTCHA_MAX_ATTEMPTS', '3'))
+        except ValueError:
+            _captcha_max_attempts = 3
+        if _captcha_max_attempts <= 0:
+            _captcha_max_attempts = 3
+        try:
+            _captcha_wait_base = int(os.environ.get('VERIFIER_CAPTCHA_WAIT_BASE', '4'))
+        except ValueError:
+            _captcha_wait_base = 4
+        if _captcha_wait_base <= 0:
+            _captcha_wait_base = 4
+        _captcha_mouse_move = os.environ.get('VERIFIER_CAPTCHA_MOUSE_MOVE', 'false').lower() == 'true'
+        _captcha_click_iframe = os.environ.get('VERIFIER_CAPTCHA_CLICK_IFRAME', 'true').lower() == 'true'
+
+        # Helper: does the page look like it has real content now?
+        def _has_real_content():
             try:
-                page_src = driver.page_source.lower()
-                if "verify you are human" in page_src or "just a moment" in page_src or "attention required" in page_src or "checking your browser" in page_src:
-                    print(f"    -> [!] Captcha/Bot Challenge detected (attempt {attempt+1}/5). Attempting bypass...")
-                    
-                    # Simulate human-like mouse movement across the page
+                title = (driver.title or "").lower()
+                body_text = driver.execute_script("return document.body ? document.body.innerText : ''") or ""
+                page_src = (driver.page_source or "").lower()
+                # A rendered page has a meaningful title (not the challenge titles) and
+                # more than ~300 chars of body text with no challenge markers.
+                if any(m in page_src for m in self._BOT_CHALLENGE_MARKERS):
+                    return False
+                if title and title not in ("", "just a moment...", "attention required!", "please wait...", "checking your browser..."):
+                    if len(body_text) > 300:
+                        return True
+                    # If body is small but there is no challenge marker, it may be a
+                    # sparse real page (e.g. a redirect page); treat as resolved.
+                    if len(body_text) > 50:
+                        return True
+            except Exception:
+                pass
+            return False
+
+        _challenge_seen = False
+        for attempt in range(_captcha_max_attempts):
+            try:
+                page_src = (driver.page_source or "").lower()
+                if not any(marker in page_src for marker in self._BOT_CHALLENGE_MARKERS):
+                    break
+
+                _challenge_seen = True
+                print(f"    -> [!] Captcha/Bot Challenge detected (attempt {attempt+1}/{_captcha_max_attempts}). Attempting bypass...")
+
+                # Simulate human-like mouse movement across the page (optional, off by default)
+                if _captcha_mouse_move:
                     try:
                         body = driver.find_element(By.TAG_NAME, 'body')
                         ac = ActionChains(driver)
@@ -1919,8 +2042,9 @@ class AutonomousCourseVerifier:
                             ac.move_to_element_with_offset(body, random.randint(10, 200), random.randint(10, 200)).perform()
                             time.sleep(random.uniform(0.3, 0.8))
                     except: pass
-                    
-                    # Find and click the Cloudflare Turnstile / hCaptcha checkbox iframe
+
+                # Find and click the Cloudflare Turnstile / hCaptcha checkbox iframe
+                if _captcha_click_iframe:
                     iframes = driver.find_elements(By.TAG_NAME, "iframe")
                     clicked_captcha = False
                     for iframe in iframes:
@@ -1946,20 +2070,40 @@ class AutonomousCourseVerifier:
                                 except: pass
                             if clicked_captcha:
                                 break
-                    
-                    # Wait longer on later attempts to let the JS challenge self-resolve
-                    wait_time = 4 + attempt * 2  # 4, 6, 8, 10, 12s
-                    print(f"    -> Waiting {wait_time}s for challenge to resolve...")
-                    time.sleep(wait_time)
+
+                # Wait, but poll for early content resolution every second so we
+                # don't sit through the full wait once the challenge is solved.
+                wait_time = _captcha_wait_base + attempt * 2  # e.g. 4, 6, 8s
+                print(f"    -> Waiting up to {wait_time}s for challenge to resolve...")
+                for _elapsed in range(wait_time):
+                    time.sleep(1)
+                    if _has_real_content():
+                        print(f"    -> [OK] Challenge resolved after ~{_elapsed+1}s on attempt {attempt+1}.")
+                        _challenge_seen = False
+                        break
                 else:
-                    break
+                    # Loop completed without early break; content still not real.
+                    continue
+                break
             except Exception as e:
                 try: driver.switch_to.default_content()
                 except: pass
                 break
+
+        if _challenge_seen and not any(marker in (driver.page_source or "").lower() for marker in self._BOT_CHALLENGE_MARKERS):
+            # Challenge resolved on the last attempt; don't mark domain as bad.
+            _challenge_seen = False
+
         os.makedirs(self.screenshots_dir, exist_ok=True)
 
         self.model = None
+        # NOTE: We intentionally do NOT return challenge status. Previous code
+        # hard-aborted the course on a persisting bot challenge, which caused a
+        # regression: sites that uc could solve later (or that produced enough
+        # challenge-page text for the LLM to handle) were wrongly marked as
+        # website_issue. We keep the faster bypass loop, but let the normal
+        # extraction + LLM pipeline decide the outcome as before.
+        return False
 
     def _preflight_url_check(self, url):
         """Fast HEAD/GET request to weed out dead links before opening the browser."""
@@ -2186,6 +2330,19 @@ class AutonomousCourseVerifier:
             blocks = page.get_text("blocks")
             text_blocks = [b for b in blocks if b[6] == 0]
             links = page.get_links()
+
+            # ── DIAGRAM / OVERVIEW PAGE GUARD ─────────────────────────────
+            # Pages like domain mind-maps, sub-domain diagrams, or "System &
+            # Endpoint Security" overview pages contain no course data at all.
+            # Detect them early by checking the full page text for at least one
+            # course-data keyword.  If none are found, skip the whole page so
+            # no floating items or partial blocks are emitted from it.
+            page_full_text = " ".join(b[4] for b in text_blocks)
+            COURSE_KEYWORDS = ("Mode:", "Cost:", "Fees:", "Duration:", "http://", "https://", "www.")
+            if not any(kw in page_full_text for kw in COURSE_KEYWORDS):
+                print(f"    [SKIP] Page {page_num + 1} — no course data detected (likely a diagram/overview page). Skipping.")
+                continue
+            # ──────────────────────────────────────────────────────────────
 
             # Assign blocks to quadrants or flag as floating
             for b in text_blocks:
@@ -2914,10 +3071,7 @@ class AutonomousCourseVerifier:
         print(f"\n[*] Step 1.5/4: Extracting visual badges (OCR) for selected courses ({start_idx+1} to {end_idx if end_idx else len(self.courses)})...")
         doc = fitz.open(self.input_pdf)
         end_limit = end_idx if end_idx is not None else len(self.courses)
-        for i, c in enumerate(self.courses):
-            if hasattr(self, 'specific_indices') and self.specific_indices:
-                if i not in self.specific_indices: continue
-            elif not (start_idx <= i < end_limit): continue
+        for c in self.courses[start_idx:end_limit]:
             page_num = c['page_num'] - 1
             box_idx = c['box_index'] - 1
             box_position = c['box_position']
@@ -3006,10 +3160,7 @@ CRITICAL RULES:
         
         cache_updated = False
 
-        for i, c in enumerate(self.courses):
-            if hasattr(self, 'specific_indices') and self.specific_indices:
-                if i not in self.specific_indices: continue
-            elif not (start_idx <= i < end_limit): continue
+        for c in self.courses[start_idx:end_limit]:
             uni = c.get('uni', 'Unknown')
             course_name = c.get('name', '')  # BUGFIX: The key is 'name', not 'course_name'
             country = str(c.get('country', '')).lower()
@@ -3056,10 +3207,7 @@ CRITICAL RULES:
 
         # Collect unique universities and their countries for standard ranking checks
         uni_map = {}
-        for i, c in enumerate(self.courses):
-            if hasattr(self, 'specific_indices') and self.specific_indices:
-                if i not in self.specific_indices: continue
-            elif not (start_idx <= i < end_limit): continue
+        for c in self.courses[start_idx:end_limit]:
             uni = c.get('uni', 'Unknown')
             if uni and uni != 'Unknown':
                 country = str(c.get('country', '')).lower()
@@ -3575,7 +3723,7 @@ CRITICAL RULES:
                 try:
                     import pdfplumber
                     with pdfplumber.open(tmp_pdf_path) as pdf_file:
-                        for p in pdf_file.pages[:15]:
+                        for p in pdf_file.pages:
                             pdf_text += (p.extract_text() or "") + "\n"
                 except Exception as e:
                     print(f"      -> Warning: pdfplumber extraction failed: {e}")
@@ -3596,17 +3744,47 @@ CRITICAL RULES:
                             pytesseract.pytesseract.tesseract_cmd = r'C:\Users\Shlok Parekh\AppData\Local\Programs\Tesseract-OCR\tesseract.exe'
                         
                         doc = fitz.open(tmp_pdf_path)
+                        # Bound the number of vision-OCR pages per PDF. A 16-page
+                        # "Strategic Plan" / "Service Rules" PDF that merely
+                        # mentions fees would otherwise fire a slow 31B vision
+                        # call on every page. 8 pages is plenty for fee tables.
+                        try:
+                            VISION_PAGE_CAP = int(os.environ.get('VERIFIER_VISION_PAGE_CAP', '8'))
+                        except ValueError:
+                            VISION_PAGE_CAP = 8
+                        if VISION_PAGE_CAP <= 0:
+                            VISION_PAGE_CAP = 8
+                        vision_pages_sent = 0
+                        # ── Parallel fee-PDF OCR (accuracy-neutral) ──
+                        # Per-page vision OCR calls are independent of each
+                        # other, so we collect the pages to OCR (selection +
+                        # render + base64 encode, all serial — PyMuPDF is NOT
+                        # thread-safe), then fire their generate_with_image
+                        # calls concurrently through the LLM semaphore, then
+                        # reassemble + Tesseract-fallback in page order. Same
+                        # prompt, same images, same selection logic, same
+                        # fallback rule — only the timing changes. Kill switch:
+                        # VERIFIER_PARALLEL_FEE_OCR=false restores serial OCR.
+                        try:
+                            _parallel_fee_ocr = os.environ.get('VERIFIER_PARALLEL_FEE_OCR', 'true').lower() == 'true'
+                        except Exception:
+                            _parallel_fee_ocr = True
+
+                        _VISION_OCR_PROMPT = "Extract all the text in this image perfectly. If there are tables, extract all rows and columns accurately, preserving all numbers and fees. Output only the exact text from the image."
+
+                        # Phase 1: serial selection + render + encode (no LLM calls)
+                        pages_to_ocr = []  # ordered list of {page_idx, b64_img, gray}
                         for page_idx, page in enumerate(doc):
                             if page_idx > 60: break # Absolute max limit of 60 pages to prevent infinite loops
                             # Use higher resolution matrix (3,3) ~216 DPI to handle blurred/photo PDFs
                             pix = page.get_pixmap(matrix=fitz.Matrix(3, 3))
                             img_data = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
                             if pix.n == 4: img_data = cv2.cvtColor(img_data, cv2.COLOR_RGBA2RGB)
-                            
+
                             # Sharpen image using OpenCV to fix blurred or photo-clicked PDFs
                             kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
                             img_data = cv2.filter2D(img_data, -1, kernel)
-                            
+
                             # Fast Tesseract pre-scan to detect if page contains fee data
                             gray = cv2.cvtColor(img_data, cv2.COLOR_RGB2GRAY)
                             fast_text = ""
@@ -3614,24 +3792,67 @@ CRITICAL RULES:
                                 fast_text = pytesseract.image_to_string(cv2.resize(gray, (0,0), fx=0.75, fy=0.75)).lower()
                             except Exception as e:
                                 pass # Tesseract might not be installed, ignore fast scan and proceed to Vision API
-                            
+
                             keywords = ['fee', 'tuition', 'hostel', 'rs.', 'rupees', 'amount', 'pay', 'schedule', '£', '$', '€', 'cost', '₹', 'inr']
                             is_short_pdf = len(doc) <= 6
                             if not is_short_pdf and not force_ocr and fast_text and not any(kw in fast_text for kw in keywords):
                                 print(f"      -> [PDF OCR] Skipping page {page_idx+1} (No fee keywords found in fast-scan)")
                                 continue
-                            
-                            print(f"      -> [PDF OCR] Fee keywords detected! Using Vision API (Groq/Mistral/SambaNova) for perfect extraction on page {page_idx+1}...")
-                            
-                            try:
+
+                            # Stop firing expensive vision calls once we've
+                            # processed enough pages — remaining pages fall back
+                            # to the (free, instant) Tesseract text below.
+                            use_vision = vision_pages_sent < VISION_PAGE_CAP
+                            if use_vision:
+                                vision_pages_sent += 1
+                                print(f"      -> [PDF OCR] Fee keywords detected! Using Ollama Vision for perfect extraction on page {page_idx+1}...")
                                 _, buffer = cv2.imencode('.jpg', img_data)
                                 b64_img = base64.b64encode(buffer).decode('utf-8')
-                                llm = get_llm_manager()
-                                ocr_text = llm.generate_with_image("Extract all the text in this image perfectly. If there are tables, extract all rows and columns accurately, preserving all numbers and fees. Output only the exact text from the image.", b64_img)
-                                
-                                if ocr_text: pdf_text += ocr_text + "\n"
+                            else:
+                                print(f"      -> [PDF OCR] Vision page cap ({VISION_PAGE_CAP}) reached; using Tesseract for page {page_idx+1}...")
+                                b64_img = None  # no vision call; Tesseract fallback runs in Phase 3
+                            pages_to_ocr.append({'page_idx': page_idx, 'b64_img': b64_img, 'gray': gray})
+
+                        # Phase 2: fire vision OCR calls concurrently (only for pages with b64_img).
+                        # The shared _llm_semaphore already caps in-flight HTTP at OLLAMA_MAX_CONCURRENCY,
+                        # so sizing the pool to max_concurrency avoids pointless queueing.
+                        ocr_results = {}  # page_idx -> ocr_text (or None)
+                        _llm_ocr = get_llm_manager()
+
+                        def _vision_ocr_page(item):
+                            if item['b64_img'] is None:
+                                return item['page_idx'], None
+                            try:
+                                return item['page_idx'], _llm_ocr.generate_with_image(_VISION_OCR_PROMPT, item['b64_img'])
                             except Exception as e:
-                                print(f"      -> Warning: Vision API OCR failed: {e}")
+                                print(f"      -> Warning: Vision API OCR failed for page {item['page_idx']+1}: {e}")
+                                return item['page_idx'], None
+
+                        _vision_pages = [it for it in pages_to_ocr if it['b64_img'] is not None]
+                        if _parallel_fee_ocr and len(_vision_pages) > 1:
+                            from concurrent.futures import ThreadPoolExecutor
+                            _ocr_workers = max(1, getattr(_llm_ocr, 'max_concurrency', 3))
+                            with ThreadPoolExecutor(max_workers=_ocr_workers, thread_name_prefix="FeeOCR") as _ocr_ex:
+                                for _pidx, _txt in _ocr_ex.map(_vision_ocr_page, _vision_pages):
+                                    ocr_results[_pidx] = _txt
+                        else:
+                            for _it in _vision_pages:
+                                _pidx, _txt = _vision_ocr_page(_it)
+                                ocr_results[_pidx] = _txt
+
+                        # Phase 3: reassemble in original page order + Tesseract fallback (serial, in order).
+                        # If vision was skipped OR failed (timeout/error), fall back to a full-resolution
+                        # Tesseract pass so the page's text isn't lost entirely. fast_text was downscaled;
+                        # re-run at full res for accuracy.
+                        for item in pages_to_ocr:
+                            ocr_text = ocr_results.get(item['page_idx'])
+                            if not ocr_text or not ocr_text.strip():
+                                try:
+                                    ocr_text = pytesseract.image_to_string(item['gray'])
+                                except Exception:
+                                    ocr_text = ""
+                            if ocr_text:
+                                pdf_text += ocr_text + "\n"
                                 
                     except Exception as e:
                         print(f"      -> Warning: PDF OCR failed: {e}")
@@ -3783,15 +4004,12 @@ CRITICAL RULES:
                     // Get all clickable elements but EXCLUDE those inside nav/header
                     let allButtons = document.querySelectorAll('button, [role="tab"], .nav-link, .tab-pane, summary, details summary, .accordion-button, .accordion-header, [data-toggle], [data-bs-toggle], a.collapsed, a[data-toggle="collapse"], span.collapsed, div.collapsed, .cursor-pointer');
                     
-                    // Limit to 2500 elements to prevent infinite hangs on massive catalog pages
-                    let buttonsArray = Array.from(allButtons).slice(0, 2500);
-                    
-                    for (let b of buttonsArray) {
+                    for (let b of allButtons) {
                         // SKIP elements inside <nav>, <header>, sidebars, popups, or with nav-related classes
                         let parent = b.closest('nav, header, aside, .sidebar, .popup, .modal, .offcanvas, .floating, .navbar, .main-nav, .top-nav, .site-header, .header-menu, .mega-menu, #header, #sidebar, [role="dialog"], [role="navigation"]');
                         if (parent) continue;
                         
-                        let txt = (b.textContent || '').toLowerCase().trim();
+                        let txt = (b.innerText || b.textContent || '').toLowerCase().trim();
                         if (txt.length < 2 || txt.length > 100) continue;
                         if (txt.includes('login') || txt.includes('sign in') || txt.includes('student portal')) {
                             b.remove(); // Destroy login buttons
@@ -3869,7 +4087,7 @@ CRITICAL RULES:
                     let rows = table.querySelectorAll('tr');
                     rows.forEach(function(row) {
                         let cells = row.querySelectorAll('th, td');
-                        let rowText = Array.from(cells).map(c => (c.textContent || '').trim()).join(' | ');
+                        let rowText = Array.from(cells).map(c => c.innerText.trim()).join(' | ');
                         result += rowText + '\\n';
                     });
                     result += '\\n';
@@ -3930,6 +4148,17 @@ CRITICAL RULES:
         sk_match = pre_match_skills
         sk_detail = ""
         
+        # VERIFIER_LLM_TEXT_BUDGET caps the page text fed to the LLM. Default
+        # 400000 preserves historical behavior; the token-overflow retry below
+        # re-runs with a tight 40000-char cap so oversized courses succeed (or
+        # fail fast) instead of burning pointless fallback round-trips.
+        try:
+            LLM_TEXT_BUDGET = int(os.environ.get('VERIFIER_LLM_TEXT_BUDGET', '400000'))
+        except ValueError:
+            LLM_TEXT_BUDGET = 400000
+        if LLM_TEXT_BUDGET <= 0:
+            LLM_TEXT_BUDGET = 400000
+
         if "--- EXCEL FEES DATA ---" in page_text or "--- EXCEL SYLLABUS DATA ---" in page_text:
             web_part = page_text
             excel_part = ""
@@ -3941,12 +4170,12 @@ CRITICAL RULES:
                 parts = web_part.split("--- EXCEL FEES DATA ---", 1)
                 web_part = parts[0]
                 excel_part = "\n--- EXCEL FEES DATA ---\n" + parts[1] + excel_part
-                
-            allowed_web_len = max(0, 400000 - len(excel_part))
+
+            allowed_web_len = max(0, LLM_TEXT_BUDGET - len(excel_part))
             # Put excel_part at the very beginning of the page_text to ensure the LLM reads it first and it isn't lost in the middle/end
-            page_text_limited = (excel_part + "\n" + web_part)[:400000]
+            page_text_limited = excel_part + "\n" + web_part[:allowed_web_len]
         else:
-            page_text_limited = page_text[:400000]
+            page_text_limited = page_text[:LLM_TEXT_BUDGET]
             
         anna_univ_rule = ""
         uni_name_lower = str(course.get('uni', '')).lower()
@@ -4025,7 +4254,6 @@ Rules:
    - UCL EXCEPTION: "UCL" stands for "University College London" or "University College of London". If Original University is one and the web is the other, mark uni_match as TRUE.
    - GLOBAL ABBREVIATION RULE: You must recognize standard global university abbreviations (e.g. MIT = Massachusetts Institute of Technology, LSE = London School of Economics, NUS = National University of Singapore, NTU, EPFL, UNSW, KCL, UCLA, IIT, NIT, IIM, etc.). If the Original University is an acronym and the website uses the full name (or vice versa), you MUST mark uni_match as TRUE.
    - CRITICAL: If the website explicitly states the course is provided by a COMPLETELY DIFFERENT institution than the Original University, you MUST mark university_match as FALSE. Your university_description must clearly state WHICH institution the website says provides the course.
-   - CRITICAL ANTI-HALLUCINATION RULE: You MUST determine the university ONLY from the MAIN WEBPAGE TEXT at the top of the Text section. Any text after the markers '--- EXCEL FEES DATA ---' or '--- EXCEL SYLLABUS DATA ---' is supplementary fee/syllabus data that may contain information about MANY DIFFERENT universities. You MUST NEVER use university names found in those supplementary sections to identify the course provider. The university is ALWAYS determined by the main webpage URL, header, and body text ONLY.
    - CRITICAL: If the cost is given 'per year', multiply it by the total number of years. If the cost is given 'per semester', multiply it by the total number of semesters (i.e., years * 2). You MUST calculate the total cost for the entire program duration before comparing it to the Original Cost.
    - Note: The Original Cost might contain a '?' instead of a currency symbol due to PDF extraction errors (e.g., '?20,000' usually means '€20,000' or '£20,000' depending on the country). In your descriptions, always write '€' not '?'.
    - NEVER repeat these prompt instructions in your descriptions! You MUST look extremely carefully through all provided text. The values are almost certainly in the text. DO NOT give up easily!
@@ -4068,49 +4296,73 @@ Output JSON format:
         try:
             llm = get_llm_manager()
             
-            # Default to auto (Mistral -> Groq -> SambaNova -> OpenRouter -> NVIDIA -> Gemini)
+            # Default to auto (Mistral -> Groq -> SambaNova -> OpenRouter)
             target_provider = "auto"
             target_timeout = 120
             
-            # If prompt is extremely large (>100K chars ≈ 30K+ tokens), skip all small-context
-            # LLMs (Mistral/Groq/SambaNova/OpenRouter/NVIDIA) and go straight to Gemini 2.5 Flash
-            # which has 1M+ token context. This prevents wasting minutes cycling through keys
-            # that will all fail with ERROR_TOKEN_EXCEEDED anyway.
-            if len(prompt) > 100000:
-                print(f"      -> [Smart Router] Prompt is {len(prompt)} chars (~{len(prompt)//4} tokens). Skipping small-context LLMs, going straight to Gemini 2.5 Flash...")
-                target_provider = "gemini"
-                target_timeout = 180
-            
             res_str = llm.generate(
-                prompt, 
-                worker_id=worker_id, 
-                format="json", 
-                provider=target_provider, 
+                prompt,
+                worker_id=worker_id,
+                format="json",
+                provider=target_provider,
                 timeout=target_timeout
             )
-            
-            # Token Exceeded Fallback to NVIDIA with 120s timeout
+
+            # Token-overflow retry: the old code "fell back" to NVIDIA then
+            # Puter, but llm_manager routes every call to the SAME Ollama backend
+            # and ignores `provider`, so those calls just re-sent the oversized
+            # prompt and returned ERROR_TOKEN_EXCEEDED again — two wasted
+            # round-trips and the course still failed. Instead, retry ONCE with a
+            # tightly truncated (40K-char) page text so the prompt fits the model's
+            # context. If it still overflows, fall through to the empty-response
+            # handler below.
             if res_str == "ERROR_TOKEN_EXCEEDED":
-                print(f"      -> [LLM Manager] Token Exceeded! Falling back to NVIDIA (Llama 70B) with 120s timeout...")
+                print(f"      -> [LLM Manager] Token exceeded on first call; retrying once with a 40000-char truncated prompt (Ollama-only)...")
+                retry_budget = 40000
+                if "--- EXCEL FEES DATA ---" in page_text or "--- EXCEL SYLLABUS DATA ---" in page_text:
+                    web_part = page_text
+                    excel_part = ""
+                    if "--- EXCEL SYLLABUS DATA ---" in web_part:
+                        p = web_part.split("--- EXCEL SYLLABUS DATA ---", 1)
+                        web_part = p[0]
+                        excel_part = "\n--- EXCEL SYLLABUS DATA ---\n" + p[1]
+                    if "--- EXCEL FEES DATA ---" in web_part:
+                        p = web_part.split("--- EXCEL FEES DATA ---", 1)
+                        web_part = p[0]
+                        excel_part = "\n--- EXCEL FEES DATA ---\n" + p[1]
+                    retry_text = excel_part + "\n" + web_part[:max(0, retry_budget - len(excel_part))]
+                else:
+                    retry_text = page_text[:retry_budget]
+                retry_prompt = f"""
+Strictly verify the course details against the webpage text. Output ONLY valid JSON.
+
+Data:
+Course: {course.get('name')}
+Cost: {course.get('cost')}
+Duration: {course.get('duration')}
+Mode: {course.get('mode')}
+Language: {course.get('language')}
+Country: {course.get('country')}
+University: {course.get('uni', 'N/A')}
+
+Text (truncated to fit context):
+{retry_text}
+
+{anna_univ_rule}
+{complex_fee_rule}
+{karnataka_rule}
+
+Output ONLY a single valid JSON object (no markdown, no explanation) with these keys:
+reasoning, found_cost, cost_description, cost_match, duration_description, duration_match, mode_description, mode_match, language_description, language_match, country_description, country_match, university_description, university_match, skills_description, skills_match.
+"""
                 res_str = llm.generate(
-                    prompt, 
-                    worker_id=worker_id, 
-                    format="json", 
-                    provider="nvidia", 
-                    timeout=120
+                    retry_prompt,
+                    worker_id=worker_id,
+                    format="json",
+                    provider=target_provider,
+                    timeout=target_timeout
                 )
-                
-            # If NVIDIA ALSO exceeds token limit (>131k), strictly fallback to Gemini 2.5 Flash (1M+ context)
-            if res_str == "ERROR_TOKEN_EXCEEDED":
-                print(f"      -> [LLM Manager] NVIDIA Token Limit Exceeded (>131k)! Falling back to Gemini 2.5 Flash (1M+ context)...")
-                res_str = llm.generate(
-                    prompt, 
-                    worker_id=worker_id, 
-                    format="json", 
-                    provider="gemini", 
-                    timeout=180
-                )
-                
+
             print(f"DEBUG LLM OUTPUT:\n{res_str}\n")
             
             try:
@@ -4769,7 +5021,7 @@ Output JSON format:
             let isCoursera = window.location.hostname.includes('coursera.org');
             if (isCoursera) {
                 document.querySelectorAll('button, a').forEach(b => {
-                    if ((b.textContent || '').toLowerCase().includes('enroll')) {
+                    if ((b.innerText || '').toLowerCase().includes('enroll')) {
                         try { b.click(); } catch(e) {}
                     }
                 });
@@ -4783,25 +5035,17 @@ Output JSON format:
             let elements = document.querySelectorAll('div, span, h3, h4, h5, h6, li, label, summary, strong, b, p, tr, td, dt, dd, [role="tab"], [role="button"], [data-toggle], [aria-expanded], a[href^="#"], button[aria-expanded], button[data-toggle]');
             let clickCount = 0;
             const MAX_CLICKS = 75;
-            
-            // Limit to first 5000 elements to prevent infinite hangs on massive catalog pages
-            let max_elements = Math.min(elements.length, 5000);
-            
-            for(let i=0; i < max_elements; i++) {
+            for(let el of elements) {
                 if (clickCount >= MAX_CLICKS) break;
-                let el = elements[i];
-                
                 // Ensure we don't accidentally click a real anchor link that bypasses our block
                 if (el.tagName.toLowerCase() === 'a' && el.href && !el.href.startsWith('javascript') && !el.href.includes('#')) continue;
                 
-                let txt = el.textContent ? el.textContent.toLowerCase().trim() : "";
-                if(txt.length > 0 && txt.length < 80) {
+                if(el.offsetParent !== null && el.textContent) {
+                    let txt = el.textContent.toLowerCase().trim();
                     let isMatch = keywords.some(k => txt.includes(k));
                     let isSafe = !avoid_keywords.some(k => txt.includes(k));
                     
-                    // We removed the el.offsetParent check because it forces synchronous layout recalculation
-                    // (reflow) which completely freezes the browser for 10+ minutes on massive DOMs.
-                    if(isMatch && isSafe) {
+                    if(txt.length > 0 && txt.length < 80 && isMatch && isSafe) {
                         try { el.click(); clickCount++; } catch(e) {}
                     }
                 }
@@ -4856,9 +5100,9 @@ Output JSON format:
             if url: parts.append(f"=== PAGE URL: {url} ===")
         except: pass
         js_body_text = """
-            // Prefer textContent as it respects CSS layout and visible content reliably,
+            // Prefer innerText as it respects CSS layout and visible content reliably,
             // while ignoring user-select: none which breaks getSelection().toString()
-            let text = document.body.textContent || "";
+            let text = document.body.innerText || "";
             if (text.length < 100) {
                 window.getSelection().removeAllRanges();
                 let range = document.createRange();
@@ -4898,7 +5142,7 @@ Output JSON format:
             for (let iframe of iframes) {
                 try {
                     let iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-                    if (iframeDoc && iframeDoc.body) out.push(iframeDoc.body.textContent);
+                    if (iframeDoc && iframeDoc.body) out.push(iframeDoc.body.innerText);
                 } catch(e) {} // cross-origin will throw
             }
             
@@ -4922,7 +5166,7 @@ Output JSON format:
             function extractShadow(node) {
                 let text = "";
                 if (node.shadowRoot) {
-                    text += node.shadowRoot.textContent + "\\n";
+                    text += node.shadowRoot.innerText + "\\n";
                     node.shadowRoot.querySelectorAll('*').forEach(child => {
                         text += extractShadow(child);
                     });
@@ -5040,11 +5284,11 @@ Output JSON format:
             ];
             
             // Contains selector polyfill
-            const buttons = Array.from(document.querySelectorAll('button, a')).slice(0, 2500);
+            const buttons = Array.from(document.querySelectorAll('button, a'));
             const closeWords = ['accept', 'agree', 'allow all', 'continue', 'close', 'got it'];
             
             for (let b of buttons) {
-                if (b.textContent && closeWords.some(w => b.textContent.toLowerCase().trim() === w)) {
+                if (b.innerText && closeWords.some(w => b.innerText.toLowerCase().trim() === w)) {
                     if (b.tagName.toLowerCase() === 'button' && (b.type === 'submit' || !b.hasAttribute('type'))) {
                         b.type = 'button';
                     }
@@ -5089,10 +5333,9 @@ Output JSON format:
                 }, true);
 
                 var elements = document.querySelectorAll('button, div[role="tab"], div.accordion, span.toggle, summary, [aria-expanded="false"], a[href="#"], a[data-toggle]');
-                var max_elements = Math.min(elements.length, 5000);
-                for(var i=0; i < max_elements; i++) {
+                for(var i=0; i<elements.length; i++) {
                     var el = elements[i];
-                    var text = (el.textContent || '').toLowerCase().trim();
+                    var text = (el.innerText || el.textContent || '').toLowerCase().trim();
                     if(text.includes('international') || text.includes('tuition') || text.includes('fee') || 
                        text.includes('cost') || text.includes('price') || text.includes('pricing') ||
                        text.includes('duration') || text.includes('syllabus') || text.includes('module') ||
@@ -5142,7 +5385,7 @@ Output JSON format:
         seen = set()
         for selector in selectors:
             try:
-                for el in driver.find_elements(By.CSS_SELECTOR, selector)[:50]:
+                for el in driver.find_elements(By.CSS_SELECTOR, selector):
                     try:
                         marker = "|".join([
                             el.tag_name, el.get_attribute("type") or '', el.get_attribute("name") or '', 
@@ -5234,7 +5477,7 @@ Output JSON format:
         best = None
         best_score = 0.0
         try:
-            links = driver.find_elements(By.XPATH, "//a[position() <= 180]")
+            links = driver.find_elements(By.TAG_NAME, "a")
         except Exception:
             return False
 
@@ -5365,7 +5608,7 @@ Output JSON format:
                     print("    -> [Login Sequence] Coursera Login completed (or challenged).")
                     try:
                         cookies = driver.get_cookies()
-                        with open(cookie_file, 'w') as f:
+                        with open(cookie_file, 'w', encoding='utf-8') as f:
                             json.dump(cookies, f)
                         print("    -> [Login Sequence] Saved Coursera cookies for future threads.")
                     except Exception as e:
@@ -5441,8 +5684,8 @@ Output JSON format:
                 if not clicked:
                     print(f"    -> [NIELIT Visual Agent] Could not locate visually. Falling back to JS text search...")
                     script = f'''
-                    let elsArray = Array.from(document.querySelectorAll('*')).slice(0, 2500);
-                    let target = elsArray.find(e => e.textContent && e.textContent.toLowerCase().trim() === '{target_category.lower()}');
+                    let els = Array.from(document.querySelectorAll('*'));
+                    let target = els.find(e => e.innerText && e.innerText.toLowerCase().trim() === '{target_category.lower()}' && e.offsetParent !== null);
                     if (target) {{ target.click(); return true; }} return false;
                     '''
                     driver.execute_script(script)
@@ -5465,12 +5708,12 @@ Output JSON format:
                         let cards = document.querySelectorAll('.course-card, .card, [class*="course"], [class*="Card"]');
                         let out = [];
                         if (cards.length > 0) {
-                            cards.forEach(c => { if(c.textContent && c.textContent.length > 20) out.push(c.textContent); });
+                            cards.forEach(c => { if(c.innerText && c.innerText.length > 20) out.push(c.innerText); });
                         }
                         // Fallback: get the main content area text
                         if (out.length === 0) {
                             let main = document.querySelector('main, .main-content, #content, .container') || document.body;
-                            out.push(main.textContent);
+                            out.push(main.innerText);
                         }
                         return out.join('\\n---CARD---\\n');
                     """
@@ -5479,11 +5722,11 @@ Output JSON format:
                         all_text += dom_text + "\n"
                     else:
                         # Fallback to full body text
-                        all_text += (driver.execute_script("return document.body ? document.body.textContent : '';") or "") + "\n"
+                        all_text += (driver.execute_script("return document.body ? document.body.innerText : '';") or "") + "\n"
                 except Exception as e:
                     print(f"    -> [NIELIT] DOM extraction failed for page {page}: {e}")
                     try:
-                        all_text += (driver.execute_script("return document.body ? document.body.textContent : '';") or "") + "\n"
+                        all_text += (driver.execute_script("return document.body ? document.body.innerText : '';") or "") + "\n"
                     except: pass
                 
                 # OCR extraction for images/corner texts as requested
@@ -5536,7 +5779,7 @@ Output JSON format:
                         print(f"    -> [NIELIT] Attempting to navigate to page {next_page_num}...")
                         script = f'''
                         let els = Array.from(document.querySelectorAll('a, button, li, span'));
-                        let target = els.find(e => e.textContent && e.textContent.trim() === "{next_page_num}" && e.offsetParent !== null && (e.className.includes('page') || e.closest('.pagination') !== null));
+                        let target = els.find(e => e.innerText && e.innerText.trim() === "{next_page_num}" && e.offsetParent !== null && (e.className.includes('page') || e.closest('.pagination') !== null));
                         if (target) {{
                             target.scrollIntoView({{block: 'center'}});
                             target.click();
@@ -5887,19 +6130,15 @@ Output JSON format:
             // Remove old boxes if any
             document.querySelectorAll('.llm-vision-box').forEach(e => e.remove());
 
-            // Limit to 2500 elements to prevent getBoundingClientRect from hanging the browser
-            let elementsArray = Array.from(elements).slice(0, 2500);
-
-            let fragment = document.createDocumentFragment();
-            elementsArray.forEach(el => {
-                if (!el.textContent || el.textContent.trim().length < 2) return;
+            elements.forEach(el => {
+                if (!el.innerText || el.innerText.trim().length < 2) return;
                 
                 // Exclude elements inside sidebars, headers, popups to strictly stay on the main content
                 let parent = el.closest('nav, header, aside, .sidebar, .popup, .modal, .offcanvas, .floating, .navbar, #header, #sidebar, [role="dialog"], [role="navigation"]');
                 if (parent) return;
                 
                 // Exclude login/apply/admission links to prevent navigating to student portals
-                let txt = el.textContent.trim().toLowerCase();
+                let txt = el.innerText.trim().toLowerCase();
                 let bad_words = [
                     'login', 'sign in', 'apply', 'admission', 'register', 'enroll now',
                     'home', 'about us', 'contact', 'faculty', 'alumni', 'careers',
@@ -5919,7 +6158,7 @@ Output JSON format:
                     let id = counter++;
                     window.__llm_elements[id] = el;
                     mapping[id] = {
-                        text: el.textContent.trim().substring(0, 50),
+                        text: el.innerText.trim().substring(0, 50),
                         x: rect.left + rect.width / 2,
                         y: rect.top + rect.height / 2
                     };
@@ -5936,7 +6175,7 @@ Output JSON format:
                     box.style.pointerEvents = 'none';
                     
                     let label = document.createElement('span');
-                    label.textContent = id;
+                    label.innerText = id;
                     label.style.position = 'absolute';
                     label.style.top = '-15px';
                     label.style.left = '0px';
@@ -5946,10 +6185,9 @@ Output JSON format:
                     label.style.fontWeight = 'bold';
                     label.style.padding = '1px 3px';
                     box.appendChild(label);
-                    fragment.appendChild(box);
+                    document.body.appendChild(box);
                 }
             });
-            document.body.appendChild(fragment);
             return mapping;
         """
         try:
@@ -5997,6 +6235,24 @@ Output JSON format:
             pass
 
 
+    _BOT_CHALLENGE_MARKERS = [
+        "just a moment", "checking your browser", "attention required",
+        "verify you are human", "cf-challenge-page", "challenge-platform",
+        "datadome", "ddgi", "ray-id", "please wait", "cloudflare",
+        "security check", "verifying you are human", "browser check",
+        "anti-bot", "bot detection", "captcha",
+    ]
+
+    def _is_bot_challenge_page(self, driver):
+        """Return True if the current page looks like a bot/WAF challenge."""
+        try:
+            page_src = (driver.page_source or "").lower()
+            body_text = (driver.execute_script("return document.body ? document.body.innerText : ''") or "").lower()
+            combined = page_src + " " + body_text
+            return any(marker in combined for marker in self._BOT_CHALLENGE_MARKERS)
+        except Exception:
+            return False
+
     def _vision_based_tab_exploration(self, driver, course_name="", missing_info="", country=""):
         """Use LLM Manager to intelligently browse the page, scroll, and click relevant tabs."""
         extra_parts = []
@@ -6006,8 +6262,57 @@ Output JSON format:
             original_url = driver.current_url.split('#')[0]
             original_window = driver.current_window_handle
 
-            # ── Agentic Loop: Observe -> Think -> Act (Max 6 rounds to avoid wasting time) ──
-            for vision_round in range(6):
+            # ── Bot/WAF guard: if the page is a challenge page, give uc a short
+            # chance to solve it. We do NOT hard-abort here because the normal
+            # extraction pipeline may still produce a MATCH (as in v0/v1/v2).
+            # Only skip the vision agent if the page has no interactive elements
+            # at all (can't explore a blank challenge page).
+            if self._is_bot_challenge_page(driver):
+                print("    -> [Smart Agent] Bot/WAF challenge page detected. Waiting once for uc to solve...")
+                time.sleep(5)
+                if self._is_bot_challenge_page(driver):
+                    print("    -> [Smart Agent] Challenge still present. Will attempt exploration if elements exist.")
+
+            # ── Agentic Loop: Observe -> Think -> Act ──
+            # Default lowered from 6 -> 4 to cut the serial LLM floor. The loop
+            # still exits early on "finish". Raise back via VERIFIER_VISION_MAX_ROUNDS.
+            try:
+                vision_max_rounds = int(os.environ.get('VERIFIER_VISION_MAX_ROUNDS', '4'))
+            except ValueError:
+                vision_max_rounds = 4
+            if vision_max_rounds <= 0:
+                vision_max_rounds = 4
+
+            # ── Smart settle wait (accuracy-neutral) ──
+            # The fixed time.sleep() after each scroll/hover/click/back was a
+            # render-settle guess. Replace it with a WebDriverWait that polls
+            # document.readyState=='complete' (and, for clicks, a body innerText
+            # length change) so we return as soon as the page has actually
+            # settled. Capped at the original sleep value with a small floor for
+            # render-sensitive actions, so worst case == today's sleep and best
+            # case (content already loaded) returns ~immediately. Kill switch:
+            # VERIFIER_SMART_WAIT=false keeps the original fixed sleeps.
+            try:
+                _smart_wait = os.environ.get('VERIFIER_SMART_WAIT', 'true').lower() == 'true'
+            except Exception:
+                _smart_wait = True
+
+            def _settle_wait(cap, floor=0.0, expect_text_change=False, baseline_len=None):
+                if not _smart_wait:
+                    time.sleep(cap)
+                    return
+                if floor > 0:
+                    time.sleep(floor)
+                try:
+                    WebDriverWait(driver, max(0.1, cap - floor)).until(
+                        lambda d: d.execute_script("return document.readyState") == "complete"
+                        and (not expect_text_change
+                             or len(d.execute_script("return document.body ? document.body.innerText : ''") or "") != baseline_len)
+                    )
+                except Exception:
+                    pass  # timeout == worst case == today's full sleep
+
+            for vision_round in range(vision_max_rounds):
                 self._inject_beautiful_cursor(driver)
                 print(f"    -> [Smart Agent] [Round {vision_round+1}] Scanning DOM for '{missing_info}'...")
 
@@ -6052,13 +6357,33 @@ Return ONLY valid JSON in this exact format:
 CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSATION, REASONING, OR EXPLANATION.
 """
                 print(f"      -> [Smart Agent] Taking screenshot and asking Vision LLM for next action...")
-                
+
+                # Use the lightweight navigation vision model by default. If it
+                # returns garbage JSON, fall back to the accuracy-critical vision
+                # model for this round. Kill switch: VERIFIER_USE_NAV_VISION=false
+                # routes every navigation round through the main vision model.
                 try:
-                    b64_img = driver.get_screenshot_as_base64()
-                    response_text = llm.generate_with_image(
+                    _use_nav_vision = os.environ.get('VERIFIER_USE_NAV_VISION', 'true').lower() == 'true'
+                except Exception:
+                    _use_nav_vision = True
+
+                def _get_nav_action_response(b64_img, use_nav=True):
+                    try:
+                        if use_nav and hasattr(llm, 'generate_nav_with_image'):
+                            return llm.generate_nav_with_image(
+                                prompt=agent_prompt,
+                                base64_image=b64_img
+                            )
+                    except Exception as e:
+                        print(f"      -> [Smart Agent] Nav vision model failed: {e}. Falling back to main vision model.")
+                    return llm.generate_with_image(
                         prompt=agent_prompt,
                         base64_image=b64_img
                     )
+
+                try:
+                    b64_img = driver.get_screenshot_as_base64()
+                    response_text = _get_nav_action_response(b64_img, use_nav=_use_nav_vision)
                 except Exception as e:
                     print(f"      -> [Smart Agent] Failed to use vision API: {e}. Falling back to text-only API.")
                     response_text = llm.generate(
@@ -6066,51 +6391,69 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         format="json",
                         temperature=0.0
                     )
-                
+
                 if not response_text:
                     print("      -> [Smart Agent] LLM Manager failed.")
                     break
-                    
-                try:
+
+                def _parse_action_response(response_text, allow_fallback=True):
+                    """Parse JSON action; optionally retry with main vision model."""
                     import ast
                     try:
-                        action_data = json.loads(response_text)
-                    except json.JSONDecodeError:
-                        action_data = ast.literal_eval(response_text)
-                except Exception:
+                        try:
+                            return json.loads(response_text)
+                        except json.JSONDecodeError:
+                            return ast.literal_eval(response_text)
+                    except Exception:
+                        pass
                     # Try to extract JSON if there's markdown wrap
-                    pass # removed local import re
                     match = re.search(r'\{.*\}', response_text, re.DOTALL)
                     if match:
                         try:
                             json_str = match.group(0)
                             try:
-                                action_data = json.loads(json_str)
+                                return json.loads(json_str)
                             except json.JSONDecodeError:
-                                action_data = ast.literal_eval(json_str)
+                                return ast.literal_eval(json_str)
                         except Exception:
-                            print(f"      -> [Smart Agent] Invalid JSON from LLM: {response_text}")
-                            break
-                    else:
-                        print(f"      -> [Smart Agent] Invalid JSON from LLM: {response_text}")
-                        # Fallback heuristic: search for the ID in the last relevant line
-                        lines = response_text.strip().split('\n')
-                        found_id = None
-                        for line in reversed(lines):
-                            if re.search(r'(click|id|action)', line, re.IGNORECASE):
-                                nums = re.findall(r'\d+', line)
-                                if nums:
-                                    found_id = nums[-1]
-                                    break
-                        if not found_id:
-                            nums = re.findall(r'\d+', response_text)
-                            if nums: found_id = nums[-1]
-                            
-                        if found_id:
-                            action_data = {"action": "click", "id": int(found_id)}
-                            print(f"      -> [Smart Agent Fallback] Deduced click on ID {found_id}")
-                        else:
-                            break
+                            pass
+                    # Fallback heuristic: search for the ID in the last relevant line
+                    lines = response_text.strip().split('\n')
+                    found_id = None
+                    for line in reversed(lines):
+                        if re.search(r'(click|id|action)', line, re.IGNORECASE):
+                            nums = re.findall(r'\d+', line)
+                            if nums:
+                                found_id = nums[-1]
+                                break
+                    if not found_id:
+                        nums = re.findall(r'\d+', response_text)
+                        if nums:
+                            found_id = nums[-1]
+                    if found_id:
+                        print(f"      -> [Smart Agent Fallback] Deduced click on ID {found_id}")
+                        return {"action": "click", "id": int(found_id)}
+                    return None
+
+                action_data = _parse_action_response(response_text, allow_fallback=True)
+
+                # If the lightweight nav model gave unparseable output, retry this
+                # single round with the main vision model before giving up.
+                if action_data is None and _use_nav_vision:
+                    print("      -> [Smart Agent] Nav model returned unparseable JSON. Retrying with main vision model...")
+                    try:
+                        b64_img = driver.get_screenshot_as_base64()
+                        response_text = llm.generate_with_image(
+                            prompt=agent_prompt,
+                            base64_image=b64_img
+                        )
+                        action_data = _parse_action_response(response_text, allow_fallback=False)
+                    except Exception as e:
+                        print(f"      -> [Smart Agent] Main vision model retry failed: {e}")
+
+                if action_data is None:
+                    print(f"      -> [Smart Agent] Invalid JSON from LLM: {response_text}")
+                    break
 
                 action = action_data.get("action")
                 
@@ -6125,7 +6468,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         driver.execute_script("window.scrollBy(0, window.innerHeight * 0.8);")
                     else:
                         driver.execute_script("window.scrollBy(0, -window.innerHeight * 0.8);")
-                    time.sleep(1.5)
+                    _settle_wait(1.5)
                     
                 elif action == "hover":
                     eid = str(action_data.get("id"))
@@ -6149,7 +6492,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 }}
                             """
                             driver.execute_script(js_hover)
-                            time.sleep(1.5)
+                            _settle_wait(1.5, floor=0.4)
                         except Exception as e:
                             print(f"      -> [Smart Agent] Hover failed: {e}")
                     else:
@@ -6167,31 +6510,48 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             # Move cursor and click
                             driver.execute_script(f"if(window.moveBeautifulCursor) window.moveBeautifulCursor({x}, {y});")
                             time.sleep(0.5)
+                            _click_baseline = len(driver.execute_script("return document.body ? document.body.innerText : ''") or "")
                             driver.execute_script(f"var el = window.__llm_elements[{eid}]; if(el){{ el.scrollIntoView({{behavior: 'smooth', block: 'center'}}); setTimeout(() => {{ el.click(); }}, 300); }}")
-                            time.sleep(2.0)
+                            _settle_wait(2.0, floor=0.4, expect_text_change=True, baseline_len=_click_baseline)
 
                             # Handle tabs/navigation
                             if len(driver.window_handles) > 1:
                                 print(f"      -> [Smart Agent] Navigated away. Returning...")
                                 driver.back()
-                                time.sleep(1.5)
+                                _settle_wait(1.5)
+
+                            # If click triggered a bot challenge, stop wasting rounds.
+                            if self._is_bot_challenge_page(driver):
+                                print("      -> [Smart Agent] Bot/WAF challenge appeared after click. Aborting vision exploration.")
+                                break
 
                             # Grab new text
-                            new_text = driver.execute_script("return document.body ? document.body.textContent : '';")
+                            new_text = driver.execute_script("return document.body ? document.body.innerText : '';")
                             if new_text and len(new_text) > 100:
                                 extra_parts.append(new_text)
-                                
+
                         except Exception as e:
                             print(f"      -> [Smart Agent] Click failed: {e}")
                     else:
                         print(f"      -> [Smart Agent] Element ID {eid} not found on screen. Scrolling down as fallback.")
                         driver.execute_script("window.scrollBy(0, window.innerHeight * 0.8);")
-                        time.sleep(1.5)
+                        _settle_wait(1.5)
 
                 # Remove old bounding boxes before next round
                 try:
                     driver.execute_script("document.querySelectorAll('.llm-vision-box').forEach(e => e.remove());")
                 except: pass
+
+                # Recheck for bot challenge before next round starts. Only abort
+                # if no clickable elements were found — if there are elements, the
+                # agent can still be useful even on a partially-loaded page.
+                if vision_round + 1 < vision_max_rounds and self._is_bot_challenge_page(driver):
+                    element_mapping = self._inject_bounding_boxes(driver)
+                    if not element_mapping:
+                        print("    -> [Smart Agent] Bot/WAF challenge detected mid-exploration and no elements found. Aborting remaining rounds.")
+                        break
+                    else:
+                        print("    -> [Smart Agent] Challenge markers present but clickable elements exist. Continuing exploration.")
 
         except Exception as e:
             print(f"    -> [Vision] Agent exploration error: {e}")
@@ -6335,17 +6695,67 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             self.git_pusher = self.BackgroundGitPusher()
         url_cache = {}
         import random
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
         import queue
         import threading
         
         checkpoint_lock = threading.Lock()
-        # Use fewer browsers on GitHub Actions (2-core VM = 6 browsers causes OOM/crashes)
+        # Per-course timeout support: maps course index -> the Chrome driver
+        # currently working on it, so the dispatcher can quit() a stuck driver
+        # to unblock a hung worker thread (see future.result(timeout=...) below).
+        active_drivers = {}
+        active_drivers_lock = threading.Lock()
+        # Per-course start times (monotonic) so the reaper thread can enforce a
+        # TRUE per-course timeout. The old code used as_completed(timeout=...),
+        # which is a BATCH timeout — with many courses queued it would fire long
+        # before the queue drained and mark every not-yet-started course as
+        # "timed out" in one shot. Tracking start times lets us kill only the
+        # one stuck course's driver, preserving full browser utilization.
+        course_start_times = {}
+        course_start_lock = threading.Lock()
+        try:
+            COURSE_TIMEOUT = int(os.environ.get('VERIFIER_COURSE_TIMEOUT', '900'))
+        except ValueError:
+            COURSE_TIMEOUT = 900
+        if COURSE_TIMEOUT <= 0:
+            COURSE_TIMEOUT = 900
+        # Post-load settle waits (defaults preserve current behavior). Lower
+        # via VERIFIER_SPA_WAIT / VERIFIER_JS_FALLBACK_WAIT to speed up scraping
+        # on a test run — but expect more incomplete-content scrapes (false
+        # mismatches) if set too low, since these wait for JS/SPA rendering.
+        try:
+            SPA_WAIT = float(os.environ.get('VERIFIER_SPA_WAIT', '2'))
+        except ValueError:
+            SPA_WAIT = 2.0
+        try:
+            JS_FALLBACK_WAIT = float(os.environ.get('VERIFIER_JS_FALLBACK_WAIT', '3'))
+        except ValueError:
+            JS_FALLBACK_WAIT = 3.0
+        # Extra settle after the smart-wait loop. The smart wait already polls
+        # until body text stops growing, so this is mostly redundant — lower it
+        # (VERIFIER_SETTLE_WAIT, seconds) to shave ~1s off every course without
+        # losing render fidelity when the smart wait succeeded.
+        try:
+            SETTLE_WAIT = float(os.environ.get('VERIFIER_SETTLE_WAIT', '1'))
+        except ValueError:
+            SETTLE_WAIT = 1.0
+        # Pre-navigation jitter before each course's first _safe_get. uc already
+        # handles bot detection, so the default 0.5–1.5s is conservative; lower
+        # the upper bound via VERIFIER_PRE_NAV_JITTER (seconds) for test runs.
+        try:
+            PRE_NAV_JITTER = float(os.environ.get('VERIFIER_PRE_NAV_JITTER', '1.5'))
+        except ValueError:
+            PRE_NAV_JITTER = 1.5
+        if PRE_NAV_JITTER < 0:
+            PRE_NAV_JITTER = 0.0
+        # Use fewer browsers on GitHub Actions (2-core VM = 6 browsers causes OOM/crashes).
+        # 4 in CI: Ollama cloud rate-limits per worker, not per CPU, so one extra
+        # parallel browser is a cheap wall-clock win with 10GB swap configured.
         env_browsers = os.environ.get('VERIFIER_NUM_BROWSERS')
         if env_browsers and env_browsers.isdigit():
             NUM_BROWSERS = int(env_browsers)
         else:
-            NUM_BROWSERS = 3 if is_ci else 6
+            NUM_BROWSERS = 4 if is_ci else 6
         if NUM_BROWSERS <= 0: return
         
         import subprocess
@@ -6416,35 +6826,34 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 except Exception: pass
             os.makedirs(fresh_profile, exist_ok=True)
             
-            with browser_init_lock:
+            try:
+                driver = uc.Chrome(options=options, user_data_dir=fresh_profile, version_main=get_chrome_main_version(), user_multi_procs=True)
                 try:
-                    driver = uc.Chrome(options=options, user_data_dir=fresh_profile, version_main=get_chrome_main_version(), user_multi_procs=True)
+                    driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {"latitude": 28.6139, "longitude": 77.2090, "accuracy": 100})
+                except: pass
+            except Exception as e:
+                    print(f"    -> Warning: Parallel profile creation failed ({e}). Retrying with fresh options...")
+                    options2 = uc.ChromeOptions()
+                    options2.page_load_strategy = 'eager'
+                    options2.set_capability("unhandledPromptBehavior", "dismiss")
+                    options2.add_argument('--disable-blink-features=AutomationControlled')
+                    options2.add_argument('--window-size=1280,800')
+                    options2.add_argument('--ignore-certificate-errors')
+                    options2.set_capability('acceptInsecureCerts', True)
+                    options2.add_argument('--disable-print-preview')
+                    options2.add_argument('--kiosk-printing')
+                    options2.add_argument('--disable-gpu')
+                    options2.add_argument('--disable-dev-shm-usage')
+                    options2.add_argument('--no-sandbox')
+                    fresh_profile2 = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"chrome_profile_fallback_{b_idx}")
+                    if os.path.exists(fresh_profile2):
+                        try: shutil.rmtree(fresh_profile2)
+                        except Exception: pass
+                    os.makedirs(fresh_profile2, exist_ok=True)
+                    driver = uc.Chrome(options=options2, user_data_dir=fresh_profile2, version_main=get_chrome_main_version(), user_multi_procs=True)
                     try:
                         driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {"latitude": 28.6139, "longitude": 77.2090, "accuracy": 100})
                     except: pass
-                except Exception as e:
-                        print(f"    -> Warning: Parallel profile creation failed ({e}). Retrying with fresh options...")
-                        options2 = uc.ChromeOptions()
-                        options2.page_load_strategy = 'eager'
-                        options2.set_capability("unhandledPromptBehavior", "dismiss")
-                        options2.add_argument('--disable-blink-features=AutomationControlled')
-                        options2.add_argument('--window-size=1280,800')
-                        options2.add_argument('--ignore-certificate-errors')
-                        options2.set_capability('acceptInsecureCerts', True)
-                        options2.add_argument('--disable-print-preview')
-                        options2.add_argument('--kiosk-printing')
-                        options2.add_argument('--disable-gpu')
-                        options2.add_argument('--disable-dev-shm-usage')
-                        options2.add_argument('--no-sandbox')
-                        fresh_profile2 = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"chrome_profile_fallback_{b_idx}")
-                        if os.path.exists(fresh_profile2):
-                            try: shutil.rmtree(fresh_profile2)
-                            except Exception: pass
-                        os.makedirs(fresh_profile2, exist_ok=True)
-                        driver = uc.Chrome(options=options2, user_data_dir=fresh_profile2, version_main=get_chrome_main_version(), user_multi_procs=True)
-                        try:
-                            driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {"latitude": 28.6139, "longitude": 77.2090, "accuracy": 100})
-                        except: pass
             driver.set_page_load_timeout(30)
             driver.set_script_timeout(30)
             
@@ -6480,49 +6889,65 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     browser_pool.put((b_idx, driver, 0))
                 except Exception as e:
                     import traceback
-                    print(f"    -> [Error] Failed to initialize browser: {e}. Retrying...")
+                    print(f"    -> [Error] Failed to initialize browser: {e}")
                     traceback.print_exc()
-                    
-                    # Keep retrying until we get a valid browser so the pool never deadlocks
-                    success = False
-                    while not success:
-                        try:
-                            # We don't know which b_idx failed easily, but we can just use a dummy one or random one.
-                            # Wait, we need to pass a valid b_idx. We can extract it if we pass it with the future, 
-                            # but for now we'll just use a random ID or 99 to ensure it starts.
-                            import random
-                            retry_idx = random.randint(10, 99)
-                            retry_idx, driver = init_browser_parallel(retry_idx)
-                            browser_pool.put((retry_idx, driver, 0))
-                            success = True
-                            print(f"    -> [Success] Recovered failed browser initialization.")
-                        except Exception as retry_e:
-                            print(f"    -> [!] Retry failed: {retry_e}. Trying again in 2s...")
-                            time.sleep(2)
-        # Setup Thread Local Stdout for Sequential Logging
+        # Setup Thread-Tagged Live Stdout for streaming CI logs
         import sys
         import threading
         from io import StringIO
-        
-        class ThreadLocalStdout:
+
+        class TaggedLiveStdout:
+            """Streams each worker thread's print() output directly to the real
+            stdout, prefixing every line with '[Thread N] ' so concurrently
+            running courses stay distinguishable in the CI log. Replaces the
+            old per-course StringIO buffer that only flushed on completion
+            (which left long-running courses invisible until they finished and
+            lost all detail when a course crashed or timed out)."""
             def __init__(self, original):
                 self.original = original
                 self.local = threading.local()
+                self._lock = threading.Lock()
+            def _state(self):
+                if not hasattr(self.local, 'tag'):
+                    self.local.tag = None
+                    self.local.at_line_start = True
+                return self.local.tag, self.local.at_line_start
             def write(self, data):
-                if hasattr(self.local, 'buffer'):
-                    self.local.buffer.write(data)
-                else:
-                    self.original.write(data)
+                if not data:
+                    return 0
+                tag, at_line_start = self._state()
+                with self._lock:
+                    if tag is None:
+                        # Main thread / untagged callers: pass through plainly.
+                        self.original.write(data)
+                    else:
+                        out = []
+                        for line in data.splitlines(keepends=True):
+                            if at_line_start:
+                                out.append(f"[Thread {tag}] {line}")
+                            else:
+                                out.append(line)
+                            at_line_start = line.endswith('\n') or line.endswith('\r')
+                        self.original.write(''.join(out))
+                    # Flush every chunk so the CI log streams live (stdout is
+                    # block-buffered when not attached to a TTY).
+                    try:
+                        self.original.flush()
+                    except Exception:
+                        pass
+                self.local.at_line_start = at_line_start
+                return len(data)
             def flush(self):
-                if hasattr(self.local, 'buffer'):
-                    pass
-                else:
-                    self.original.flush()
+                with self._lock:
+                    try:
+                        self.original.flush()
+                    except Exception:
+                        pass
             def __getattr__(self, name):
                 return getattr(self.original, name)
-                
+
         original_stdout = sys.stdout
-        tl_stdout = ThreadLocalStdout(original_stdout)
+        tl_stdout = TaggedLiveStdout(original_stdout)
         sys.stdout = tl_stdout
 
         class EarlyExit(Exception): pass
@@ -6531,19 +6956,29 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
 
 
         def process_course(item):
-            sys.stdout.local.buffer = StringIO()
             import numpy as np
             i, course = item
             course['processed_this_run'] = True
             worker_id, driver, usage_count = browser_pool.get()
             usage_count += 1
+            # Tag this worker thread so every per-course print() streams live
+            # to the CI log prefixed with [Thread N] (replaces the old
+            # per-course StringIO buffer that only dumped on completion).
+            sys.stdout.local.tag = worker_id
+            sys.stdout.local.at_line_start = True
+            # Register this driver as "active" so the dispatcher can quit() it
+            # if the course exceeds VERIFIER_COURSE_TIMEOUT, unblocking this worker.
+            with active_drivers_lock:
+                active_drivers[i] = driver
+            with course_start_lock:
+                course_start_times[i] = time.monotonic()
             
             # Removed psutil sleep loop to prevent deadlocks and CPU stalling
             
-            # Print to global stdout immediately so user knows it isn't stuck
+            # Print through the tagged wrapper so the line is prefixed with
+            # [Thread N] and streams live (flush=True for immediate CI visibility).
             course_name = course.get("name", "Unknown")
-            original_stdout.write(f"  [Thread {worker_id}] Started verifying: {course_name[:40]}...\n")
-            original_stdout.flush()
+            print(f"Started verifying: {course_name[:40]}...", flush=True)
             
 
             
@@ -6551,6 +6986,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     
                 url = course.get("url")
                 if not url or url == "Unknown":
+                    print(f"    -> [Skip-NoURL] {course.get('name','?')[:40]} — no valid URL in PDF.")
                     course['web_status'] = "FALSE"
                     course['reason'] = "No valid URL found in PDF."
                     course['direct_link_working'] = False
@@ -6560,12 +6996,23 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 # If course was already verified (e.g. from a checkpoint or previous multithreaded run), skip it immediately
                 # Unverified courses have web_status="FALSE" and reason=""
                 if course.get("web_status") == "MATCH" or course.get("reason", "") != "":
-                    original_stdout.write(f"    -> [Skipped] Course already verified in checkpoint data.\n")
-                    original_stdout.flush()
+                    print("    -> [Skipped] Course already verified in checkpoint data.", flush=True)
+                    raise EarlyExit()
+
+                # --- MANUAL URL SKIP LIST (VERIFIER_SKIP_URLS env var) ---
+                # Comma-separated list of URLs to hard-skip (e.g. sites that always hang/crash).
+                _skip_urls_raw = os.environ.get("VERIFIER_SKIP_URLS", "")
+                _skip_urls = [u.strip() for u in _skip_urls_raw.split(",") if u.strip()]
+                if any(url.strip().rstrip("/") == s.rstrip("/") for s in _skip_urls):
+                    print(f"    -> [Skip-Blocklist] {url} — listed in VERIFIER_SKIP_URLS. Marking skipped.", flush=True)
+                    course['web_status'] = "FALSE"
+                    course['reason'] = "URL in VERIFIER_SKIP_URLS blocklist — skipped intentionally."
+                    course['is_hard_error'] = True
                     raise EarlyExit()
                     
                 cache_key = f"{url}::{normalize(course.get('name', ''))}"
                 if cache_key in url_cache:
+                    print(f"    -> [Skip-Cache] {course.get('name','?')[:40]} — already in url_cache.")
                     cached = url_cache[cache_key]
                     for k in ['web_status', 'reason', 'web_name', 'web_cost', 'web_uni', 'skills_verified', 'scholarship_found', 'is_hard_error', 'issue_category', 'issue_sub_type', 'error_screenshot_path', 'retry_count']:
                         course[k] = cached.get(k, course.get(k, False))
@@ -6575,8 +7022,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 if "ndu.digital" in url.lower():
                     ndu_text = self._get_ndu_page_text()
                     if ndu_text:
-                        original_stdout.write(f"    -> [Worker {worker_id}] Using local NDU screenshots for {course['name']}...\n")
-                        original_stdout.flush()
+                        print(f"    -> Using local NDU screenshots for {course['name']}...", flush=True)
                         c_m, s_m, l_skd, d_m, l_durd, m_m, l_modd, l_m, l_land, l_costd, co_m, l_countryd, u_m, l_unid = self._verify_details_with_llm(course, ndu_text, worker_id=worker_id)
                         
                         course['web_cost'] = l_costd if l_costd and l_costd != "Not Found" else "Tuition fees subject to policies."
@@ -6620,12 +7066,12 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 print(f"  [{i + 1}/{len(self.courses)}] Investigating: {url}")
                 
                 if "coursera.org" in url.lower() and "certificate" in course.get("name", "").lower():
-                    original_stdout.write(f"    -> [Coursera] Detected 'certificate' in course name. Triggering on-demand login.\n")
-                    original_stdout.flush()
+                    print("    -> [Coursera] Detected 'certificate' in course name. Triggering on-demand login.", flush=True)
                     self._perform_platform_logins(driver)
 
-                # SPEED: Domain health fast-skip if domain has 5+ recent issues
                 parsed_domain = urlparse(url).netloc
+
+                # SPEED: Domain health fast-skip if domain has 5+ recent issues
                 if parsed_domain and self.domain_health.should_skip(parsed_domain):
                     print(f"    -> [SKIP] Domain '{parsed_domain}' has repeated failures. Fast-skipping.")
                     course['web_status'] = "FALSE"
@@ -6661,9 +7107,13 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     raise EarlyExit()
 
                 try:
-                    time.sleep(random.uniform(0.5, 1.5))  # Fast: uc handles bot detection
+                    if PRE_NAV_JITTER > 0:
+                        time.sleep(random.uniform(0.5, PRE_NAV_JITTER))  # Fast: uc handles bot detection
+                    # _safe_get now always returns False; it tries to bypass
+                    # captchas quickly but no longer hard-aborts the course.
+                    # The normal extraction/LLM pipeline below decides the outcome.
                     self._safe_get(driver, url)
-                    
+
                     initial_title = ""
                     initial_body = ""
                     try:
@@ -6671,7 +7121,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     except Exception:
                         pass
                     try:
-                        initial_body = driver.execute_script("return document.body ? document.body.textContent.substring(0, 2000) : '';") or ""
+                        initial_body = driver.execute_script("return document.body ? document.body.innerText.substring(0, 2000) : '';") or ""
                     except Exception:
                         pass
                     initial_error_text = f"{initial_title}\n{initial_body}".lower()
@@ -6686,6 +7136,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         ("error" in initial_title.lower() and len(initial_body) < 500)
                     )
                     if initial_not_found:
+                        print(f"    -> [404] {url} — initial page returned error/not-found state (title: '{(initial_title or '')[:40]}').")
                         sub_type = detect_website_issue_from_page(initial_title, initial_body)
                         raw_reason = f"Initial page returned an error/not-found state. Page title: '{initial_title}'."
                         course['web_status'] = "FALSE"
@@ -6739,11 +7190,11 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     # Smart Wait: Wait for JavaScript frameworks to finish rendering dynamic content (like fees)
                     # We check the length of the body text and wait until it stops growing, up to a max of 5 seconds.
                     try:
-                        time.sleep(2) # Initial wait for SPA/AJAX content to begin loading
+                        time.sleep(SPA_WAIT) # Initial wait for SPA/AJAX content to begin loading
                         last_len = -1
                         stable_count = 0
                         for _ in range(10): # max 10s wait for dynamic content
-                            current_len = len(driver.execute_script("return document.body ? document.body.textContent : '';"))
+                            current_len = len(driver.execute_script("return document.body ? document.body.innerText : '';"))
                             if current_len > 0 and current_len == last_len:
                                 stable_count += 1
                                 if stable_count >= 2:
@@ -6753,8 +7204,9 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             last_len = current_len
                             time.sleep(1)
                     except:
-                        time.sleep(3) # Fallback wait if JS fails
-                    time.sleep(1)  # Brief extra settle time
+                        time.sleep(JS_FALLBACK_WAIT) # Fallback wait if JS fails
+                    if SETTLE_WAIT > 0:
+                        time.sleep(SETTLE_WAIT)  # Brief extra settle time (configurable)
                     
                     # Handling PDF Links and Cloud Links (Google Drive, Dropbox) directly
                     is_cloud_pdf = False
@@ -6909,8 +7361,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     let btns = Array.from(document.querySelectorAll('button, a, [role="button"]') || []);
                                     async function run() {
                                         for (let b of btns) {
-                                            if (b.textContent) {
-                                                let t = b.textContent.toLowerCase();
+                                            if (b.innerText) {
+                                                let t = b.innerText.toLowerCase();
                                                 if (t.includes('enroll for free') || t.includes('enroll now') || (t.includes('enroll') && b.tagName === 'BUTTON')) {
                                                     if (window.moveBeautifulCursorToElement) window.moveBeautifulCursorToElement(b);
                                                     await new Promise(r => setTimeout(r, 400));
@@ -6931,7 +7383,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     try:
                                         js_extract_modal = """
                                             let modal = document.querySelector('[role="dialog"], .ReactModalPortal, .rc-MetagenModal, .css-1xy8ceb, div[data-e2e="course-enroll-modal"], div[aria-modal="true"]');
-                                            return modal ? modal.textContent : '';
+                                            return modal ? modal.innerText : '';
                                         """
                                         modal_text = driver.execute_script(js_extract_modal)
                                         if modal_text and len(modal_text) > 10:
@@ -7040,10 +7492,9 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     cursor.style.filter = 'drop-shadow(2px 2px 3px rgba(0,0,0,0.5))';
                                     document.body.appendChild(cursor);
 
-                                    let tabs = document.querySelectorAll('div, span, a, button, li, h1, h2, h3, h4, h5');
-                                    let tabsArray = Array.from(tabs).slice(0, 2500);
-                                    for (let tab of tabsArray) {
-                                        let txt = (tab.textContent || '').toLowerCase().trim();
+                                    let tabs = document.querySelectorAll('*');
+                                    for (let tab of tabs) {
+                                        let txt = (tab.innerText || tab.textContent || '').toLowerCase().trim();
                                         if (txt === 'summary' || txt.includes('course outline') || txt.includes('course layout') || txt.includes('course certificate') || txt === 'books and references') {
                                             try { 
                                                 tab.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -7085,9 +7536,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 let callback = arguments[arguments.length - 1];
                                 async function run_coursera() {
                                     let buttons = document.querySelectorAll('button, a');
-                                    let buttonsArray = Array.from(buttons).slice(0, 2500);
-                                    for (let b of buttonsArray) {
-                                        let txt = (b.textContent || '').toLowerCase().trim();
+                                    for (let b of buttons) {
+                                        let txt = (b.innerText || b.textContent || '').toLowerCase().trim();
                                         if (txt.includes('enroll for free') || txt === 'enroll' || txt.includes('enroll now')) {
                                             try { b.click(); await new Promise(r => setTimeout(r, 2000)); } catch(e) {}
                                             break;
@@ -7118,7 +7568,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     // Try all <li> tab items and <a> links that might reveal course fees
                                     let all_tabs = document.querySelectorAll('li, a[href="#"], a[data-toggle], [role="tab"], .nav-item, .tab-item, .program-tab');
                                     for (let tab of all_tabs) {{
-                                        let txt = (tab.textContent || tab.textContent || '').toLowerCase().trim();
+                                        let txt = (tab.innerText || tab.textContent || '').toLowerCase().trim();
                                         if (txt.includes('fee') || txt.includes('cost') || txt.includes('program') || 
                                             txt.includes('tuition') || txt.includes('diploma') || txt.includes('cyber') ||
                                             txt.includes('security') || txt.includes('admission') || txt.includes('overview') ||
@@ -7134,7 +7584,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     for (let s of selects) {{
                                         let options = Array.from(s.options);
                                         for (let opt of options) {{
-                                            let optTxt = (opt.textContent || opt.text || '').toLowerCase();
+                                            let optTxt = (opt.innerText || opt.text || '').toLowerCase();
                                             if (optTxt.includes('fee') || optTxt.includes('tuition') || optTxt.includes('cost') ||
                                                 optTxt.includes('diploma') || optTxt.includes('cyber') || optTxt.includes('security') ||
                                                 optTxt.includes('program') || optTxt.includes('syllabus') || optTxt.includes('curriculum') ||
@@ -7174,7 +7624,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 async function run_intl() {
                                     let targets = document.querySelectorAll('button, a, div, span, label, li');
                                     for (let t of targets) {
-                                        let txt = (t.textContent || '').toLowerCase();
+                                        let txt = (t.innerText || '').toLowerCase();
                                         if(txt.includes('international student') || txt.includes("i'm an international student") || txt === 'international' || txt === 'overseas') {
                                             try { t.click(); await new Promise(r => setTimeout(r, 500)); } catch(e){}
                                         }
@@ -7182,7 +7632,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     let selects = document.querySelectorAll('select');
                                     for (let s of selects) {
                                         let options = Array.from(s.options);
-                                        let india_opt = options.find(o => o.textContent.toLowerCase().includes('india'));
+                                        let india_opt = options.find(o => o.innerText.toLowerCase().includes('india'));
                                         if(india_opt) {
                                             try {
                                                 s.value = india_opt.value;
@@ -7223,7 +7673,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                         let navParent = b.closest('nav, header, .navbar, .main-nav, .top-nav, .site-header, .header-menu, .mega-menu, .main-menu, .primary-menu, #main-nav, #header');
                                         if (navParent) continue;
                                         
-                                        let txt = (b.textContent || '').toLowerCase().trim();
+                                        let txt = (b.innerText || '').toLowerCase().trim();
                                         if (txt.length < 2 || txt.length > 160) continue;
                                         if (txt.includes('login') || txt.includes('sign in') || txt.includes('apply now')) continue;
                                         
@@ -7251,11 +7701,11 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                             let targetId = b.getAttribute('aria-controls') || b.getAttribute('data-bs-target') || b.getAttribute('data-target') || b.getAttribute('href');
                                             if (targetId && targetId.startsWith('#')) {{
                                                 let targetEl = document.getElementById(targetId.substring(1)) || document.querySelector(targetId);
-                                                if (targetEl && targetEl.textContent) extractedContent.push(targetEl.textContent);
-                                            }} else if (b.nextElementSibling && b.nextElementSibling.textContent) {{
-                                                extractedContent.push(b.nextElementSibling.textContent);
-                                            }} else if (b.parentElement && b.parentElement.textContent) {{
-                                                extractedContent.push(b.parentElement.textContent);
+                                                if (targetEl && targetEl.innerText) extractedContent.push(targetEl.innerText);
+                                            }} else if (b.nextElementSibling && b.nextElementSibling.innerText) {{
+                                                extractedContent.push(b.nextElementSibling.innerText);
+                                            }} else if (b.parentElement && b.parentElement.innerText) {{
+                                                extractedContent.push(b.parentElement.innerText);
                                             }}
                                         }} catch(e) {{}}
                                     }}
@@ -7294,7 +7744,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     // Try simple math captchas (e.g. 5 + 3 = ?)
                                     let labels = document.querySelectorAll('label, span, div');
                                     for (let l of labels) {
-                                        let txt = l.textContent.toLowerCase();
+                                        let txt = l.innerText.toLowerCase();
                                         if (txt.includes('+') && txt.includes('=')) {
                                             let parts = txt.match(/(\\d+)\\s*\\+\\s*(\\d+)/);
                                             if (parts) {
@@ -7309,7 +7759,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     }
                                     let submit_btns = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
                                     for (let b of submit_btns) {
-                                        let bt = (b.textContent || b.value || '').toLowerCase();
+                                        let bt = (b.innerText || b.value || '').toLowerCase();
                                         if (bt.includes('download') || bt.includes('submit') || bt.includes('get details') || bt.includes('get fee')) {
                                             try { b.click(); } catch(e) {}
                                         }
@@ -7437,9 +7887,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 let pdf_targets = [];
                                 let keywords = {js_keywords};
                                 let origin = window.location.origin;
-                                let linksArray = Array.from(links).slice(0, 2500);
-                                for (let a of linksArray) {{
-                                    let txt = (a.textContent || '').toLowerCase();
+                                for (let a of links) {{
+                                    let txt = (a.innerText || '').toLowerCase();
                                     let href = a.href || '';
                                     if (!href.startsWith('http')) continue;
                                     let href_lower = href.toLowerCase();
@@ -7835,8 +8284,34 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 web_language = "English"
                             print("    -> [Heuristic] Defaulted language to English.")
 
-                    # Country Match Google Search Fallback
-                    if not country_match and course_uni_check:
+                    # ── Parallel A8 (country) + A9 (Indian-college affiliation) checks ──
+                    # These two post-verify lookups are independent: A9's guard reads
+                    # course['country']/course_uni_check (not A8's country_match), and
+                    # their written variables are disjoint. Each does a googlesearch
+                    # plus one llm.generate (~12s). We run the search+LLM I/O
+                    # concurrently when BOTH are needed; all post-LLM mutation
+                    # (Anna heuristic, SequenceMatcher, flag writes) stays in this
+                    # main thread, byte-for-byte identical to the serial path.
+                    # Kill switch: VERIFIER_PARALLEL_AUX=false forces serial order.
+                    try:
+                        _parallel_aux = os.environ.get('VERIFIER_PARALLEL_AUX', 'true').lower() == 'true'
+                    except Exception:
+                        _parallel_aux = True
+
+                    pdf_country_lower = str(course.get('country', '')).lower()
+                    course_uni_lower = str(course_uni_check or '').lower()
+                    is_indian_college_bg = (
+                        'india' in pdf_country_lower and
+                        any(w in course_uni_lower for w in ['college', 'institute', 'school', 'academy']) and
+                        not any(w in course_uni_lower for w in ['university', 'iit ', 'iim ', 'nit ', 'iiit '])
+                    )
+                    _a8_needed = (not country_match and course_uni_check)
+                    _a9_needed = is_indian_college_bg
+                    course_name_short = str(course.get('name', ''))[:80]
+
+                    def _a8_country_search_and_llm():
+                        # googlesearch + LLM -> raw YES/NO response string, or None.
+                        # No outer-scope mutation; returns a value only.
                         print(f"    -> Missing country match. Searching Google in background for {course_uni_check} country...")
                         try:
                             from googlesearch import search
@@ -7847,40 +8322,21 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     g_results.append((str(g_url.title) + " " + str(g_url.description)).lower())
                                 else:
                                     g_results.append(str(g_url).lower())
-                            
+
                             g_text = " ".join(g_results)
                             target_country = str(course.get('country', '')).lower()
-                            
+
                             if target_country and target_country != "unknown" and g_text:
                                 llm = get_llm_manager()
                                 prompt = f"Based on these Google Search snippets, is the university '{course_uni_check}' located in or affiliated with the country '{target_country}'? Respond ONLY with 'YES' or 'NO'. Snippets: {g_text[:2000]}"
-                                res = llm.generate(prompt, temperature=0.0).strip().upper()
-                                if res and "YES" in res:
-                                    country_match = True
-                                    web_country = f"{course.get('country', '')} (Verified via Background AI Google Search)"
-                                    print(f"    -> [Heuristic] Country verified via background AI Google Search.")
+                                return llm.generate(prompt, temperature=0.0)
                         except Exception as e:
                             print(f"    -> [Heuristic] Background Google Search failed: {e}")
+                        return None
 
-                    course['country_verified'] = web_country
-                    course['country_match'] = country_match
-
-                    # ── Indian College University Background Search ──
-                    # If the course is from an Indian college (not a university),
-                    # search Google to find which university that college is
-                    # affiliated to for this specific course. If the PDF's
-                    # university does NOT match the found university, set
-                    # uni_match = False and state that the college is not
-                    # affiliated to the claimed university.
-                    pdf_country_lower = str(course.get('country', '')).lower()
-                    course_uni_lower = str(course_uni_check or '').lower()
-                    is_indian_college_bg = (
-                        'india' in pdf_country_lower and
-                        any(w in course_uni_lower for w in ['college', 'institute', 'school', 'academy']) and
-                        not any(w in course_uni_lower for w in ['university', 'iit ', 'iim ', 'nit ', 'iiit '])
-                    )
-                    if is_indian_college_bg:
-                        course_name_short = str(course.get('name', ''))[:80]
+                    def _a9_indian_college_search_and_llm():
+                        # googlesearch + LLM -> raw ACTUAL_UNIVERSITY/CONFIDENCE response, or None.
+                        # No outer-scope mutation; returns a value only.
                         print(f"    -> [Indian College Check] Searching affiliation for '{course_uni_check}' (course: {course_name_short})...")
                         try:
                             from googlesearch import search as g_search
@@ -7903,61 +8359,106 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     f"ACTUAL_UNIVERSITY: <university name or UNKNOWN>\n"
                                     f"CONFIDENCE: <HIGH/MEDIUM/LOW>"
                                 )
-                                res_bg = llm.generate(prompt, temperature=0.0)
-                                actual_uni = "UNKNOWN"
-                                confidence = "LOW"
-                                for line in str(res_bg).split('\n'):
-                                    if 'ACTUAL_UNIVERSITY:' in line.upper():
-                                        actual_uni = line.split(':', 1)[-1].strip()
-                                    if 'CONFIDENCE:' in line.upper():
-                                        confidence = line.split(':', 1)[-1].strip().upper()
-
-                                if actual_uni and actual_uni.upper() != 'UNKNOWN' and confidence in ('HIGH', 'MEDIUM'):
-                                    print(f"    -> [Indian College Check] Found affiliation: {actual_uni} (confidence: {confidence})")
-                                    
-                                    # Apply Anna Univ heuristic if Google Search found it
-                                    anna_inds = ['anna university', 'anna univ']
-                                    if any(ind in actual_uni.lower() for ind in anna_inds) or 'anna' in actual_uni.lower():
-                                        val_str = str(course.get('cost', '0')).lower()
-                                        cleaned = re.sub(r'[₹$£€,a-zA-Z\s]', '', val_str)
-                                        try:
-                                            pdf_cost_num = float(re.search(r'\d+(\.\d+)?', cleaned).group()) if re.search(r'\d+(\.\d+)?', cleaned) else 0.0
-                                        except:
-                                            pdf_cost_num = 0.0
-                                            
-                                        if pdf_cost_num in (200000.0, 220000.0):
-                                            cost_match = True
-                                            fmt_cost = "2,20,000" if pdf_cost_num == 220000.0 else "2,00,000"
-                                            web_cost = f"Rs. {fmt_cost} (Anna University Regulated Fee Match via Google Search)"
-                                            print("    -> [Heuristic] Applied Anna University regulated fee override via Google Search (MATCH).")
-                                            
-                                        if durations_equivalent(course.get('duration', ''), "4 Years")[0]:
-                                            duration_match = True
-                                            web_duration = "4 Years (Anna University Standard Duration)"
-                                            print("    -> [Heuristic] Applied Anna University standard 4-year duration override via Google Search (MATCH).")
-
-                                    # Check if the PDF's university matches the found university
-                                    from difflib import SequenceMatcher
-                                    sim = SequenceMatcher(None, course_uni_lower, actual_uni.lower()).ratio()
-                                    if sim < 0.45 and actual_uni.lower() not in course_uni_lower and course_uni_lower not in actual_uni.lower():
-                                        # Mismatch: college is NOT affiliated to the PDF's university
-                                        uni_match = False
-                                        uni_detail_msg = (
-                                            f"The college '{course_uni_check}' is not affiliated to the stated university for this course. "
-                                            f"It is affiliated to '{actual_uni}'."
-                                        )
-                                        llm_unid = uni_detail_msg
-                                        if not uni_match:
-                                            course['disc_reason'] = (course.get('disc_reason', '') or '').strip()
-                                            if 'University' not in course['disc_reason']:
-                                                course['disc_reason'] = (course['disc_reason'] + ' | University mismatch: ' + uni_detail_msg).strip(' |')
-                                        print(f"    -> [Indian College Check] MISMATCH! PDF says '{course_uni_check}' but actual is '{actual_uni}'. Setting uni_match=False.")
-                                    else:
-                                        print(f"    -> [Indian College Check] Affiliation matches PDF university (sim={sim:.2f}).")
-                                else:
-                                    print(f"    -> [Indian College Check] Could not determine affiliation (actual={actual_uni}, conf={confidence}).")
+                                return llm.generate(prompt, temperature=0.0)
                         except Exception as e:
                             print(f"    -> [Indian College Check] Background search failed: {e}")
+                        return None
+
+                    # Dispatch: concurrent only when both are needed (and kill switch on).
+                    _res_a8 = None
+                    _res_a9 = None
+                    if _a8_needed and _a9_needed and _parallel_aux:
+                        from concurrent.futures import ThreadPoolExecutor
+                        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="AuxLLM") as _aux_ex:
+                            _fut_a8 = _aux_ex.submit(_a8_country_search_and_llm)
+                            _fut_a9 = _aux_ex.submit(_a9_indian_college_search_and_llm)
+                            try:
+                                _res_a8 = _fut_a8.result()
+                            except Exception as e:
+                                print(f"    -> [Heuristic] Background Google Search failed: {e}")
+                                _res_a8 = None
+                            try:
+                                _res_a9 = _fut_a9.result()
+                            except Exception as e:
+                                print(f"    -> [Indian College Check] Background search failed: {e}")
+                                _res_a9 = None
+                    else:
+                        _res_a8 = _a8_country_search_and_llm() if _a8_needed else None
+                        _res_a9 = _a9_indian_college_search_and_llm() if _a9_needed else None
+
+                    # ── A8 post-processing (main thread; identical to serial path) ──
+                    if _a8_needed:
+                        res = (_res_a8 or "").strip().upper()
+                        if res and "YES" in res:
+                            country_match = True
+                            web_country = f"{course.get('country', '')} (Verified via Background AI Google Search)"
+                            print(f"    -> [Heuristic] Country verified via background AI Google Search.")
+
+                    course['country_verified'] = web_country
+                    course['country_match'] = country_match
+
+                    # ── A9 post-processing (main thread; identical to serial path) ──
+                    # If the course is from an Indian college (not a university),
+                    # search Google to find which university that college is
+                    # affiliated to for this specific course. If the PDF's
+                    # university does NOT match the found university, set
+                    # uni_match = False and state that the college is not
+                    # affiliated to the claimed university.
+                    if _a9_needed:
+                        res_bg = _res_a9
+                        actual_uni = "UNKNOWN"
+                        confidence = "LOW"
+                        if res_bg:
+                            for line in str(res_bg).split('\n'):
+                                if 'ACTUAL_UNIVERSITY:' in line.upper():
+                                    actual_uni = line.split(':', 1)[-1].strip()
+                                if 'CONFIDENCE:' in line.upper():
+                                    confidence = line.split(':', 1)[-1].strip().upper()
+
+                            if actual_uni and actual_uni.upper() != 'UNKNOWN' and confidence in ('HIGH', 'MEDIUM'):
+                                print(f"    -> [Indian College Check] Found affiliation: {actual_uni} (confidence: {confidence})")
+
+                                # Apply Anna Univ heuristic if Google Search found it
+                                anna_inds = ['anna university', 'anna univ']
+                                if any(ind in actual_uni.lower() for ind in anna_inds) or 'anna' in actual_uni.lower():
+                                    val_str = str(course.get('cost', '0')).lower()
+                                    cleaned = re.sub(r'[₹$£€,a-zA-Z\s]', '', val_str)
+                                    try:
+                                        pdf_cost_num = float(re.search(r'\d+(\.\d+)?', cleaned).group()) if re.search(r'\d+(\.\d+)?', cleaned) else 0.0
+                                    except:
+                                        pdf_cost_num = 0.0
+
+                                    if pdf_cost_num in (200000.0, 220000.0):
+                                        cost_match = True
+                                        fmt_cost = "2,20,000" if pdf_cost_num == 220000.0 else "2,00,000"
+                                        web_cost = f"Rs. {fmt_cost} (Anna University Regulated Fee Match via Google Search)"
+                                        print("    -> [Heuristic] Applied Anna University regulated fee override via Google Search (MATCH).")
+
+                                    if durations_equivalent(course.get('duration', ''), "4 Years")[0]:
+                                        duration_match = True
+                                        web_duration = "4 Years (Anna University Standard Duration)"
+                                        print("    -> [Heuristic] Applied Anna University standard 4-year duration override via Google Search (MATCH).")
+
+                                # Check if the PDF's university matches the found university
+                                from difflib import SequenceMatcher
+                                sim = SequenceMatcher(None, course_uni_lower, actual_uni.lower()).ratio()
+                                if sim < 0.45 and actual_uni.lower() not in course_uni_lower and course_uni_lower not in actual_uni.lower():
+                                    # Mismatch: college is NOT affiliated to the PDF's university
+                                    uni_match = False
+                                    uni_detail_msg = (
+                                        f"The college '{course_uni_check}' is not affiliated to the stated university for this course. "
+                                        f"It is affiliated to '{actual_uni}'."
+                                    )
+                                    llm_unid = uni_detail_msg
+                                    if not uni_match:
+                                        course['disc_reason'] = (course.get('disc_reason', '') or '').strip()
+                                        if 'University' not in course['disc_reason']:
+                                            course['disc_reason'] = (course['disc_reason'] + ' | University mismatch: ' + uni_detail_msg).strip(' |')
+                                    print(f"    -> [Indian College Check] MISMATCH! PDF says '{course_uni_check}' but actual is '{actual_uni}'. Setting uni_match=False.")
+                                else:
+                                    print(f"    -> [Indian College Check] Affiliation matches PDF university (sim={sim:.2f}).")
+                            else:
+                                print(f"    -> [Indian College Check] Could not determine affiliation (actual={actual_uni}, conf={confidence}).")
 
                     # Swayam/NPTEL cost override
                     is_nptel_swayam = "nptel.ac.in" in driver.current_url.lower() or "swayam.gov.in" in driver.current_url.lower()
@@ -8346,8 +8847,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 new_options.add_argument('--disable-dev-shm-usage')
                                 new_options.add_argument('--no-sandbox')
                                 ud_dir = os.path.join(tempfile.gettempdir(), f"uc_profile_rec_{random.randint(1000, 9999)}")
-                                with browser_init_lock:
-                                    driver = uc.Chrome(options=new_options, user_data_dir=ud_dir, version_main=get_chrome_main_version(), user_multi_procs=True)
+                                driver = uc.Chrome(options=new_options, user_data_dir=ud_dir, version_main=get_chrome_main_version(), user_multi_procs=True)
                                 driver.set_page_load_timeout(30)
                                 driver.set_script_timeout(30)
                                 try:
@@ -8404,22 +8904,25 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     try: driver.quit()
                     except: pass
                     time.sleep(0.5)  # Brief pause to let OS reclaim memory
-                    # Keep retrying until successful so the pool doesn't lose a thread
-                    success = False
-                    while not success:
-                        try:
-                            worker_id, driver = init_browser_parallel(worker_id)
-                            usage_count = 0
-                            success = True
-                        except Exception as e:
-                            print(f"    -> [!] Failed to restart browser {worker_id}: {e}. Retrying in 2s...")
-                            time.sleep(2)
+                    try:
+                        worker_id, driver = init_browser_parallel(worker_id)
+                        usage_count = 0
+                    except Exception as e:
+                        print(f"    -> [!] Failed to restart browser {worker_id}: {e}")
                         
                 browser_pool.put((worker_id, driver, usage_count))
-                
-                logs = sys.stdout.local.buffer.getvalue()
-                del sys.stdout.local.buffer
-                
+                # Course finished normally — drop it from the active-driver map
+                # and the start-time map so the reaper stops watching it.
+                with active_drivers_lock:
+                    active_drivers.pop(i, None)
+                with course_start_lock:
+                    course_start_times.pop(i, None)
+
+                # Per-course logs were streamed live above; nothing buffered.
+                # Clear the thread tag so the worker doesn't leak it between courses.
+                sys.stdout.local.tag = None
+                sys.stdout.local.at_line_start = True
+                logs = ""
 
                 
                 import gc
@@ -8427,20 +8930,56 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 
             return i, logs
 
+        # ── Per-course timeout reaper ──
+        # A daemon thread that watches each in-flight course's start time and
+        # quits its Chrome driver once it exceeds COURSE_TIMEOUT. This enforces a
+        # TRUE per-course timeout. The previous design used
+        # as_completed(timeout=COURSE_TIMEOUT), which is a BATCH timeout: with
+        # many courses queued it fired long before the queue drained and marked
+        # every not-yet-started course as "timed out" in one shot (see the mass
+        # "exceeded 600s" failures). Quitting just the stuck course's driver
+        # unblocks that one worker (its selenium call raises → crash retry),
+        # while every other browser keeps working at full utilization.
+        reaper_stop = threading.Event()
+        def _timeout_reaper():
+            while not reaper_stop.wait(5.0):
+                now = time.monotonic()
+                with course_start_lock:
+                    overdue = [idx for idx, st in course_start_times.items()
+                               if now - st > COURSE_TIMEOUT]
+                for idx in overdue:
+                    with active_drivers_lock:
+                        drv = active_drivers.get(idx)
+                    if drv is not None:
+                        try:
+                            drv.quit()
+                        except Exception:
+                            pass
+                    course_obj = self.courses[idx] if 0 <= idx < len(self.courses) else None
+                    if course_obj is not None and course_obj.get('web_status') in (None, ''):
+                        course_obj['web_status'] = 'FALSE'
+                        course_obj['reason'] = 'course_timeout'
+                        course_obj['issue_category'] = ISSUE_CATEGORY_WEBSITE
+                        course_obj['issue_sub_type'] = 'timeout'
+                        cname = str(course_obj.get('name', '?'))[:40]
+                        original_stdout.write(f"    -> [!] Course '{cname}' exceeded {COURSE_TIMEOUT}s — driver killed, marked timeout.\n")
+                        original_stdout.flush()
+                    # Stop watching it so we don't re-kill / re-mark.
+                    with course_start_lock:
+                        course_start_times.pop(idx, None)
+        reaper_thread = threading.Thread(target=_timeout_reaper, daemon=True)
+        reaper_thread.start()
+
         # Submit to ThreadPoolExecutor
         if end_idx is None:
             end_idx = len(self.courses)
         items_to_process = []
         for i, c in enumerate(self.courses):
-            if hasattr(self, 'specific_indices') and self.specific_indices:
-                if i not in self.specific_indices: continue
-            elif not (start_idx <= i < end_idx):
-                continue
-            
-            # Skip courses that were already successfully verified or definitively rejected in a previous checkpoint
-            if c.get("web_status") == "MATCH" or (c.get("web_status") == "FALSE" and c.get("reason", "") != ""):
-                continue
-            items_to_process.append((i, c))
+            if start_idx <= i < end_idx:
+                # Skip courses that were already successfully verified or definitively rejected in a previous checkpoint
+                if c.get("web_status") == "MATCH" or (c.get("web_status") == "FALSE" and c.get("reason", "") != ""):
+                    continue
+                items_to_process.append((i, c))
         retry_counts = {i: 0 for i, _ in items_to_process}
         
         while items_to_process:
@@ -8448,17 +8987,19 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             try:
                 with ThreadPoolExecutor(max_workers=NUM_BROWSERS) as executor:
                     futures_map = {executor.submit(process_course, item): item for item in items_to_process}
+                    # No batch timeout here — the _timeout_reaper thread enforces
+                    # a TRUE per-course timeout by quitting stuck drivers, which
+                    # unblocks the worker so its future completes naturally.
+                    # as_completed just drains futures as they finish (fast
+                    # courses handled immediately, full browser utilization).
                     for future in as_completed(futures_map):
                         item = futures_map[future]
                         course_idx = item[0]
                         course_name = item[1].get('name', '?') if isinstance(item, tuple) else '?'
                         try:
-                            idx, logs = future.result()  # Wait indefinitely to ensure accurate verification
-                            try:
-                                original_stdout.write(logs)
-                            except UnicodeEncodeError:
-                                original_stdout.write(logs.encode('ascii', 'replace').decode('ascii'))
-                            original_stdout.flush()
+                            # Logs were streamed live during processing; just surface
+                            # any exception here (no buffered dump needed).
+                            future.result()
                         except BrowserCrashRetryException as e:
                             if retry_counts[course_idx] < 2:
                                 retry_counts[course_idx] += 1
@@ -8494,11 +9035,25 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             pass # _watchdog_stop.set()
         except NameError:
             pass
+
+        # Stop the per-course timeout reaper
+        try:
+            reaper_stop.set()
+            reaper_thread.join(timeout=10.0)
+        except Exception:
+            pass
         
         # Cleanup code after all loops
         try:
             sys.stdout = original_stdout
         except:
+            pass
+
+        # Ollama quota usage report (Pro has 5h session / 7d weekly limits).
+        try:
+            from llm_manager import get_llm_manager as _get_llm
+            print(f"\n{_get_llm().usage_summary()}")
+        except Exception:
             pass
 
         # Cleanup browsers
@@ -8775,7 +9330,6 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             draw_row('Free Box', free_pdf_val, safe_val(free_web_val), free_status if not is_hard_error else 'FALSE')
             
             has_scholarship = course.get('has_scholarship_box', False)
-            has_scholarship = course.get('has_scholarship_box', False)
             is_nptel = 'nptel.ac.in' in str(course.get('url', '')).lower() or 'onlinecourses.nptel.ac.in' in str(course.get('url', '')).lower()
             is_swayam = 'swayam2.ac.in' in str(course.get('url', '')).lower() or 'onlinecourses.swayam2.ac.in' in str(course.get('url', '')).lower()
             is_india = str(course.get('country', '')).lower() in ['india', 'in', 'ind', 'bharat']
@@ -8835,13 +9389,33 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 desc = desc[:697] + "..."
             pdf.multi_cell(0, 5, desc, border='LRB')
 
+            # ── AI trust banner (only shown when consensus was reviewed by Ollama) ──
+            if "ai_status" in course or "ai_confidence" in course:
+                ai_status = str(course.get("ai_status", "")).upper()
+                ai_confidence = course.get("ai_confidence")
+                try:
+                    ai_confidence = float(ai_confidence) if ai_confidence is not None else None
+                except (ValueError, TypeError):
+                    ai_confidence = None
+
+                if ai_status == "REVIEW" or (ai_confidence is not None and ai_confidence < 0.5):
+                    pdf.ln(4)
+                    pdf.set_fill_color(254, 243, 199)   # light amber
+                    pdf.set_text_color(146, 64, 14)    # dark amber
+                    pdf.set_font(font_name, 'B', 10)
+                    note = str(course.get("ai_note", "")).strip()
+                    if not note:
+                        note = "AI reviewer recommends manual review."
+                    banner = f"AI Review ({ai_status}"
+                    if ai_confidence is not None:
+                        banner += f", confidence {ai_confidence:.0%}"
+                    banner += f"): {note}"
+                    pdf.multi_cell(0, 6, safe_latin(banner), border='LRB', fill=True)
+
         # Render sequentially
         counter = start_idx + 1
         end_val = end_idx if end_idx is not None else len(self.courses)
-        for i, c in enumerate(self.courses):
-            if hasattr(self, 'specific_indices') and self.specific_indices:
-                if i not in self.specific_indices: continue
-            elif not (start_idx <= i < end_val): continue
+        for c in self.courses[start_idx:end_val]:
             # Print if it was processed this run OR if it has a web_status (meaning it was verified in a previous checkpoint run)
             if not c.get('processed_this_run', False) and "web_status" not in c:
                 continue
@@ -8874,19 +9448,15 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
 if __name__ == "__main__":
 
 
-    specific_indices = []
-    if '--index' in sys.argv or '--indexes' in sys.argv:
-        arg_name = '--index' if '--index' in sys.argv else '--indexes'
-        idx_pos = sys.argv.index(arg_name)
-        sys.argv.pop(idx_pos)
-        while idx_pos < len(sys.argv) and not sys.argv[idx_pos].startswith('-'):
-            try:
-                specific_indices.append(int(sys.argv[idx_pos]))
-                sys.argv.pop(idx_pos)
-            except ValueError:
-                break
-        if not specific_indices:
-            print("[!] Invalid --index/--indexes provided.")
+    specific_index = None
+    if '--index' in sys.argv:
+        idx_pos = sys.argv.index('--index')
+        try:
+            specific_index = int(sys.argv[idx_pos + 1])
+            sys.argv.pop(idx_pos)
+            sys.argv.pop(idx_pos)
+        except (IndexError, ValueError):
+            print("[!] Invalid --index provided.")
             sys.exit(1)
 
     if not check_runtime_dependencies():
@@ -8915,12 +9485,22 @@ if __name__ == "__main__":
     start_idx = 0
     resume = False
     if os.path.exists(f"autonomous_verified_{os.path.basename(pdf_path)}.json"):
-        if specific_indices:
+        if specific_index is not None:
             choice = 'y'
             print("[*] Specific index mode detected. Auto-resuming from checkpoint to preserve data.")
         elif os.environ.get('CI') == 'true':
-            choice = 'y'
-            print("[*] CI mode detected. Auto-resuming from checkpoint.")
+            # CI runs must NOT reuse a stale checkpoint by default. A checkpoint
+            # from a previous run marks courses as already verified, so they get
+            # skipped and show as "verified" even though they were never
+            # re-checked this run. Default = fresh full re-verification (the old
+            # checkpoint is flushed below). Set VERIFIER_RESUME=true to opt back
+            # into checkpoint resume for crash-recovery scenarios.
+            if os.environ.get('VERIFIER_RESUME', 'false').lower() == 'true':
+                choice = 'y'
+                print("[*] CI mode + VERIFIER_RESUME=true: resuming from checkpoint.")
+            else:
+                choice = 'n'
+                print("[*] CI mode: ignoring any existing checkpoint (fresh re-verification).")
         else:
             choice = input(f"\n[!] Checkpoint found (autonomous_verified_{os.path.basename(pdf_path)}.json). Resume from last run? (y/n): ").strip().lower()
         if choice == 'y':
@@ -8982,14 +9562,14 @@ if __name__ == "__main__":
     max_page = max((c.get('page_num', 1) for c in agent.courses), default=1)
 
     # Ask the user for an optional manual start page
-    if specific_indices:
+    if specific_index is not None:
         pass # Skip asking for manual start page since we're using a specific index
     elif os.environ.get('CI') == 'true':
         manual_start = os.environ.get('START_PAGE', "")
     else:
         manual_start = input(f"\n[?] From which page number ({min_page}-{max_page}) do you want to start web verification? (Press Enter to use default/checkpoint): ").strip()
         
-    if not specific_indices and manual_start.isdigit():
+    if specific_index is None and manual_start.isdigit():
         start_page = int(manual_start)
         manual_idx = len(agent.courses)
         for i, c in enumerate(agent.courses):
@@ -9008,14 +9588,14 @@ if __name__ == "__main__":
     min_page = min((c.get('page_num', 1) for c in agent.courses), default=1)
     max_page = max((c.get('page_num', 1) for c in agent.courses), default=1)
     
-    if specific_indices:
+    if specific_index is not None:
         pass # Skip asking for manual end page
     elif os.environ.get('CI') == 'true':
         manual_end = os.environ.get('END_PAGE', "")
     else:
         manual_end = input(f"\n[?] Up to which page number ({min_page}-{max_page}) do you want to run web verification? (Press Enter for all remaining): ").strip()
         
-    if not specific_indices and manual_end.isdigit():
+    if specific_index is None and manual_end.isdigit():
         end_page = int(manual_end)
         for i, c in enumerate(agent.courses):
             if c.get('page_num', 1) > end_page:
@@ -9028,11 +9608,10 @@ if __name__ == "__main__":
         else:
             print(f"[*] Manually setting end index to {end_idx} (up to Page {end_page})")
 
-    if specific_indices:
-        start_idx = min(specific_indices)
-        end_idx = max(specific_indices) + 1
-        print(f"[*] Running ONLY for specific course indices {specific_indices}")
-        agent.specific_indices = specific_indices
+    if specific_index is not None:
+        start_idx = specific_index
+        end_idx = specific_index + 1
+        print(f"[*] Running ONLY for specific course index {specific_index}")
         # Force 1 browser if running locally
         if os.environ.get('CI') != 'true':
             os.environ['VERIFIER_NUM_BROWSERS'] = '1'
@@ -9062,8 +9641,8 @@ if __name__ == "__main__":
     print("\n[*] Verifying QS/NIRF rankings based on updated web extraction data...")
     agent.verify_rankings(start_idx=start_idx, end_idx=end_idx)
 
-    if specific_indices:
-        pdf_name = f"Single_Course_{specific_indices[0]}"
+    if specific_index is not None:
+        pdf_name = f"Single_Course_{specific_index}"
     elif os.environ.get('CI') == 'true':
         pdf_name = os.environ.get('PDF_NAME', "Autonomous_Course_Verification_Report")
     else:

@@ -1,0 +1,133 @@
+name: Merge 5 JSON Runs + AI Review
+
+# Manual workflow that runs consensus_merger.py with Ollama + Google AI fallback.
+# It merges the 5 test*.json files from test5/ (or artifact inputs) and uploads
+# final_merged.json + final_merged.pdf.
+
+on:
+  workflow_dispatch:
+    inputs:
+      json_dir:
+        description: 'Directory containing the 5 JSON files to merge (default: test5)'
+        required: false
+        default: 'test5'
+      out_name:
+        description: 'Output base name (no extension)'
+        required: false
+        default: 'final_merged'
+      ai_review:
+        description: 'Run AI review pass on split-vote courses?'
+        required: false
+        default: 'true'
+      ai_batch_size:
+        description: 'AI review batch size (default 10; lower = more reliable, higher = faster)'
+        required: false
+        default: '10'
+      ai_threshold:
+        description: 'AI confidence threshold for REVIEW flag (default 0.5)'
+        required: false
+        default: '0.5'
+      sample_limit:
+        description: 'Review only first N borderline courses (0 = all)'
+        required: false
+        default: '0'
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements-verifier.txt') }}
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements-verifier.txt python-dotenv
+
+      - name: Validate JSON inputs
+        run: |
+          python3 - <<'PYEOF'
+          import os, json, sys
+          d = "${{ github.event.inputs.json_dir }}"
+          files = [os.path.join(d, f"test{i}.json") for i in range(1, 6)]
+          for f in files:
+              if not os.path.exists(f):
+                  print(f"::error::Missing input JSON: {f}")
+                  sys.exit(1)
+              try:
+                  with open(f, encoding="utf-8") as fh:
+                      data = json.load(fh)
+                  print(f"[OK] {f}: {len(data)} courses")
+              except Exception as e:
+                  print(f"::error::Invalid JSON in {f}: {e}")
+                  sys.exit(1)
+          PYEOF
+
+      - name: Merge + optional AI review
+        env:
+          CI: true
+          # Ollama cloud credentials (primary backend)
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+          OLLAMA_API_URL: ${{ secrets.OLLAMA_API_URL }}
+          OLLAMA_MODEL: ${{ secrets.OLLAMA_MODEL }}
+          OLLAMA_FALLBACK_MODELS: "gemma4:31b-cloud,gemma4:26b-cloud,gemini-3-flash-preview:cloud"
+          OLLAMA_MAX_CONCURRENCY: "3"
+          OLLAMA_TEXT_TIMEOUT: "300"
+          # Google AI Studio fallback (last resort)
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GOOGLE_MODEL: "gemini-3-flash-preview"
+        run: |
+          set -o pipefail
+          JSON_DIR="${{ github.event.inputs.json_dir }}"
+          OUT="${{ github.event.inputs.out_name }}"
+          AI_FLAG=""
+          if [ "${{ github.event.inputs.ai_review }}" = "true" ]; then
+            AI_FLAG="--ai-review --ai-batch-size ${{ github.event.inputs.ai_batch_size }} --ai-threshold ${{ github.event.inputs.ai_threshold }}"
+            if [ "${{ github.event.inputs.sample_limit }}" != "0" ]; then
+              AI_FLAG="${AI_FLAG} --sample-limit ${{ github.event.inputs.sample_limit }}"
+            fi
+          fi
+
+          python consensus_merger.py \
+            "${JSON_DIR}/test1.json" \
+            "${JSON_DIR}/test2.json" \
+            "${JSON_DIR}/test3.json" \
+            "${JSON_DIR}/test4.json" \
+            "${JSON_DIR}/test5.json" \
+            --out "${OUT}" \
+            ${AI_FLAG} | tee merge_ai_review.log
+
+      - name: Upload merged artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.out_name }}
+          path: |
+            ${{ github.event.inputs.out_name }}.json
+            ${{ github.event.inputs.out_name }}.pdf
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.out_name }}-log
+          path: merge_ai_review.log
+          retention-days: 14
+          if-no-files-found: ignore
