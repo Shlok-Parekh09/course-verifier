@@ -71,7 +71,7 @@ export default {
                     // Fallback to MongoDB if KV is empty, and automatically cache it
                     const data = await mongoRequest(env, 'find', {
                         projection: {
-                            _id: 0, id: 1, name: 1, university: 1, country: 1,
+                            _id: 0, id: 1, name: 1, university: 1, country: 1, url: 1,
                             status: 1, issue_category: 1, issue_sub_type: 1,
                             disc_reason: 1, has_qs_badge: 1, has_nirf_badge: 1, skills: 1, domain: 1,
                         },
