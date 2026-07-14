@@ -101,14 +101,20 @@ const API_BASE_URL = 'https://course-verifier-api.shlokparekh08.workers.dev';
  */
 async function fetchAllCourses() {
     setLoaderSub('Fetching courses from database…');
-    const res = await fetch(`${API_BASE_URL}/api/get_courses`);
+    const res = await fetch(`${API_BASE_URL}/api/courses.json`);
     if (!res.ok) {
         const err = await res.text();
         throw new Error(`API error ${res.status}: ${err}`);
     }
     const data = await res.json();
-    const docs = data.documents || [];
-    const pending = data.pending_solves || [];
+    let docs = [];
+    let pending = [];
+    if (Array.isArray(data)) {
+        docs = data;
+    } else {
+        docs = data.documents || [];
+        pending = data.pending_solves || [];
+    }
 
     // Apply pending solves from Edge queue
     for (const solve of pending) {
