@@ -30,6 +30,11 @@
     </div>
 
     <div class="navbar-right">
+        <div class="suggest-toggle-wrap" title="Suggest duplicate courses after solving">
+            <span class="suggest-toggle-label">Suggest</span>
+            <div class="suggest-toggle" id="suggest-toggle"></div>
+        </div>
+
         <span class="theme-label" id="theme-label">Dark</span>
         <div class="theme-toggle" id="theme-toggle" title="Toggle dark/light mode"></div>
 
@@ -666,6 +671,26 @@
     </div><!-- /tab-analytics -->
 
     
+<!-- ══════════════ SUGGESTION POPUP ══════════════ -->
+<div id="suggest-modal" class="suggest-overlay">
+    <div class="suggest-box">
+        <div class="suggest-head">
+            <div>
+                <div class="suggest-title">Same course also appears here</div>
+                <div class="suggest-sub">These duplicates have the same unresolved issue on a different domain / page.</div>
+            </div>
+            <button class="suggest-close" id="suggest-close">✕</button>
+        </div>
+        <div class="suggest-list" id="suggest-list">
+            <!-- Populated by JS -->
+        </div>
+        <div class="suggest-foot">
+            <span class="suggest-hint">Turn off "Suggest" in the top bar to disable these prompts.</span>
+            <button class="suggest-dismiss" id="suggest-dismiss">Dismiss</button>
+        </div>
+    </div>
+</div>
+
 <!-- ══════════════ COURSE DETAIL MODAL ══════════════ -->
 <div id="course-modal" class="modal-overlay">
     <div class="modal-box">
@@ -700,6 +725,15 @@
      this script block so the browser paints real KPI numbers immediately
      without waiting for the /api/data.json round-trip. app.js reads this
      before its first fetch and updates the UI synchronously on DOMContentLoaded. -->
+<!-- Toast notification -->
+<div id="toast" class="toast">
+    <div class="toast-icon" id="toast-icon">✓</div>
+    <div class="toast-body">
+        <div class="toast-title" id="toast-title">Saved</div>
+        <div class="toast-msg" id="toast-msg">Issue marked as resolved.</div>
+    </div>
+</div>
+
 <script type="application/json" id="initial-data">
   {{ initial_data | safe }}
 </script>

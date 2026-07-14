@@ -74,6 +74,8 @@ export default {
                             _id: 0, id: 1, name: 1, university: 1, country: 1,
                             status: 1, issue_category: 1, issue_sub_type: 1,
                             disc_reason: 1, has_qs_badge: 1, has_nirf_badge: 1, skills: 1, domain: 1,
+                            pdf_page: 1, cost: 1, duration: 1, mode: 1,
+                            pdf_table: 1, solved_attrs: 1,
                         },
                         sort: { id: 1 },
                         limit: 5000,
@@ -110,7 +112,7 @@ export default {
             if (path === '/api/pending_solves' && request.method === 'GET') {
                 const pendingStr = await env.COURSE_CACHE.get('pending_solves.json');
                 return new Response(`{"status":"success","pending_solves":${pendingStr || '[]'}}`, {
-                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+                    headers: { ...corsHeaders(), 'Content-Type': 'application/json' }
                 });
             }
 

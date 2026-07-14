@@ -74,6 +74,19 @@
                 <span class="page-sub" id="page-sub">Real-time verification overview</span>
             </div>
             <div class="topbar-right">
+                <div class="search-wrap">
+                    <svg class="search-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                    <input class="topbar-search" id="topbar-search" placeholder="Search courses…" type="text">
+                </div>
+
+                <div class="toggle-wrap" id="suggest-toggle-wrap" title="Suggest duplicate courses after solving">
+                    <span class="toggle-label">Suggest</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="suggest-toggle" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+
                 <button class="theme-btn" id="theme-btn" title="Toggle theme">
                     <span id="theme-icon">☀</span>
                 </button>
@@ -248,7 +261,7 @@
                                     </tr>
                                 </thead>
                                 <tbody id="vf-tbody">
-                                    <tr><td colspan="8" class="empty-state">Loading…</td></tr>
+                                    <tr><td colspan="10" class="empty-state">Loading…</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -311,7 +324,7 @@
                                     </tr>
                                 </thead>
                                 <tbody id="cf-tbody">
-                                    <tr><td colspan="8" class="empty-state">Loading…</td></tr>
+                                    <tr><td colspan="10" class="empty-state">Loading…</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -353,7 +366,7 @@
                                     </tr>
                                 </thead>
                                 <tbody id="sf-tbody">
-                                    <tr><td colspan="7" class="empty-state">Loading…</td></tr>
+                                    <tr><td colspan="9" class="empty-state">Loading…</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -372,6 +385,26 @@
 
     </div><!-- /main-content -->
 </div><!-- /app-container -->
+
+<!-- ═══════════════════════ SUGGESTION POPUP ═══════════════════════ -->
+<div id="suggest-modal" class="suggest-overlay">
+    <div class="suggest-box">
+        <div class="suggest-head">
+            <div>
+                <div class="suggest-title">Same course also appears here</div>
+                <div class="suggest-sub">These duplicates have the same unresolved issue on a different domain / page.</div>
+            </div>
+            <button class="suggest-close" id="suggest-close">✕</button>
+        </div>
+        <div class="suggest-list" id="suggest-list">
+            <!-- Populated by JS -->
+        </div>
+        <div class="suggest-foot">
+            <span class="suggest-hint">Turn off "Suggest" in the top bar to disable these prompts.</span>
+            <button class="suggest-dismiss" id="suggest-dismiss">Dismiss</button>
+        </div>
+    </div>
+</div>
 
 <!-- ═══════════════════════ COURSE MODAL ═══════════════════════ -->
 <div id="course-modal" class="modal-overlay">
@@ -409,12 +442,20 @@
 
         <div class="modal-footer">
             <span class="modal-hint" id="modal-hint"></span>
-            <button class="btn-solve-all" id="modal-solve-all" style="display:none;">✓ Mark All Resolved</button>
+            <button class="btn-solve-all" id="modal-solve-all">✓ Mark All Resolved</button>
         </div>
     </div>
 </div>
 
-<script src="config.js?v=5"></script>
+<!-- ═══════════════════════ TOAST NOTIFICATION ═══════════════════════ -->
+<div id="toast" class="toast">
+    <div class="toast-icon" id="toast-icon">✓</div>
+    <div class="toast-body">
+        <div class="toast-title" id="toast-title">Saved</div>
+        <div class="toast-msg" id="toast-msg">Issue marked as resolved.</div>
+    </div>
+</div>
+
 <script src="app.js?v=5"></script>
 </body>
 </html>

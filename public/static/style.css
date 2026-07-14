@@ -228,6 +228,40 @@ body.light-mode .theme-toggle::after {
     box-shadow: 0 4px 18px var(--accent-glow);
 }
 
+/* Suggestion toggle in navbar */
+.suggest-toggle-wrap {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 10px;
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    border-radius: 40px;
+    transition: border-color 0.2s;
+    user-select: none;
+}
+.suggest-toggle-wrap:hover { border-color: var(--border-2); }
+.suggest-toggle-label { font-size: 0.78rem; font-weight: 500; color: var(--text-2); white-space: nowrap; }
+
+.suggest-toggle {
+    width: 38px; height: 20px;
+    background: var(--bg-2);
+    border-radius: 40px;
+    border: 1px solid var(--border-2);
+    position: relative;
+    cursor: pointer;
+    transition: background 0.25s, border-color 0.25s;
+    flex-shrink: 0;
+}
+.suggest-toggle::after {
+    content: '';
+    position: absolute; top: 2px; left: 2px;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--text-2);
+    transition: transform 0.25s cubic-bezier(.4,0,.2,1), background 0.25s;
+}
+.suggest-toggle.on { background: var(--green); border-color: var(--green); }
+.suggest-toggle.on::after { transform: translateX(16px); background: #fff; }
+
 /* Author chip in navbar */
 .author-chip {
     display: flex;
@@ -903,6 +937,104 @@ body.light-mode .theme-toggle::after {
 
 .modal-close:hover { border-color: var(--red); color: var(--red); }
 
+/* Suggestion popup (duplicate courses) */
+.suggest-overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.72);
+    z-index: 210;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(5px);
+}
+.suggest-overlay.open { display: flex; animation: fadeUp 0.2s ease; }
+
+.suggest-box {
+    background: var(--bg-panel);
+    border: 1px solid var(--border-2);
+    border-radius: var(--radius-lg);
+    width: 92%;
+    max-width: 560px;
+    max-height: 86vh;
+    overflow-y: auto;
+    padding: 24px;
+    box-shadow: 0 40px 80px rgba(0,0,0,0.6);
+}
+
+.suggest-head {
+    display: flex; justify-content: space-between;
+    align-items: flex-start; gap: 12px; margin-bottom: 16px;
+}
+.suggest-title { font-size: 1.05rem; font-weight: 700; color: var(--text-1); }
+.suggest-sub { font-size: 0.8rem; color: var(--text-2); margin-top: 4px; }
+.suggest-close {
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg-2);
+    color: var(--text-2);
+    font-size: 1rem;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: var(--transition);
+    flex-shrink: 0;
+}
+.suggest-close:hover { border-color: var(--red); color: var(--red); }
+
+.suggest-list { display: flex; flex-direction: column; gap: 10px; }
+.suggest-item {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 14px;
+    padding: 12px 14px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    transition: background 0.18s, border-color 0.18s;
+    cursor: pointer;
+}
+.suggest-item:hover { background: var(--bg-hover); border-color: var(--border-2); }
+
+.suggest-info { min-width: 0; }
+.suggest-name {
+    font-size: 0.88rem; font-weight: 600;
+    color: var(--text-1);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.suggest-meta {
+    font-size: 0.76rem; color: var(--text-2); margin-top: 3px;
+    display: flex; gap: 10px; flex-wrap: wrap;
+}
+.suggest-issue {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 0.72rem; color: var(--red); margin-top: 6px; flex-wrap: wrap;
+}
+
+.suggest-btn {
+    flex-shrink: 0;
+    background: transparent; border: 1px solid var(--accent);
+    border-radius: var(--radius); padding: 7px 14px;
+    font-size: 0.8rem; font-weight: 600; color: var(--accent);
+    cursor: pointer;
+    transition: var(--transition);
+}
+.suggest-btn:hover { background: var(--accent); color: #fff; }
+
+.suggest-foot {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 18px; padding-top: 16px;
+    border-top: 1px solid var(--border);
+    gap: 12px; flex-wrap: wrap;
+}
+.suggest-hint { font-size: 0.78rem; color: var(--text-2); }
+.suggest-dismiss {
+    background: var(--bg-2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 7px 14px;
+    font-size: 0.8rem; color: var(--text-2);
+    cursor: pointer;
+    transition: var(--transition);
+}
+.suggest-dismiss:hover { border-color: var(--text-2); color: var(--text-1); }
+
 .modal-del {
     padding: 6px 14px;
     border-radius: 8px;
@@ -964,6 +1096,63 @@ body.light-mode .theme-toggle::after {
 .solve-tick.solved:hover { background: var(--green); color: #fff; }
 
 tr.solved-row td { opacity: 0.62; }
+
+/* ── Toast notification ─────────────────────────────────────────── */
+.toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 300;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 18px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-2);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    transform: translateY(120%);
+    opacity: 0;
+    transition: transform 0.35s cubic-bezier(.4,0,.2,1), opacity 0.3s;
+    max-width: 360px;
+    pointer-events: none;
+}
+.toast.open {
+    transform: translateY(0);
+    opacity: 1;
+    pointer-events: all;
+}
+.toast-icon {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--green-bg);
+    color: var(--green);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.9rem; font-weight: 700;
+    flex-shrink: 0;
+}
+.toast.toast-error .toast-icon { background: var(--red-bg); color: var(--red); }
+.toast-title { font-size: 0.88rem; font-weight: 600; color: var(--text-1); }
+.toast-msg { font-size: 0.78rem; color: var(--text-2); margin-top: 2px; }
+
+/* Light-mode readability fixes for modal action buttons */
+body.light-mode .modal-solve,
+body.light-mode .solve-tick,
+body.light-mode .suggest-btn,
+body.light-mode .suggest-dismiss,
+body.light-mode .suggest-close {
+    color: var(--text-1);
+}
+body.light-mode .solve-tick:not(.solved) {
+    background: var(--red-bg);
+    color: var(--red);
+}
+body.light-mode .suggest-item {
+    background: var(--bg-2);
+}
+body.light-mode .suggest-item:hover {
+    background: var(--bg-hover);
+}
 
 /* ================================================================
    HINT & MISC

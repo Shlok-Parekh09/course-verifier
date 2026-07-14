@@ -962,6 +962,17 @@ let currentModalCourseId = null;
 async function solveCourse(courseId, attr, unsolve) {
     if (courseId == null) return;
 
+    // Determine which attributes are being resolved for duplicate suggestions
+    let solvedAttrs = [];
+    if (!unsolve) {
+        if (attr === '_all') {
+            const cPreview = allCoursesData.find(x => String(x.id) === String(courseId));
+            solvedAttrs = (cPreview?.pdf_table || []).filter(r => r.status === 'FALSE').map(r => r.attribute);
+        } else if (attr !== '_website') {
+            solvedAttrs = [attr];
+        }
+    }
+
     // 1. OPTIMISTIC UI UPDATE (Blazing Fast)
     const c = allCoursesData.find(x => String(x.id) === String(courseId));
     let originalDataStr = null;
@@ -1041,6 +1052,15 @@ async function solveCourse(courseId, attr, unsolve) {
         applyVerificationFilter();
         applyCourseFilter();
         fetchData(); // Trigger full refresh
+
+        // Prompt to solve the same issue on duplicate courses / pages
+        if (!unsolve) showSuggestionPopup(c, solvedAttrs);
+
+        const toastTitle = attr === '_website' ? 'Website issue resolved' :
+            attr === '_all' ? 'All issues resolved' : 'Issue resolved';
+        const toastMsg = attr === '_website' ? 'Course marked as resolved.' :
+            attr === '_all' ? 'All mismatched attributes updated.' : `“${escHtml(attr)}” updated successfully.`;
+        showToast(toastTitle, toastMsg, 'success');
     } catch (e) {
         console.error('Solve error:', e);
         // Rollback on failure
@@ -1051,7 +1071,7 @@ async function solveCourse(courseId, attr, unsolve) {
         // Re-sync from server so any optimistic removal is undone if the solve
         // didn't actually persist.
         fetchData();
-        alert('Network request failed. The API might be sleeping/offline. Please wait a few seconds and try again.');
+        showToast('Save failed', e.message || 'Network request failed. The API might be sleeping/offline.', 'error');
     }
 }
 
@@ -1826,6 +1846,128 @@ function initUpload() {
 }
 
 // ================================================================
+//  SMART SUGGESTIONS (duplicate courses)
+// ================================================================
+let suggestDuplicates = localStorage.getItem('cv_suggest_duplicates') !== 'false';
+
+function initSuggestions() {
+    const toggle = document.getElementById('suggest-toggle');
+    if (toggle) {
+        updateSuggestToggleVisual(toggle, suggestDuplicates);
+        toggle.addEventListener('click', () => {
+            suggestDuplicates = !suggestDuplicates;
+            localStorage.setItem('cv_suggest_duplicates', suggestDuplicates ? 'true' : 'false');
+            updateSuggestToggleVisual(toggle, suggestDuplicates);
+        });
+    }
+
+    const suggestModal = document.getElementById('suggest-modal');
+    document.getElementById('suggest-close')?.addEventListener('click', closeSuggestions);
+    document.getElementById('suggest-dismiss')?.addEventListener('click', closeSuggestions);
+    suggestModal?.addEventListener('click', e => {
+        if (e.target === suggestModal) closeSuggestions();
+    });
+}
+
+function updateSuggestToggleVisual(el, on) {
+    if (el) el.classList.toggle('on', on);
+}
+
+function closeSuggestions() {
+    const modal = document.getElementById('suggest-modal');
+    if (modal) modal.classList.remove('open');
+}
+
+// ── Toast notification ─────────────────────────────────────────────
+let toastTimer = null;
+function showToast(title, message, type = 'success') {
+    const toast = document.getElementById('toast');
+    if (!toast) return;
+    document.getElementById('toast-title').textContent = title || 'Saved';
+    document.getElementById('toast-msg').textContent = message || '';
+    document.getElementById('toast-icon').textContent = type === 'error' ? '✕' : '✓';
+    toast.className = 'toast ' + (type === 'error' ? 'toast-error' : '');
+    void toast.offsetWidth;
+    toast.classList.add('open');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('open'), 3200);
+}
+
+function normalizeMatch(str) {
+    return String(str || '').toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+function getFalseRows(course) {
+    return (course.pdf_table || []).filter(r => r.status === 'FALSE');
+}
+
+function findDuplicateSuggestions(course, solvedAttrs) {
+    const baseName = normalizeMatch(course.name);
+    const baseUni = normalizeMatch(course.university);
+    const baseCountry = normalizeMatch(course.country);
+    const solvedSet = new Set((solvedAttrs || []).map(a => String(a).toLowerCase()));
+    const out = [];
+
+    for (const d of allCoursesData) {
+        if (String(d.id) === String(course.id)) continue;
+        if (normalizeMatch(d.name) !== baseName) continue;
+        if (normalizeMatch(d.university) !== baseUni) continue;
+        if (normalizeMatch(d.country) !== baseCountry) continue;
+        if (d.pdf_page === course.pdf_page && d.domain === course.domain) continue;
+        if ((d.status || '').toLowerCase() === 'verified') continue;
+
+        const dupSolved = new Set((d.solved_attrs || []).map(s => String(s).toLowerCase()));
+        const falseRows = getFalseRows(d);
+        const matchingIssues = falseRows
+            .filter(r => solvedSet.has(String(r.attribute).toLowerCase()) && !dupSolved.has(String(r.attribute).toLowerCase()))
+            .map(r => r.attribute);
+
+        if (matchingIssues.length) {
+            out.push({ course: d, issues: [...new Set(matchingIssues)] });
+        }
+    }
+    return out;
+}
+
+function showSuggestionPopup(course, solvedAttrs) {
+    if (!suggestDuplicates) return;
+    if (!solvedAttrs || !solvedAttrs.length) return;
+    const suggestions = findDuplicateSuggestions(course, solvedAttrs);
+    if (!suggestions.length) return;
+
+    const list = document.getElementById('suggest-list');
+    if (!list) return;
+
+    list.innerHTML = suggestions.map(s => {
+        const d = s.course;
+        const issueBadges = s.issues.map(a => `<span class="badge badge-error" style="font-size:0.7rem;padding:2px 8px;">${escHtml(a)}</span>`).join(' ');
+        return `
+            <div class="suggest-item" onclick="openSuggestionCourse('${d.id}')">
+                <div class="suggest-info">
+                    <div class="suggest-name" title="${escHtml(d.name)}">${escHtml(d.name)}</div>
+                    <div class="suggest-meta">
+                        <span>${escHtml(d.domain || '—')}</span>
+                        <span>·</span>
+                        <span>Page ${escHtml(d.pdf_page || '?')}</span>
+                        <span>·</span>
+                        <span>${escHtml(d.university || '—')}</span>
+                    </div>
+                    <div class="suggest-issue">Unresolved issues: ${issueBadges}</div>
+                </div>
+                <button class="suggest-btn" onclick="event.stopPropagation(); openSuggestionCourse('${d.id}')">Solve</button>
+            </div>
+        `;
+    }).join('');
+
+    document.getElementById('suggest-modal')?.classList.add('open');
+}
+
+function openSuggestionCourse(courseId) {
+    closeSuggestions();
+    showCourseModal(courseId);
+}
+
+// ================================================================
 //  HELPERS
 // ================================================================
 function getBadgeClass(status) {
@@ -1860,6 +2002,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initModal();
     initUpload();
     initAnalyticsSubTabs();
+    initSuggestions();
 
     // Chain: fetch dashboard data first, then analytics (analytics needs globalData)
     fetchData().then(() => fetchAnalytics());

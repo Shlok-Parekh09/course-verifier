@@ -45,7 +45,7 @@ THRESHOLD = 4  # need at least this many "true" votes out of 5
 
 # AI-review verdicts with confidence above this ceiling are considered
 # sufficiently certain that no AI fields are written back to the course.
-AI_REVIEW_WRITE_MAX = 0.80
+AI_REVIEW_WRITE_MAX = 0.75
 
 # All boolean fields in the JSON schema
 BOOLEAN_FIELDS = [
