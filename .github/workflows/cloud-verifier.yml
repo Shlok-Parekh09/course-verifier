@@ -11,6 +11,14 @@ on:
         description: "End Page Number (Leave blank for all remaining)"
         required: false
         default: ""
+      llm_backend:
+        description: "LLM Backend to use (api or ollama)"
+        required: true
+        default: "api"
+        type: choice
+        options:
+          - api
+          - ollama
 
 jobs:
   verify:
@@ -53,11 +61,11 @@ jobs:
 
       - name: Install Python Dependencies
         run: |
-          pip install -r requirements-verifier.txt python-dotenv gdown
+          pip install -r requirements.txt python-dotenv gdown
 
       - name: Download PDF from Google Drive
         run: |
-          gdown "1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd" -O link_compile.pdf
+          gdown "1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd" -O backend/link_compile.pdf
 
       - name: Run Verification (Virtual Display)
         # xvfb-run provides a virtual display; --server-args sets screen depth/size
@@ -67,6 +75,7 @@ jobs:
         env:
           START_PAGE: ${{ github.event.inputs.start_page }}
           END_PAGE: ${{ github.event.inputs.end_page }}
+          LLM_BACKEND: ${{ github.event.inputs.llm_backend }}
           PDF_NAME: autonomous_verified_report
           DISPLAY: ":99"
           CI: true
@@ -77,29 +86,26 @@ jobs:
           OPENROUTER_API_KEYS: ${{ secrets.OPENROUTER_API_KEYS }}
           NVIDIA_API_KEYS: ${{ secrets.NVIDIA_API_KEYS }}
           PUTER_API_KEYS: ${{ secrets.PUTER_API_KEYS }}
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+          OLLAMA_API_URL: ${{ secrets.OLLAMA_API_URL }}
+          OLLAMA_MODEL: ${{ secrets.OLLAMA_MODEL }}
         run: |
           Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset &
           sleep 3
           # Run with continue-on-error so checkpoint is always saved
-          python autonomous_course_verifier.py || echo "::warning::Verifier exited with non-zero status, but checkpoint should be saved"
+          cd backend && python autonomous_course_verifier.py || echo "::warning::Verifier exited with non-zero status, but checkpoint should be saved"
 
       - name: Remove input PDF before upload
         if: always()
         run: |
-          rm -f link_compile.pdf
+          rm -f backend/link_compile.pdf
 
-      - name: Upload Results as Zip
+      - name: Upload Results Archive
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: verification-results
+          name: verification-results-archive
           path: |
-            *.pdf
-            autonomous_verified_*.json
-
-      - name: Upload Affiliation DB
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: affiliation-db
-          path: affiliation_db.json
+            backend/*.pdf
+            backend/autonomous_verified_*.json
+            backend/local_database.db
