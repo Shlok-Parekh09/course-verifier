@@ -96,7 +96,7 @@ const API_BASE_URL = 'https://course-verifier-api.shlokparekh08.workers.dev';
 // ── API Fetchers (Cloudflare Worker) ─────────────────────────────
 
 /**
- * Fetch ALL courses from the Vercel API.
+ * Fetch ALL courses from the Cloudflare Worker API.
  * Returns full sorted array.
  */
 async function fetchAllCourses() {
@@ -142,7 +142,7 @@ async function fetchAllCourses() {
 }
 
 /**
- * Write an updated course back to MongoDB via Vercel API.
+ * Write an updated course back to the Cloudflare Worker queue.
  */
 async function mongoUpdateCourse(courseId, update) {
     const res = await fetch(`${API_BASE_URL}/api/solve_course`, {
@@ -200,6 +200,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         initKpiClickThrough();
         initSorting();
         initTopbarExtras();
+        initSuggestions();
 
         // Render every tab. Each is isolated so one failing renderer
         // (charts, lists, etc.) doesn't abort the rest of the page.
@@ -323,7 +324,7 @@ function populateFilters() {
 // ── FILTER EVENTS ─────────────────────────────────────────────────
 
 function initFilters() {
-    let vfTimer, cfTimer;
+    let vfTimer, cfTimer, sfTimer;
 
     // Verification tab
     document.getElementById('vf-search').addEventListener('input', e => {
@@ -376,8 +377,8 @@ function initFilters() {
 
     // Solved Courses Tab
     document.getElementById('sf-search').addEventListener('input', e => {
-        clearTimeout(cfTimer);
-        cfTimer = setTimeout(() => { sfFilter.search = e.target.value.toLowerCase(); sfPage = 1; renderSolvedTab(); }, 220);
+        clearTimeout(sfTimer);
+        sfTimer = setTimeout(() => { sfFilter.search = e.target.value.toLowerCase(); sfPage = 1; renderSolvedTab(); }, 220);
     });
     document.getElementById('sf-reset').addEventListener('click', () => {
         document.getElementById('sf-search').value = '';
@@ -595,7 +596,7 @@ function renderVerificationTab() {
     // Table
     const tbody = document.getElementById('vf-tbody');
     if (!slice.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No courses match the current filters.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No courses match the current filters.</td></tr>';
     } else {
         tbody.innerHTML = slice.map((c, i) => `
             <tr onclick="openModal('${c.id}')">
@@ -667,7 +668,7 @@ function renderSolvedTab() {
     tbody.innerHTML = '';
     
     if (pageData.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="7" class="empty-state">No solved courses yet!</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9" class="empty-state">No solved courses yet!</td></tr>`;
         return;
     }
     
@@ -707,7 +708,7 @@ function renderCoursesTab() {
 
     const tbody = document.getElementById('cf-tbody');
     if (!slice.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No courses match the current filters.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No courses match the current filters.</td></tr>';
     } else {
         tbody.innerHTML = slice.map((c, i) => `
             <tr onclick="openModal('${c.id}')">
@@ -836,15 +837,13 @@ async function openModal(courseId) {
         });
         document.getElementById('modal-hint').textContent = c.disc_reason || '';
         const solveAllBtn = document.getElementById('modal-solve-all');
-        solveAllBtn.style.display = hasMismatch ? 'inline-flex' : 'none';
+        solveAllBtn.classList.toggle('visible', hasMismatch);
         if (allSolved) {
             solveAllBtn.textContent = '✗ Unsolve All';
-            solveAllBtn.style.background = '#333';
-            solveAllBtn.style.color = '#ccc';
+            solveAllBtn.classList.add('unsolve');
         } else {
             solveAllBtn.textContent = '✓ Mark All Resolved';
-            solveAllBtn.style.background = 'var(--primary)';
-            solveAllBtn.style.color = 'var(--bg)';
+            solveAllBtn.classList.remove('unsolve');
         }
 
     } catch (err) {
@@ -890,6 +889,13 @@ async function solveAttr(courseId, attr, isSolved) {
         issue_category: newCategory,
     };
 
+    // Save original state so we can roll back on save failure
+    const originalState = {
+        solved_attrs: [...(c.solved_attrs || [])],
+        status: c.status,
+        issue_category: c.issue_category,
+    };
+
     // Optimistic local update
     Object.assign(c, update);
 
@@ -912,10 +918,14 @@ async function solveAttr(courseId, attr, isSolved) {
         setText('kpi-disc', disc.toLocaleString());
         setText('kpi-err', err.toLocaleString());
         renderStatusDonut(verified, disc, err);
+
+        // Prompt to solve the same issue on duplicate courses / pages
+        if (!isSolved) showSuggestionPopup(c, [key]);
+        showToast('Issue resolved', `“${escHtml(attr)}” updated successfully.`, 'success');
     } catch (err) {
         // Revert optimistic update on failure
-        Object.assign(c, { solved_attrs: c.solved_attrs, status: c.status });
-        alert('Failed to save: ' + err.message);
+        Object.assign(c, originalState);
+        showToast('Save failed', err.message, 'error');
     }
 }
 
@@ -956,9 +966,134 @@ async function solveAll() {
         renderCoursesTab();
         renderSolvedTab();
         renderRecentSolved();
+
+        // If we just solved everything, prompt duplicates with the same issues
+        if (!allSolved) showSuggestionPopup(c, mismatchAttrs);
+        showToast(
+            allSolved ? 'Course restored' : 'All issues resolved',
+            allSolved ? 'Course returned to original state.' : 'All mismatched attributes marked as resolved.',
+            'success'
+        );
     } catch (err) {
-        alert('Failed to save: ' + err.message);
+        showToast('Save failed', err.message, 'error');
     }
+}
+
+// ── SMART SUGGESTIONS (duplicate courses) ─────────────────────────
+
+let suggestDuplicates = localStorage.getItem('cv_suggest_duplicates') !== 'false';
+
+function initSuggestions() {
+    const toggle = document.getElementById('suggest-toggle');
+    if (toggle) {
+        toggle.checked = suggestDuplicates;
+        toggle.addEventListener('change', e => {
+            suggestDuplicates = e.target.checked;
+            localStorage.setItem('cv_suggest_duplicates', suggestDuplicates ? 'true' : 'false');
+        });
+    }
+
+    const suggestModal = document.getElementById('suggest-modal');
+    document.getElementById('suggest-close')?.addEventListener('click', closeSuggestions);
+    document.getElementById('suggest-dismiss')?.addEventListener('click', closeSuggestions);
+    suggestModal?.addEventListener('click', e => {
+        if (e.target === suggestModal) closeSuggestions();
+    });
+}
+
+function closeSuggestions() {
+    const modal = document.getElementById('suggest-modal');
+    if (modal) modal.classList.remove('open');
+}
+
+// ── Toast ─────────────────────────────────────────────────────────
+let toastTimer = null;
+function showToast(title, message, type = 'success') {
+    const toast = document.getElementById('toast');
+    if (!toast) return;
+    document.getElementById('toast-title').textContent = title || 'Saved';
+    document.getElementById('toast-msg').textContent = message || '';
+    document.getElementById('toast-icon').textContent = type === 'error' ? '✕' : '✓';
+    toast.className = 'toast ' + (type === 'error' ? 'toast-error' : '');
+    // Force reflow so the transition fires if called again quickly
+    void toast.offsetWidth;
+    toast.classList.add('open');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('open'), 3200);
+}
+
+function normalizeMatch(str) {
+    return String(str || '').toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+function getMismatchingRows(course) {
+    const rows = course.pdf_table || [];
+    return rows.filter(r => r.status ? (r.status.toUpperCase() !== 'MATCH') : (r.original !== r.verified));
+}
+
+function findDuplicateSuggestions(course, solvedAttrs) {
+    const baseName = normalizeMatch(course.name);
+    const baseUni = normalizeMatch(course.university);
+    const baseCountry = normalizeMatch(course.country);
+    const solvedSet = new Set((solvedAttrs || []).map(a => String(a).toLowerCase()));
+    const out = [];
+
+    for (const d of allCourses) {
+        if (d.id == course.id) continue;
+        if (normalizeMatch(d.name) !== baseName) continue;
+        if (normalizeMatch(d.university) !== baseUni) continue;
+        if (normalizeMatch(d.country) !== baseCountry) continue;
+        if (d.pdf_page === course.pdf_page && d.domain === course.domain) continue;
+        if (d.status === 'Verified') continue;
+
+        const dupSolved = new Set((d.solved_attrs || []).map(s => String(s).toLowerCase()));
+        const dupRows = getMismatchingRows(d);
+        const matchingIssues = dupRows
+            .filter(r => solvedSet.has(String(r.attribute).toLowerCase()) && !dupSolved.has(String(r.attribute).toLowerCase()))
+            .map(r => r.attribute);
+
+        if (matchingIssues.length) {
+            out.push({ course: d, issues: [...new Set(matchingIssues)] });
+        }
+    }
+    return out;
+}
+
+function showSuggestionPopup(course, solvedAttrs) {
+    if (!suggestDuplicates) return;
+    const suggestions = findDuplicateSuggestions(course, solvedAttrs);
+    if (!suggestions.length) return;
+
+    const list = document.getElementById('suggest-list');
+    if (!list) return;
+
+    list.innerHTML = suggestions.map(s => {
+        const d = s.course;
+        const issueBadges = s.issues.map(a => `<span class="badge badge-error" style="font-size:0.7rem;padding:2px 8px;">${escHtml(a)}</span>`).join(' ');
+        return `
+            <div class="suggest-item" onclick="openSuggestionCourse('${d.id}')">
+                <div class="suggest-info">
+                    <div class="suggest-name" title="${escHtml(d.name)}">${escHtml(d.name)}</div>
+                    <div class="suggest-meta">
+                        <span>${escHtml(d.domain || '—')}</span>
+                        <span>·</span>
+                        <span>Page ${escHtml(d.pdf_page || '?')}</span>
+                        <span>·</span>
+                        <span>${escHtml(d.university || '—')}</span>
+                    </div>
+                    <div class="suggest-issue">Unresolved issues: ${issueBadges}</div>
+                </div>
+                <button class="suggest-btn" onclick="event.stopPropagation(); openSuggestionCourse('${d.id}')">Solve</button>
+            </div>
+        `;
+    }).join('');
+
+    document.getElementById('suggest-modal')?.classList.add('open');
+}
+
+function openSuggestionCourse(courseId) {
+    closeSuggestions();
+    openModal(courseId);
 }
 
 // ── HELPERS ───────────────────────────────────────────────────────
