@@ -7,7 +7,7 @@
  */
 
 const CORS_HEADERS = {
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
   'Access-Control-Max-Age': '86400',
 };
@@ -59,7 +59,15 @@ export default {
       try {
         const cached = await env.COURSE_DATA.get('courses.json', { type: 'json' });
         if (cached) {
-          return jsonResponse(cached, 200, request, env);
+          let pending = await env.COURSE_DATA.get('pending_solves.json', { type: 'json' });
+          if (!pending) pending = [];
+
+          if (Array.isArray(cached)) {
+            return jsonResponse({ documents: cached, pending_solves: pending }, 200, request, env);
+          } else {
+            cached.pending_solves = pending;
+            return jsonResponse(cached, 200, request, env);
+          }
         }
         return jsonResponse({ status: 'error', message: 'No course data available yet.' }, 404, request, env);
       } catch (e) {
@@ -99,6 +107,25 @@ export default {
         return jsonResponse({ status: 'success', message: `Pushed ${endpoint} to KV` }, 200, request, env);
       } catch (e) {
         return jsonResponse({ status: 'error', message: 'Failed to push: ' + e.message }, 500, request, env);
+      }
+    }
+
+    // Route: /api/solve_course
+    if (path === '/api/solve_course' && request.method === 'POST') {
+      try {
+        const body = await request.json();
+        let pending = await env.COURSE_DATA.get('pending_solves.json', { type: 'json' });
+        if (!pending || !Array.isArray(pending)) {
+          pending = [];
+        }
+        // Remove existing pending solves for this course if we are completely overwriting it
+        pending = pending.filter(s => s.id != body.id);
+        
+        pending.push({ id: body.id, update: body.update, timestamp: Date.now() });
+        await env.COURSE_DATA.put('pending_solves.json', JSON.stringify(pending));
+        return jsonResponse({ status: 'success', message: 'Solve recorded' }, 200, request, env);
+      } catch (e) {
+        return jsonResponse({ status: 'error', message: 'Failed to record solve: ' + e.message }, 500, request, env);
       }
     }
 
