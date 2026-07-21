@@ -126,6 +126,19 @@ async function fetchAllCourses() {
         }
     }
 
+    // Apply local optimistic solves to instantly fix KV edge cache delays
+    try {
+        const localSolves = JSON.parse(localStorage.getItem('cv_pending_solves') || '{}');
+        for (const [id, updateObj] of Object.entries(localSolves)) {
+            const c = docs.find(x => x.id == id);
+            if (c) {
+                Object.assign(c, updateObj);
+            }
+        }
+    } catch(e) {
+        console.error("Local solve cache error", e);
+    }
+
     // Normalize Course Types
     for (const c of docs) {
         if (c.domain) {
@@ -150,17 +163,38 @@ async function fetchAllCourses() {
 /**
  * Write an updated course back to the Cloudflare Worker queue.
  */
+let solveQueue = Promise.resolve();
+
 async function mongoUpdateCourse(courseId, update) {
-    const res = await fetch(`${API_BASE_URL}/api/solve_course`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: courseId, update: update })
+    return new Promise((resolve, reject) => {
+        solveQueue = solveQueue.then(async () => {
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/solve_course`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: courseId, update: update })
+                });
+                if (!res.ok) {
+                    const err = await res.text();
+                    throw new Error(`API error ${res.status}: ${err}`);
+                }
+                const data = await res.json();
+                
+                // Cache locally so page reloads instantly reflect the solve before Cloudflare KV edge cache propagates (which can take 60s)
+                try {
+                    const localSolves = JSON.parse(localStorage.getItem('cv_pending_solves') || '{}');
+                    localSolves[courseId] = update;
+                    localStorage.setItem('cv_pending_solves', JSON.stringify(localSolves));
+                } catch(e) {}
+
+                resolve(data);
+            } catch (err) {
+                reject(err);
+            }
+        }).catch(() => {
+            // Prevent a single network failure from breaking the queue for future clicks
+        });
     });
-    if (!res.ok) {
-        const err = await res.text();
-        throw new Error(`API error ${res.status}: ${err}`);
-    }
-    return res.json();
 }
 
 // ── Loader helpers ────────────────────────────────────────────────
@@ -864,6 +898,21 @@ function closeModal() {
 
 // ── SOLVE ─────────────────────────────────────────────────────────
 
+function refreshKPIs() {
+    const verified = allCourses.filter(x => x.status === 'Verified').length;
+    const disc = allCourses.filter(x => x.status === 'Discrepancy').length;
+    const err = allCourses.filter(x => x.status === 'Error').length;
+    const total = allCourses.length;
+    if (total === 0) return;
+    setText('kpi-verified', verified.toLocaleString());
+    setText('kpi-verified-pct', `${Math.round((verified / total) * 100)}% of total`);
+    setText('kpi-disc', disc.toLocaleString());
+    setText('kpi-err', err.toLocaleString());
+    if (typeof renderStatusDonut === 'function') {
+        renderStatusDonut(verified, disc, err);
+    }
+}
+
 async function solveAttr(courseId, attr, isSolved) {
     const c = allCourses.find(x => x.id == courseId);
     if (!c) return;
@@ -905,32 +954,30 @@ async function solveAttr(courseId, attr, isSolved) {
     // Optimistic local update
     Object.assign(c, update);
 
+    // Refresh UI immediately (Optimistic)
+    openModal(courseId);
+    renderVerificationTab();
+    renderCoursesTab();
+    renderSolvedTab();
+    renderRecentSolved();
+    refreshKPIs();
+
+    // Prompt to solve the same issue on duplicate courses / pages
+    if (!isSolved) showSuggestionPopup(c, [key]);
+
     try {
         await mongoUpdateCourse(courseId, update);
-        // Re-open modal to reflect new state
-        openModal(courseId);
-        // Refresh tab counts
-        renderVerificationTab();
-        renderCoursesTab();
-        renderSolvedTab();
-        renderRecentSolved();
-        // Refresh dashboard KPIs
-        const verified = allCourses.filter(x => x.status === 'Verified').length;
-        const disc = allCourses.filter(x => x.status === 'Discrepancy').length;
-        const err = allCourses.filter(x => x.status === 'Error').length;
-        const total = allCourses.length;
-        setText('kpi-verified', verified.toLocaleString());
-        setText('kpi-verified-pct', `${Math.round((verified / total) * 100)}% of total`);
-        setText('kpi-disc', disc.toLocaleString());
-        setText('kpi-err', err.toLocaleString());
-        renderStatusDonut(verified, disc, err);
-
-        // Prompt to solve the same issue on duplicate courses / pages
-        if (!isSolved) showSuggestionPopup(c, [key]);
         showToast('Issue resolved', `“${escHtml(attr)}” updated successfully.`, 'success');
     } catch (err) {
         // Revert optimistic update on failure
         Object.assign(c, originalState);
+        // Refresh UI to reflect reverted state
+        openModal(courseId);
+        renderVerificationTab();
+        renderCoursesTab();
+        renderSolvedTab();
+        renderRecentSolved();
+        refreshKPIs();
         showToast('Save failed', err.message, 'error');
     }
 }
@@ -963,24 +1010,41 @@ async function solveAll() {
             issue_category: 'verified',
         };
     }
+    // Save original state for rollback
+    const originalState = {
+        solved_attrs: [...(c.solved_attrs || [])],
+        status: c.status,
+        issue_category: c.issue_category,
+    };
+
     Object.assign(c, update);
+
+    // Refresh UI immediately (Optimistic)
+    openModal(c.id);
+    renderVerificationTab();
+    renderCoursesTab();
+    renderSolvedTab();
+    renderRecentSolved();
+    refreshKPIs();
+
+    // If we just solved everything, prompt duplicates with the same issues
+    if (!allSolved) showSuggestionPopup(c, mismatchAttrs);
 
     try {
         await mongoUpdateCourse(c.id, update);
-        openModal(c.id);
-        renderVerificationTab();
-        renderCoursesTab();
-        renderSolvedTab();
-        renderRecentSolved();
-
-        // If we just solved everything, prompt duplicates with the same issues
-        if (!allSolved) showSuggestionPopup(c, mismatchAttrs);
         showToast(
             allSolved ? 'Course restored' : 'All issues resolved',
             allSolved ? 'Course returned to original state.' : 'All mismatched attributes marked as resolved.',
             'success'
         );
     } catch (err) {
+        Object.assign(c, originalState);
+        openModal(c.id);
+        renderVerificationTab();
+        renderCoursesTab();
+        renderSolvedTab();
+        renderRecentSolved();
+        refreshKPIs();
         showToast('Save failed', err.message, 'error');
     }
 }

@@ -59,8 +59,34 @@ export default {
       try {
         const cached = await env.COURSE_DATA.get('courses.json', { type: 'json' });
         if (cached) {
-          let pending = await env.COURSE_DATA.get('pending_solves.json', { type: 'json' });
-          if (!pending) pending = [];
+          // Fetch individual pending solves to prevent race conditions
+          let pending = [];
+          const list = await env.COURSE_DATA.list({ prefix: 'solve_' });
+          
+          if (list && list.keys && list.keys.length > 0) {
+            const fetchPromises = list.keys.map(async key => {
+              try {
+                const update = await env.COURSE_DATA.get(key.name, { type: 'json' });
+                const id = key.name.split('_')[1];
+                if (update) pending.push({ id, update });
+              } catch (e) {
+                // ignore individual key read error
+              }
+            });
+            await Promise.all(fetchPromises);
+          }
+
+          // Merge legacy pending solves to restore previously solved data
+          try {
+            const legacy = await env.COURSE_DATA.get('pending_solves.json', { type: 'json' });
+            if (legacy && Array.isArray(legacy)) {
+              for (const item of legacy) {
+                if (!pending.find(p => p.id == item.id)) {
+                  pending.push({ id: item.id, update: item.update });
+                }
+              }
+            }
+          } catch(e) {}
 
           if (Array.isArray(cached)) {
             return jsonResponse({ documents: cached, pending_solves: pending }, 200, request, env);
@@ -114,15 +140,8 @@ export default {
     if (path === '/api/solve_course' && request.method === 'POST') {
       try {
         const body = await request.json();
-        let pending = await env.COURSE_DATA.get('pending_solves.json', { type: 'json' });
-        if (!pending || !Array.isArray(pending)) {
-          pending = [];
-        }
-        // Remove existing pending solves for this course if we are completely overwriting it
-        pending = pending.filter(s => s.id != body.id);
-        
-        pending.push({ id: body.id, update: body.update, timestamp: Date.now() });
-        await env.COURSE_DATA.put('pending_solves.json', JSON.stringify(pending));
+        // Use individual keys to prevent read-modify-write race conditions
+        await env.COURSE_DATA.put(`solve_${body.id}`, JSON.stringify(body.update));
         return jsonResponse({ status: 'success', message: 'Solve recorded' }, 200, request, env);
       } catch (e) {
         return jsonResponse({ status: 'error', message: 'Failed to record solve: ' + e.message }, 500, request, env);
