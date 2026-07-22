@@ -699,8 +699,12 @@ function applyVfFilter(courses) {
         if (domain !== 'all' && getDomainLabel(c.id) !== domain) return false;
         if (courseType && courseType !== 'all' && (c.domain || 'Uncategorised') !== courseType) return false;
         if (search) {
-            const hay = `${c.name} ${c.university} ${c.country} ${c.disc_reason}`.toLowerCase();
-            if (!hay.includes(search)) return false;
+            if (/^\d+$/.test(search)) {
+                if (String(c.id) !== search) return false;
+            } else {
+                const hay = `${c.name} ${c.university} ${c.country} ${c.disc_reason}`.toLowerCase();
+                if (!hay.includes(search)) return false;
+            }
         }
         return true;
     });
@@ -753,8 +757,12 @@ function applyCfFilter(courses) {
         if (qs === 'yes' && !c.has_qs_badge) return false;
         if (qs === 'no' && c.has_qs_badge) return false;
         if (search) {
-            const hay = `${c.name} ${c.university} ${c.country} ${c.skills || ''}`.toLowerCase();
-            if (!hay.includes(search)) return false;
+            if (/^\d+$/.test(search)) {
+                if (String(c.id) !== search) return false;
+            } else {
+                const hay = `${c.name} ${c.university} ${c.country} ${c.skills || ''}`.toLowerCase();
+                if (!hay.includes(search)) return false;
+            }
         }
         return true;
     });
@@ -765,11 +773,15 @@ function renderSolvedTab() {
     
     if (sfFilter.search) {
         const q = sfFilter.search;
-        filtered = filtered.filter(c => 
-            (c.name || '').toLowerCase().includes(q) ||
-            (c.university || '').toLowerCase().includes(q) ||
-            (c.country || '').toLowerCase().includes(q)
-        );
+        filtered = filtered.filter(c => {
+            if (/^\d+$/.test(q)) {
+                return String(c.id) === q;
+            } else {
+                return (c.name || '').toLowerCase().includes(q) ||
+                       (c.university || '').toLowerCase().includes(q) ||
+                       (c.country || '').toLowerCase().includes(q);
+            }
+        });
     }
     
     const total = filtered.length;
@@ -1361,6 +1373,9 @@ function renderFeesTab() {
     feesFiltered = feesData.filter(r => {
         if (linksOnly && !r.fees_link) return false;
         if (!search) return true;
+        if (/^\d+$/.test(search)) {
+            return String(r._idx) === search;
+        }
         return r.institute.toLowerCase().includes(search) ||
                r.course.toLowerCase().includes(search);
     });
