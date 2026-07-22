@@ -35,18 +35,20 @@ const FEES_MAP = {"acharya nagarjuna university|||diploma in cyber threats and s
 
 /**
  * Look up fee page URL for a course.
- * Pass 1: Exact match on (institute + course name) key.
- * Pass 2: Institute-only match – return the first entry for that institute
- *         whose course name substantially overlaps.
- * Returns the URL string or null if not found.
+ * Pass 1: Exact ASCII-normalised key match.
+ * Pass 2: Strict word-overlap fuzzy match.
+ *   - Generic words (university, institute, college, cyber, security ...) are
+ *     excluded from scoring so they cannot create false positives.
+ *   - Institute must share >= 1 specific (non-generic) word.
+ *   - Course must share >= 3 specific words AND cover >= 50% of query words.
+ * Returns URL or null. Never guesses when not confident.
  */
 function getFeesLink(university, courseName) {
-    if (!university && !courseName) return null;
+    if (!university || !courseName) return null;
 
-    // ASCII-normalise + lowercase (mirrors the Python build step)
     const norm = s => (s || '').toLowerCase()
         .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
-        .replace(/\s+/g, ' ').trim();
+        .replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
 
     const instKey  = norm(university);
     const courseKey = norm(courseName);
@@ -55,11 +57,28 @@ function getFeesLink(university, courseName) {
     const exact = FEES_MAP[instKey + '|||' + courseKey];
     if (exact) return exact;
 
-    // Pass 2: iterate all keys whose institute portion matches,
-    //         pick the entry whose course name has the most word overlap.
-    const courseWords = new Set(courseKey.split(/\W+/).filter(w => w.length > 3));
+    // Words too generic to discriminate -- exclude from scoring
+    const STOP = new Set([
+        'university','institute','college','technology','engineering','science',
+        'computer','cyber','security','information','network','management',
+        'education','studies','school','academy','national','centre','center',
+        'india','indian','advanced','research','applied','system','systems',
+        'with','from','that','this','have','been','will','their',
+        'btech','mtech','bsca','bca','mca','msc','bsc','phd',
+        'hons','tech','prog','programme','program','specialization',
+        'specialisation','including','block','chain','internet','things',
+    ]);
+
+    const sigWords = str => str.split(/\s+/).filter(w => w.length >= 4 && !STOP.has(w));
+
+    const instSig  = sigWords(instKey);
+    const courseSig = sigWords(courseKey);
+
+    // If university has no specific/unique words we cannot safely match
+    if (instSig.length === 0) return null;
+
     let bestLink  = null;
-    let bestScore = 0;
+    let bestScore = -1;
 
     for (const key of Object.keys(FEES_MAP)) {
         const sep = key.indexOf('|||');
@@ -67,29 +86,22 @@ function getFeesLink(university, courseName) {
         const ki = key.slice(0, sep);
         const kc = key.slice(sep + 3);
 
-        // Require institute to start with the same first word at minimum
-        if (!ki.startsWith(instKey.split(' ')[0])) continue;
-        // Loose institute match: both share first two significant words
-        const instWords = instKey.split(/\W+/).filter(w => w.length > 3);
-        const kiWords   = ki.split(/\W+/).filter(w => w.length > 3);
-        const instOverlap = instWords.filter(w => kiWords.includes(w)).length;
-        if (instOverlap < Math.min(2, instWords.length)) continue;
+        // Institute: >= 1 specific word must match
+        const kiSig = new Set(sigWords(ki));
+        const instMatch = instSig.filter(w => kiSig.has(w)).length;
+        if (instMatch < 1) continue;
 
-        // Count word overlap on course name
-        const kcWords = new Set(kc.split(/\W+/).filter(w => w.length > 3));
-        let score = 0;
-        for (const w of courseWords) if (kcWords.has(w)) score++;
-        // Also check reverse
-        for (const w of kcWords) if (courseWords.has(w)) score++;
+        // Course: >= 3 specific words AND >= 50% of query words matched
+        const kcSig = new Set(sigWords(kc));
+        const courseMatch = courseSig.filter(w => kcSig.has(w)).length;
+        if (courseMatch < 3) continue;
+        if (courseSig.length > 0 && courseMatch / courseSig.length < 0.5) continue;
 
-        if (score > bestScore) {
-            bestScore = score;
-            bestLink  = FEES_MAP[key];
-        }
+        const score = instMatch * 10 + courseMatch;
+        if (score > bestScore) { bestScore = score; bestLink = FEES_MAP[key]; }
     }
 
-    // Only use fuzzy result if we got at least 2 matching meaningful words
-    return bestScore >= 2 ? bestLink : null;
+    return bestLink;
 }
 
 // ── State ─────────────────────────────────────────────────────────
@@ -302,6 +314,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         // leave the page with unbound filters / dead controls.
         initFilters();
         initModal();
+        initFeesTab();
+
         initKpiClickThrough();
         initSorting();
         initTopbarExtras();
@@ -363,6 +377,8 @@ function initTabs() {
         link.classList.add('active');
         document.getElementById(target).classList.add('active');
         setPageTitle(link.dataset.title, link.dataset.sub);
+        // Lazy-load fees data on first visit to the Fees tab
+        if (target === 'tab-fees' && feesData.length === 0) { loadFeesData(); }
     });
 }
 
@@ -877,48 +893,27 @@ async function openModal(courseId) {
             ['NIRF', c.has_nirf_badge ? '✓ Ranked' : '—'],
         ].map(([k, v]) => `<div class="meta-chip"><strong>${k}:</strong> ${escHtml(String(v || '—'))}</div>`).join('');
 
-        // Course Link
-        const linkBox = document.getElementById('modal-link-box');
-        if (linkBox) {
+        // ── Pill buttons: Course Link + Fee Structure ────────────────────────
+        const linkBtn = document.getElementById('modal-link-btn');
+        if (linkBtn) {
             if (c.url) {
-                linkBox.innerHTML = `
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--blue);">
-                        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
-                    </svg>
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--blue); margin-left: -4px;">
-                        <line x1="12" y1="17" x2="12" y2="22"></line>
-                        <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.68V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3v4.68a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"></path>
-                    </svg>
-                    <a href="${escHtml(c.url)}" target="_blank" style="color: var(--blue); text-decoration: none; word-break: break-all; margin-left: 4px;">
-                        ${escHtml(c.url)}
-                    </a>
-                `;
+                linkBtn.href = c.url;
+                linkBtn.style.display = 'flex';
             } else {
-                linkBox.innerHTML = `
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-muted);">
-                        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
-                    </svg>
-                    <span style="color: var(--text-muted); margin-left: 4px;">No link available</span>
-                `;
+                linkBtn.style.display = 'none';
             }
         }
 
-        // Fees Link
-        const feesLinkBox = document.getElementById('modal-fees-link-box');
-        if (feesLinkBox) {
+        // Fee Structure button – only when fee link exists AND is a different
+        // URL than the main course link (i.e. a dedicated fees page)
+        const feesBtn = document.getElementById('modal-fees-btn');
+        if (feesBtn) {
             const feesLink = getFeesLink(c.university, c.name);
-            if (feesLink) {
-                feesLinkBox.style.display = '';
-                feesLinkBox.innerHTML = `
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--green); flex-shrink:0;">
-                        <rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>
-                    </svg>
-                    <a href="${feesLink}" target="_blank" rel="noopener noreferrer"
-                       style="color: var(--green); text-decoration: none; word-break: break-all; margin-left: 4px;">
-                        View Fee Structure
-                    </a>`;
+            if (feesLink && feesLink !== c.url) {
+                feesBtn.href = feesLink;
+                feesBtn.style.display = 'flex';
             } else {
-                feesLinkBox.style.display = 'none';
+                feesBtn.style.display = 'none';
             }
         }
 
@@ -1333,4 +1328,113 @@ function badgeHtml(status) {
         Error: 'badge-error',
     }[status] || 'badge-error';
     return `<span class="badge ${cls}">${escHtml(status || '—')}</span>`;
+}
+
+
+// ── FEES TAB ───────────────────────────────────────────────────────────────
+
+let feesData = [];        // Loaded from fees_data.json once
+let feesFiltered = [];    // After search/filter applied
+let feesPage = 1;
+const FEES_PAGE_SIZE = 100;
+let feesSortCol = 'idx';
+let feesSortDir = 1;
+
+async function loadFeesData() {
+    if (feesData.length > 0) return;
+    try {
+        const res = await fetch('fees_data.json');
+        feesData = await res.json();
+        // Add original index for stable sorting
+        feesData.forEach((r, i) => r._idx = i + 1);
+        renderFeesTab();
+    } catch(e) {
+        document.getElementById('fees-tbody').innerHTML =
+            '<tr><td colspan="4" class="empty-state">Could not load fees data.</td></tr>';
+    }
+}
+
+function renderFeesTab() {
+    const search = (document.getElementById('fees-search')?.value || '').toLowerCase().trim();
+    const linksOnly = document.getElementById('fees-haslink-only')?.checked;
+
+    feesFiltered = feesData.filter(r => {
+        if (linksOnly && !r.fees_link) return false;
+        if (!search) return true;
+        return r.institute.toLowerCase().includes(search) ||
+               r.course.toLowerCase().includes(search);
+    });
+
+    // Sort
+    feesFiltered.sort((a, b) => {
+        let av, bv;
+        if (feesSortCol === 'idx')       { av = a._idx; bv = b._idx; }
+        else if (feesSortCol === 'institute') { av = a.institute; bv = b.institute; }
+        else                             { av = a.course;    bv = b.course;    }
+        if (av < bv) return -feesSortDir;
+        if (av > bv) return  feesSortDir;
+        return 0;
+    });
+
+    const total = feesFiltered.length;
+    const totalPages = Math.max(1, Math.ceil(total / FEES_PAGE_SIZE));
+    if (feesPage > totalPages) feesPage = totalPages;
+
+    const slice = feesFiltered.slice((feesPage - 1) * FEES_PAGE_SIZE, feesPage * FEES_PAGE_SIZE);
+
+    const tbody = document.getElementById('fees-tbody');
+    if (!slice.length) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No results match your search.</td></tr>';
+    } else {
+        tbody.innerHTML = slice.map((r, i) => `
+            <tr>
+                <td style="color:var(--text-dim);font-size:0.8rem;">${(feesPage-1)*FEES_PAGE_SIZE + i + 1}</td>
+                <td style="font-size:0.85rem;">${escHtml(r.institute || '—')}</td>
+                <td style="font-size:0.85rem;">${escHtml(r.course || '—')}</td>
+                <td>${r.fees_link
+                    ? `<a href="${escHtml(r.fees_link)}" target="_blank" rel="noopener noreferrer"
+                          style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;
+                                 border-radius:20px;background:rgba(34,197,94,0.15);
+                                 border:1px solid rgba(34,197,94,0.4);color:#4ade80;
+                                 font-size:0.76rem;font-weight:600;text-decoration:none;">
+                           <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg>
+                           Fees
+                        </a>`
+                    : '<span style="color:var(--text-dim);font-size:0.78rem;">—</span>'
+                }</td>
+            </tr>
+        `).join('');
+    }
+
+    document.getElementById('fees-pag-info').textContent =
+        `Page ${feesPage} of ${totalPages} (${total.toLocaleString()} entries)`;
+    document.getElementById('fees-prev').disabled = feesPage <= 1;
+    document.getElementById('fees-next').disabled = feesPage >= totalPages;
+}
+
+function initFeesTab() {
+    document.getElementById('fees-search').addEventListener('input', () => {
+        feesPage = 1; renderFeesTab();
+    });
+    document.getElementById('fees-haslink-only').addEventListener('change', () => {
+        feesPage = 1; renderFeesTab();
+    });
+    document.getElementById('fees-prev').addEventListener('click', () => {
+        if (feesPage > 1) { feesPage--; renderFeesTab(); }
+    });
+    document.getElementById('fees-next').addEventListener('click', () => {
+        const totalPages = Math.ceil(feesFiltered.length / FEES_PAGE_SIZE);
+        if (feesPage < totalPages) { feesPage++; renderFeesTab(); }
+    });
+
+    document.querySelectorAll('[data-fees-sort]').forEach(th => {
+        th.style.cursor = 'pointer';
+        th.addEventListener('click', () => {
+            const col = th.dataset.feesSort;
+            if (feesSortCol === col) feesSortDir = -feesSortDir;
+            else { feesSortCol = col; feesSortDir = 1; }
+            feesPage = 1;
+            renderFeesTab();
+        });
+    });
 }
