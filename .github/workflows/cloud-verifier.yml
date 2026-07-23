@@ -271,10 +271,38 @@ jobs:
               json.dump(merged, f, indent=2, ensure_ascii=False)
 
           print(f"\n[OK] Merged {len(merged)} total courses -> {out}")
+          
+          # --- Merge PDFs ---
+          try:
+              import fitz
+          except ImportError:
+              os.system("pip install PyMuPDF > /dev/null 2>&1")
+              import fitz
+
+          pdf_files = sorted(glob.glob("chunk_artifacts/**/*.pdf", recursive=True))
+          if pdf_files:
+              print(f"\nFound {len(pdf_files)} PDF files to merge.")
+              merged_pdf = fitz.open()
+              for pdf in pdf_files:
+                  try:
+                      doc = fitz.open(pdf)
+                      merged_pdf.insert_pdf(doc)
+                      doc.close()
+                  except Exception as e:
+                      print(f"  [!] Error merging {pdf}: {e}")
+              out_pdf = "merged_run.pdf"
+              merged_pdf.save(out_pdf)
+              merged_pdf.close()
+              print(f"[OK] Merged PDFs into {out_pdf}")
+          else:
+              print("\nNo PDF files found to merge.")
+              
           PYEOF
 
-      - name: Upload Merged JSON
+      - name: Upload Merged Results
         uses: actions/upload-artifact@v4
         with:
-          name: merged-run-json
-          path: merged_run.json
+          name: merged-run-results
+          path: |
+            merged_run.json
+            merged_run.pdf

@@ -932,9 +932,8 @@ def verify_cost_in_text(target_cost_tuple, text, target_cost_str="", uni_name=""
             is_match = False
             if val == target_cost:
                 is_match = True
-            # Coursera small delta allowance (e.g. 1914 vs 1906)
-            elif target_cost > 0 and abs(val - target_cost) / target_cost <= 0.05:
-                # Allow ±5% for Coursera/general small changes
+            # Coursera small delta allowance (user requested +-50 exclusively for Coursera)
+            elif "coursera" in text_lower and target_cost > 0 and abs(val - target_cost) <= 50:
                 is_match = True
 
             if is_match:
@@ -4265,7 +4264,7 @@ Rules:
    - CRITICAL CALCULATION: If the total fee is ALREADY explicitly stated in the text (e.g., "Total Fee: 4,91,800"), DO NOT attempt to re-calculate it from sub-components—just match it! ONLY calculate the total if the fee is ONLY given per semester/year (e.g., "Rs. 2,02,500 per semester" and duration is 4 years -> "2,02,500 * 8 = 16,20,000") OR if given as "Cost Per Credit" multiplied by "Total Credits" (e.g., "$750 per credit" and "12 credits" -> "750 * 12 = 9000"). If you see "Cost Per Credit" and "Total Credits" anywhere on the page, you MUST ASSUME they apply to the course and perform the calculation! If this calculated total EXACTLY MATCHES the Original Cost (allowing only for minor point decimal round-off errors), mark it as a MATCH. If there is a larger discrepancy, you MUST mark it as FALSE. You MUST output this calculation in the cost_description
    - For all universities NOT located in India, you MUST ONLY consider International/Overseas costs IF multiple fee tiers (e.g. domestic vs international) are explicitly listed. If only a single standard fee is listed without distinction (such as in online bootcamps), use that standard fee. Explicitly state the fee type in the description.
    - "Free" Exception: If Original Cost is "Free", do NOT match generic terms (e.g., "toll free", "free box"). Must mean "Free Course Tuition". If a Paid Certificate track exists, cost_match = FALSE.
-   - COURSERA EXCEPTION: Coursera courses are NEVER free or free to audit. If the website is Coursera, ignore any 'Enroll for Free' text and ONLY extract the specific one-time course purchase fee from the pricing modal details. Do NOT extract or use any "Subscription" fees or "Coursera Plus" fees. If Original Cost is "Free", you MUST ALWAYS mark cost_match as FALSE.
+   - COURSERA EXCEPTION: Coursera courses are NEVER free or free to audit. If the website is Coursera, ignore any 'Enroll for Free' text and ONLY extract the specific one-time course purchase fee from the pricing modal details. Do NOT extract or use any "Subscription" fees or "Coursera Plus" fees. If Original Cost is "Free", you MUST ALWAYS mark cost_match as FALSE. For Coursera ONLY, if your extracted cost is within +- 50 of the Original Cost (e.g. difference is Rs. 50 or $50), you MUST mark it as a MATCH.
    - SWAYAM EXCEPTION: Swayam courses are free to audit but have a standard fee of Rs. 1000 for the certificate. If the Original Cost is "Rs. 1000" (or similar) and the platform is Swayam/NPTEL, you MUST ALWAYS mark cost_match as TRUE.
    - MANAGEMENT QUOTA STRICT BAN: NEVER use or extract "Management Quota", "NRI Quota", or "Direct Admission" fees under ANY circumstances. You MUST ALWAYS use "Government Quota", "Merit Quota", "Counselling", or standard tuition fees. If both Government and Management quotas are present in the text, you MUST COMPLETELY IGNORE the Management Quota fees. If the Original Cost matches the Government/Merit Quota fee, you MUST output a MATCH for Cost.
    - CRITICAL EXTRACTION: If you cannot find the exact Original Cost, you MUST scan the page text comprehensively.
