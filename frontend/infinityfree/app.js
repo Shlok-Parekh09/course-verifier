@@ -124,7 +124,7 @@ let sfFilter = { search: '' };
 let sortState = {
     vf: { col: 'id', dir: 1 },
     cf: { col: 'id', dir: 1 },
-    sf: { col: 'id', dir: 1 }
+    sf: { col: 'solved_ts', dir: 1 }
 };
 
 function getOriginalStatus(c) {
@@ -146,7 +146,11 @@ function sortCourses(list, state) {
         let vA = a[state.col];
         let vB = b[state.col];
         
-        if (state.col === 'domain') {
+        if (state.col === 'solved_ts') {
+            vA = a.solved_ts || 0;
+            vB = b.solved_ts || 0;
+            return (vB - vA) * state.dir;
+        } else if (state.col === 'domain') {
             vA = getDomainLabel(a.id);
             vB = getDomainLabel(b.id);
         } else if (state.col === 'courseType') {
@@ -1037,6 +1041,7 @@ async function solveAttr(courseId, attr, isSolved) {
         solved_attrs: solved,
         status: newStatus,
         issue_category: newCategory,
+        solved_ts: Date.now()
     };
 
     // Save original state so we can roll back on save failure
@@ -1103,6 +1108,7 @@ async function solveAll() {
             solved_attrs: mismatchAttrs,
             status: 'Verified',
             issue_category: 'verified',
+            solved_ts: Date.now()
         };
     }
     // Save original state for rollback
