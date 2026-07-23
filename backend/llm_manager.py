@@ -32,9 +32,7 @@ class LLMManagerAPI:
             self.groq_keys = [k for k in [os.environ.get("GROQ_API_KEY"), os.environ.get("GROQ_KEY")] if k]
         if not self.mistral_keys:
             self.mistral_keys = [k for k in [os.environ.get("MISTRAL_API_KEY"), os.environ.get("MISTRAL_KEY")] if k]
-        if not self.sambanova_keys:
-            self.sambanova_keys = [k for k in [os.environ.get("SAMBANOVA_API_KEY"), os.environ.get("SAMBANOVA_KEY")] if k]
-
+        
         # Cloud/remote Ollama - must be explicitly set via env vars
         self.cloud_ollama_url = os.environ.get("OLLAMA_API_URL")
         self.cloud_ollama_model = os.environ.get("OLLAMA_MODEL")
@@ -61,8 +59,8 @@ class LLMManagerAPI:
         # ΓöÇΓöÇ Diagnostic logging ΓöÇΓöÇ
         print(f"[LLM Manager] Keys loaded: Mistral={len(self.mistral_keys)}, NVIDIA={len(self.nvidia_keys)}, "
               f"Gemini={len(self.gemini_keys)}, OpenRouter={len(self.openrouter_keys)}, "
-              f"Groq={len(self.groq_keys)}, SambaNova={len(self.sambanova_keys)}")
-        if not any([self.mistral_keys, self.nvidia_keys, self.gemini_keys, self.openrouter_keys, self.groq_keys, self.sambanova_keys, self.ollama_api_url]):
+              f"Groq={len(self.groq_keys)}")
+        if not any([self.mistral_keys, self.nvidia_keys, self.gemini_keys, self.openrouter_keys, self.groq_keys, self.ollama_api_url]):
             print("[LLM Manager] ⚠ WARNING: No text-generation API keys or Ollama URL found! All LLM calls will return None.")
 
     def _rate_limit(self, key_identifier: str, min_interval: float = 4.29):
@@ -95,12 +93,6 @@ class LLMManagerAPI:
             # DEDICATED KEY LOGIC for Multithreading
             # Chain: Ollama -> Mistral -> Groq -> SambaNova -> OpenRouter -> NVIDIA -> Gemini
 
-            if provider in ["auto", "ollama"] and self.ollama_api_url:
-                print(f"      -> [LLM Manager] Worker {worker_id+1} trying Ollama ({self.ollama_model})...")
-                res = self._call_ollama(prompt, system, format, temperature, url=self.ollama_api_url, model=self.ollama_model, timeout=timeout)
-                if res: return res
-                print(f"      -> [LLM Manager] Worker {worker_id+1}'s Ollama call failed. Failing over...")
-
             if self.mistral_keys and provider in ["auto", "mistral"]:
                 for idx in self._get_key_sequence(worker_id, len(self.mistral_keys)):
                     m_key = self.mistral_keys[idx]
@@ -120,16 +112,6 @@ class LLMManagerAPI:
                     res = self._call_groq(g_key, prompt, system, format, 0.0)
                     if res: return res
                 print(f"      -> [LLM Manager] Worker {worker_id+1}'s Groq keys failed. Failing over to SambaNova...")
-
-            if self.sambanova_keys and provider in ["auto", "sambanova"]:
-                for idx in self._get_key_sequence(worker_id, len(self.sambanova_keys)):
-                    s_key = self.sambanova_keys[idx]
-                    key_id = f"sambanova_{idx}"
-                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying SambaNova Key {idx+1} (Llama 70B)...")
-                    self._rate_limit(key_id, min_interval=1.0)
-                    res = self._call_sambanova(s_key, prompt, system, format, 0.0)
-                    if res: return res
-                print(f"      -> [LLM Manager] Worker {worker_id+1}'s SambaNova keys failed. Failing over to OpenRouter...")
 
             if self.openrouter_keys and provider in ["auto", "openrouter"]:
                 for idx in self._get_key_sequence(worker_id, len(self.openrouter_keys)):
@@ -164,13 +146,6 @@ class LLMManagerAPI:
             return None
 
         # FALLBACK SEQUENTIAL LOGIC (If worker_id is not provided)
-        # Provider: OLLAMA
-        if provider in ["auto", "ollama"] and self.ollama_api_url:
-            print(f"      -> [LLM Manager] Trying Ollama ({self.ollama_model})...")
-            result = self._call_ollama(prompt, system, format, temperature, url=self.ollama_api_url, model=self.ollama_model, timeout=timeout)
-            if result: return result
-            print(f"      -> [LLM Manager] Ollama failed. Failing over...")
-
         # Provider 0: MISTRAL
         if provider in ["auto", "mistral"]:
             for idx, key in enumerate(self.mistral_keys):
@@ -188,24 +163,6 @@ class LLMManagerAPI:
                 result = self._call_groq(key, prompt, system, format, 0.0)
                 if result: return result
                 print(f"      -> [LLM Manager] Groq Key {idx+1} failed. Failing over...")
-
-        # Provider 2: SAMBANOVA
-        if provider in ["auto", "sambanova"]:
-            for idx, key in enumerate(self.sambanova_keys):
-                print(f"      -> [LLM Manager] Trying SambaNova Key {idx+1}/{len(self.sambanova_keys)} (Llama 70B)...")
-                self._rate_limit(f"sambanova_{idx}", min_interval=1.0)
-                result = self._call_sambanova(key, prompt, system, format, 0.0)
-                if result: return result
-                print(f"      -> [LLM Manager] SambaNova Key {idx+1} failed. Failing over...")
-                
-        # Provider 3: OPENROUTER
-        if provider in ["auto", "openrouter"]:
-            for idx, key in enumerate(self.openrouter_keys):
-                print(f"      -> [LLM Manager] Trying OpenRouter Key {idx+1}/{len(self.openrouter_keys)}...")
-                self._rate_limit(f"openrouter_{idx}", min_interval=1.0)
-                result = self._call_openrouter(key, prompt, system, format, 0.0)
-                if result: return result
-                print(f"      -> [LLM Manager] OpenRouter Key {idx+1} failed. Failing over...")
 
         # Provider 4: NVIDIA
         if provider in ["auto", "nvidia"]:
@@ -239,14 +196,7 @@ class LLMManagerAPI:
 
         max_g = len(self.gemini_keys)
         max_m = len(self.mistral_keys)
-        max_s = len(self.sambanova_keys)
-        max_keys = max(max_g, max_m, max_s)
-        
-        if self.ollama_api_url:
-            print(f"      -> [LLM Manager] Trying Ollama Vision ({self.ollama_vision_model})...")
-            res = self._call_ollama_vision(prompt, base64_image, system)
-            if res: return res
-            print("      -> [LLM Manager] Ollama Vision failed. Failing over to API keys...")
+        max_keys = max(max_g, max_m)
         
         if max_keys == 0:
             print("      -> [LLM Manager] CRITICAL ERROR: No API keys for Vision!")
@@ -275,36 +225,10 @@ class LLMManagerAPI:
                 if result: return result
                 print(f"      -> [LLM Manager] Mistral Vision Key {key_idx+1} failed.")
                 
-            if key_idx < max_s:
-                key = self.sambanova_keys[key_idx]
-                key_id = f"sambanova_vision_{key_idx}"
-                print(f"      -> [LLM Manager] Trying SambaNova Vision Key {key_idx+1}/{max_s}...")
-                self._rate_limit(key_id, min_interval=4.0)
-                result = self._call_sambanova_vision(key, prompt, base64_image, system)
-                if result: return result
-                print(f"      -> [LLM Manager] SambaNova Vision Key {key_idx+1} failed.")
                 
         print("      -> [LLM Manager] CRITICAL ERROR: All vision keys failed!")
         return None
         
-        max_keys = len(self.gemini_keys)
-        
-        for idx in range(max_keys):
-
-            
-            # 2. Try Gemini (Gemini 1.5 Flash Vision)
-            if idx < len(self.gemini_keys):
-                key = self.gemini_keys[idx]
-                print(f"      -> [LLM Manager] Trying Gemini Vision Key {idx+1}/{len(self.gemini_keys)}...")
-                self._rate_limit(f"gemini_vision_{idx}", min_interval=4.0) # 15 RPM
-                result = self._call_gemini_vision(key, prompt, base64_image, system)
-                if result: return result
-                print(f"      -> [LLM Manager] Gemini Vision Key {idx+1} failed.")
-            
-
-                
-        print("      -> [LLM Manager] CRITICAL ERROR: All Gemini keys failed for Vision!")
-        return None
 
     def _call_ollama(self, prompt: str, system: Optional[str], format: str, temperature: float, *, url: Optional[str] = None, model: Optional[str] = None, timeout: int = 120) -> Optional[str]:
         url = (url or self.ollama_api_url).rstrip('/')
@@ -426,31 +350,6 @@ class LLMManagerAPI:
             
 
 
-    def _call_sambanova(self, api_key: Optional[str], prompt: str, system: Optional[str], format: str, temperature: float) -> Optional[str]:
-        url = "https://api.sambanova.ai/v1/chat/completions"
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        messages = []
-        if system: messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
-        
-        payload = {
-            "model": "Meta-Llama-3.1-70B-Instruct",
-            "messages": messages,
-            "temperature": temperature
-        }
-        if format == "json": payload["response_format"] = {"type": "json_object"}
-            
-        try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=30)
-            if resp.status_code == 200:
-                return resp.json()["choices"][0]["message"]["content"]
-            print(f"      -> [LLM Manager] SambaNova API Error {resp.status_code}: {resp.text}")
-            if self._check_token_error(resp.text): return "ERROR_TOKEN_EXCEEDED"
-            return None
-        except Exception as e:
-            print(f"      -> [LLM Manager] SambaNova API Exception: {e}")
-            return None
-
     def _call_mistral(self, api_key: Optional[str], prompt: str, system: Optional[str], format: str, temperature: float) -> Optional[str]:
         url = "https://api.mistral.ai/v1/chat/completions"
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -535,7 +434,7 @@ class LLMManagerAPI:
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
         ]})
         payload = {
-            "model": "pixtral-large-2411",
+            "model": "pixtral-12b-2409",
             "messages": messages,
             "temperature": 0.0
         }
@@ -547,30 +446,6 @@ class LLMManagerAPI:
                 print(f"Mistral API Error: {resp.status_code} - {resp.text}")
         except Exception as e:
             print(f"Mistral Error: {e}")
-        return None
-
-    def _call_sambanova_vision(self, api_key: Optional[str], prompt: str, base64_image: str, system: Optional[str]) -> Optional[str]:
-        url = "https://api.sambanova.ai/v1/chat/completions"
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        messages = []
-        if system: messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": [
-            {"type": "text", "text": prompt},
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-        ]})
-        payload = {
-            "model": "Llama-3.2-90B-Vision-Instruct",
-            "messages": messages,
-            "temperature": 0.0
-        }
-        try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=120)
-            if resp.status_code == 200:
-                return resp.json()["choices"][0]["message"]["content"]
-            else:
-                print(f"SambaNova API Error: {resp.status_code} - {resp.text}")
-        except Exception as e:
-            print(f"SambaNova Error: {e}")
         return None
 
     def _call_ollama_vision(self, prompt: str, base64_image: str, system: Optional[str]) -> Optional[str]:
