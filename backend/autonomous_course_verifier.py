@@ -6760,8 +6760,6 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             options.page_load_strategy = 'eager'
             options.set_capability("unhandledPromptBehavior", "dismiss")
             options.add_argument('--disable-blink-features=AutomationControlled')
-            if os.environ.get("USE_TOR") == "true":
-                options.add_argument("--proxy-server=socks5://127.0.0.1:9050")
             options.add_argument('--window-size=1280,800')
             options.add_argument('--ignore-certificate-errors')
             options.set_capability('acceptInsecureCerts', True)
@@ -8813,10 +8811,6 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 new_options = uc.ChromeOptions()
                                 new_options.page_load_strategy = 'eager'
                                 new_options.add_argument('--disable-blink-features=AutomationControlled')
-                                if os.environ.get("USE_TOR") == "true":
-                                    new_options.add_argument("--proxy-server=socks5://127.0.0.1:9050")
-            if os.environ.get("USE_TOR") == "true":
-                options.add_argument("--proxy-server=socks5://127.0.0.1:9050")
                                 new_options.add_argument(f'--window-size=1280,800')
                                 new_options.add_argument('--ignore-certificate-errors')
                                 new_options.set_capability('acceptInsecureCerts', True)

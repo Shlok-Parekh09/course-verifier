@@ -46,7 +46,7 @@ jobs:
       - name: Install System Dependencies (Chrome & Xvfb)
         run: |
           sudo apt-get update
-          sudo apt-get install -y tesseract-ocr libtesseract-dev xvfb x11-utils tor curl
+          sudo apt-get install -y tesseract-ocr libtesseract-dev xvfb x11-utils
           # Mount a tmpfs for /dev/shm to give Chrome enough shared memory (prevents tab crashes)
           sudo mount -t tmpfs -o size=2g tmpfs /dev/shm || true
           # Kill any stale Chrome processes that could interfere
@@ -67,20 +67,6 @@ jobs:
         run: |
           gdown "1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd" -O backend/link_compile.pdf
 
-      - name: Setup Tor IP Rotation
-        run: |
-          sudo systemctl start tor
-          cat << 'EOF' > rotate_ip.sh
-          #!/bin/bash
-          while true; do
-              sudo systemctl reload tor
-              echo "New Tor IP Assigned: $(curl --socks5 127.0.0.1:9050 --socks5-hostname 127.0.0.1:9050 -s https://ipify.org)"
-              sleep 30
-          done
-          EOF
-          chmod +x rotate_ip.sh
-          nohup ./rotate_ip.sh > tor_rotation.log 2>&1 &
-
       - name: Run Verification (Virtual Display)
         # xvfb-run provides a virtual display; --server-args sets screen depth/size
         # The code auto-detects CI=true and uses 3 browsers + headless=new mode
@@ -94,7 +80,6 @@ jobs:
           DISPLAY: ":99"
           CI: true
           VERIFIER_NO_FORCE_EXIT: true
-          USE_TOR: "true"
           MISTRAL_API_KEYS: ${{ github.event.inputs.llm_backend == 'api' && secrets.MISTRAL_API_KEYS || '' }}
           GEMINI_API_KEYS: ${{ github.event.inputs.llm_backend == 'api' && secrets.GEMINI_API_KEYS || '' }}
           GROQ_API_KEYS: ${{ github.event.inputs.llm_backend == 'api' && secrets.GROQ_API_KEYS || '' }}
