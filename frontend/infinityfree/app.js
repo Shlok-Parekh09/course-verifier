@@ -128,7 +128,7 @@ let sortState = {
 };
 
 function getOriginalStatus(c) {
-    if (c.pdf_table && c.pdf_table.some(r => r.status && r.status.toUpperCase() !== 'MATCH')) return 'Discrepancy';
+    if (c.pdf_table && c.pdf_table.some(r => r.status && r.status.toUpperCase() === 'FALSE')) return 'Discrepancy';
     if (c.disc_reason && (c.disc_reason.includes('404') || c.disc_reason.toLowerCase().includes('website') || c.disc_reason.toLowerCase().includes('not found'))) return 'Error';
     if (c.disc_reason) return 'Discrepancy';
     return 'Verified';
@@ -551,9 +551,22 @@ function renderDashboard() {
 function renderRecentSolved() {
     const tbody = document.getElementById('recent-tbody');
     if (!tbody) return;
-    const solved = allCourses
-        .filter(c => c.solved_attrs && c.solved_attrs.length > 0)
-        .slice(0, 8);
+    let solved = [];
+    if (window.globalPendingSolves && window.globalPendingSolves.length > 0) {
+        const seen = new Set();
+        for (const s of window.globalPendingSolves) {
+            if (!seen.has(s.id)) {
+                seen.add(s.id);
+                const c = allCourses.find(x => x.id == s.id);
+                if (c) solved.push(c);
+            }
+            if (solved.length >= 8) break;
+        }
+    } else {
+        solved = allCourses
+            .filter(c => c.solved_attrs && c.solved_attrs.length > 0)
+            .slice(0, 8);
+    }
 
     if (!solved.length) {
         tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No solved courses yet.</td></tr>';
@@ -1449,6 +1462,7 @@ async function pollSolves() {
         if (res.ok) {
             const data = await res.json();
             const pending = data.pending_solves || [];
+            window.globalPendingSolves = pending;
             let changed = false;
             
             for (const solve of pending) {

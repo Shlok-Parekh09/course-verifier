@@ -7103,7 +7103,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         course['uni_match'] = True
                         course['country_match'] = True
                         
-                        is_match = (c_m or d_m or m_m or s_m)
+                        is_match = (c_m and d_m and m_m and s_m)
                         course['web_status'] = "MATCH" if is_match else "FALSE"
                         course['reason'] = "Verified securely offline using local NDU screenshots and AI."
                         course['is_hard_error'] = False
@@ -8840,7 +8840,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         course['country_match'] = co_m
                         
                         # At least one major match means we accept the fallback
-                        is_match = (c_m or d_m or m_m or s_m)
+                        is_match = (c_m and d_m and m_m and s_m)
                         course['web_status'] = "MATCH" if is_match else "FALSE"
                         course['reason'] = "Details inferred confidently via LLM fallback."
                         course['is_hard_error'] = False

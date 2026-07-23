@@ -111,9 +111,12 @@ export default {
         if (list && list.keys && list.keys.length > 0) {
           const fetchPromises = list.keys.map(async key => {
             try {
-              const update = await env.COURSE_DATA.get(key.name, { type: 'json' });
+              const val = await env.COURSE_DATA.get(key.name, { type: 'json' });
               const id = key.name.split('_')[1];
-              if (update) pending.push({ id, update });
+              if (val) {
+                if (Array.isArray(val)) pending.push({ id, update: val, ts: 0 });
+                else pending.push({ id, update: val.update, ts: val.ts || 0 });
+              }
             } catch (e) {}
           });
           await Promise.all(fetchPromises);
@@ -124,11 +127,13 @@ export default {
           if (legacy && Array.isArray(legacy)) {
             for (const item of legacy) {
               if (!pending.find(p => p.id == item.id)) {
-                pending.push({ id: item.id, update: item.update });
+                pending.push({ id: item.id, update: item.update, ts: 0 });
               }
             }
           }
         } catch(e) {}
+        
+        pending.sort((a, b) => b.ts - a.ts);
 
         return jsonResponse({ pending_solves: pending }, 200, request, env);
       } catch (e) {
@@ -176,7 +181,11 @@ export default {
       try {
         const body = await request.json();
         // Use individual keys to prevent read-modify-write race conditions
-        await env.COURSE_DATA.put(`solve_${body.id}`, JSON.stringify(body.update));
+        const payload = {
+          update: body.update,
+          ts: Date.now()
+        };
+        await env.COURSE_DATA.put(`solve_${body.id}`, JSON.stringify(payload));
         return jsonResponse({ status: 'success', message: 'Solve recorded' }, 200, request, env);
       } catch (e) {
         return jsonResponse({ status: 'error', message: 'Failed to record solve: ' + e.message }, 500, request, env);

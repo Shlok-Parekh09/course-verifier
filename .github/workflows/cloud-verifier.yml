@@ -44,8 +44,13 @@ jobs:
         with:
           python-version: "3.10"
       
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
       - name: Install PyMuPDF & gdown
-        run: pip install PyMuPDF gdown
+        run: uv pip install --system PyMuPDF gdown
 
       - name: Download Main PDF
         run: |
@@ -127,9 +132,14 @@ jobs:
         with:
           swap-size-gb: 10
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
       - name: Install Python Dependencies
         run: |
-          pip install -r requirements.txt python-dotenv gdown
+          uv pip install --system -r requirements.txt python-dotenv gdown
 
       - name: Download Main PDF
         run: |
