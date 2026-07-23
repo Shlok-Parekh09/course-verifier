@@ -918,16 +918,7 @@ async function openModal(courseId) {
 
         // Fee Structure button – only when fee link exists AND is a different
         // URL than the main course link (i.e. a dedicated fees page)
-        const feesBtn = document.getElementById('modal-fees-btn');
-        if (feesBtn) {
-            const feesLink = getFeesLink(c.university, c.name);
-            if (feesLink && feesLink !== c.url) {
-                feesBtn.href = feesLink;
-                feesBtn.style.display = 'flex';
-            } else {
-                feesBtn.style.display = 'none';
-            }
-        }
+        
 
         // Comparison table
         const rows = c.pdf_table || [];
@@ -1368,10 +1359,7 @@ async function loadFeesData() {
 
 function renderFeesTab() {
     const search = (document.getElementById('fees-search')?.value || '').toLowerCase().trim();
-    const linksOnly = document.getElementById('fees-haslink-only')?.checked;
-
     feesFiltered = feesData.filter(r => {
-        if (linksOnly && !r.fees_link) return false;
         if (!search) return true;
         if (/^\d+$/.test(search)) {
             return String(r._idx) === search;
@@ -1429,9 +1417,6 @@ function renderFeesTab() {
 
 function initFeesTab() {
     document.getElementById('fees-search').addEventListener('input', () => {
-        feesPage = 1; renderFeesTab();
-    });
-    document.getElementById('fees-haslink-only').addEventListener('change', () => {
         feesPage = 1; renderFeesTab();
     });
     document.getElementById('fees-prev').addEventListener('click', () => {

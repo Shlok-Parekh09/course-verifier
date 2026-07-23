@@ -1,16 +1,28 @@
 name: Cloud Course Verifier
 
 on:
-  workflow_dispatch: # Allows manual trigger from GitHub UI
+  workflow_dispatch:
     inputs:
       start_page:
-        description: "Start Page Number (Leave blank to resume from checkpoint)"
+        description: "Start Page Number (Leave blank to run from page 1)"
         required: false
         default: ""
       end_page:
-        description: "End Page Number (Leave blank for all remaining)"
+        description: "End Page Number (Leave blank to run to the end)"
         required: false
         default: ""
+      gdrive_id:
+        description: "Google Drive File ID for the PDF (optional)"
+        required: false
+        default: "1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd"
+      gdrive_id_ndu:
+        description: "Google Drive File ID for NDU Screenshots PDF (optional)"
+        required: false
+        default: ""
+      chunk_size:
+        description: "Pages per chunk (Max 250 chunks per run)"
+        required: false
+        default: "30"
       llm_backend:
         description: "LLM Backend to use (api or ollama)"
         required: true
@@ -21,10 +33,69 @@ on:
           - ollama
 
 jobs:
+  setup:
+    name: "Calculate PDF Chunks"
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+      
+      - name: Install PyMuPDF & gdown
+        run: pip install PyMuPDF gdown
+
+      - name: Download Main PDF
+        run: |
+          gdown "${{ github.event.inputs.gdrive_id || '1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd' }}" -O link_compile.pdf
+
+      - name: Generate Matrix
+        id: set-matrix
+        run: |
+          python - <<'EOF'
+          import os, fitz, json
+          doc = fitz.open("link_compile.pdf")
+          
+          # Use provided bounds or default to PDF length
+          in_start = "${{ github.event.inputs.start_page }}".strip()
+          in_end = "${{ github.event.inputs.end_page }}".strip()
+          
+          start_page = int(in_start) if in_start.isdigit() else 1
+          end_page = int(in_end) if in_end.isdigit() else len(doc)
+          
+          # Validate bounds
+          if start_page < 1: start_page = 1
+          if end_page > len(doc): end_page = len(doc)
+          if start_page > end_page: start_page = end_page
+          
+          chunk_size = int("${{ github.event.inputs.chunk_size || 30 }}")
+          
+          matrix = []
+          for i in range(start_page, end_page + 1, chunk_size):
+              start = i
+              end = min(i + chunk_size - 1, end_page)
+              matrix.append({"start": start, "end": end})
+              
+          print(f"Generated matrix from page {start_page} to {end_page} into {len(matrix)} chunks.")
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"matrix={json.dumps(matrix)}\\n")
+          EOF
+
   verify:
+    name: "Verify Pages ${{ matrix.chunk.start }} to ${{ matrix.chunk.end }}"
+    needs: setup
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        chunk: ${{ fromJson(needs.setup.outputs.matrix) }}
+
     env:
       CI: true
 
@@ -47,11 +118,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y tesseract-ocr libtesseract-dev xvfb x11-utils
-          # Mount a tmpfs for /dev/shm to give Chrome enough shared memory (prevents tab crashes)
           sudo mount -t tmpfs -o size=2g tmpfs /dev/shm || true
-          # Kill any stale Chrome processes that could interfere
           pkill -9 chrome 2>/dev/null || true
-          # Verify Chrome is available
           google-chrome --version || true
 
       - name: Increase Swap Space
@@ -63,18 +131,23 @@ jobs:
         run: |
           pip install -r requirements.txt python-dotenv gdown
 
-      - name: Download PDF from Google Drive
+      - name: Download Main PDF
         run: |
-          gdown "1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd" -O backend/link_compile.pdf
+          gdown "${{ github.event.inputs.gdrive_id || '1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd' }}" -O backend/link_compile.pdf
+
+      - name: Download NDU Screenshots PDF
+        run: |
+          if [ -n "${{ github.event.inputs.gdrive_id_ndu }}" ]; then
+            echo "Downloading NDU PDF..."
+            gdown "${{ github.event.inputs.gdrive_id_ndu }}" -O backend/ndu.pdf
+          else
+            echo "No NDU Google Drive ID provided. Skipping NDU PDF download."
+          fi
 
       - name: Run Verification (Virtual Display)
-        # xvfb-run provides a virtual display; --server-args sets screen depth/size
-        # The code auto-detects CI=true and uses 3 browsers + headless=new mode
-        # VERIFIER_NO_FORCE_EXIT prevents the script from calling sys.exit() so
-        # the workflow continues even if a sub-step fails (checkpoint is saved).
         env:
-          START_PAGE: ${{ github.event.inputs.start_page }}
-          END_PAGE: ${{ github.event.inputs.end_page }}
+          START_PAGE: ${{ matrix.chunk.start }}
+          END_PAGE: ${{ matrix.chunk.end }}
           LLM_BACKEND: ${{ github.event.inputs.llm_backend }}
           PDF_NAME: autonomous_verified_report
           DISPLAY: ":99"
@@ -92,20 +165,106 @@ jobs:
         run: |
           Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset &
           sleep 3
-          # Run with continue-on-error so checkpoint is always saved
-          cd backend && python autonomous_course_verifier.py || echo "::warning::Verifier exited with non-zero status, but checkpoint should be saved"
+          cd backend && python autonomous_course_verifier.py || echo "::warning::Verifier exited with non-zero status"
+          echo "Taking a 5-minute cooldown break..."
+          sleep 300
 
       - name: Remove input PDF before upload
         if: always()
         run: |
           rm -f backend/link_compile.pdf
+          rm -f backend/ndu.pdf
 
       - name: Upload Results Archive
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: verification-results-archive
+          name: verification-results-${{ matrix.chunk.start }}-to-${{ matrix.chunk.end }}
           path: |
             backend/*.pdf
             backend/autonomous_verified_*.json
             backend/local_database.db
+
+  merge-json:
+    name: "Merge All Chunk JSONs -> merged_run.json"
+    needs: verify
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Download All Chunk Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: verification-results-*
+          path: chunk_artifacts
+          merge-multiple: false
+
+      - name: Merge JSON Files
+        run: |
+          python3 - <<'PYEOF'
+          import os, json, glob
+
+          merged = []
+          seen_keys = set()
+
+          json_files = sorted(glob.glob("chunk_artifacts/**/*link_compile*.json", recursive=True))
+
+          if not json_files:
+              print("::warning::No JSON files found in downloaded artifacts!")
+          else:
+              print(f"Found {len(json_files)} JSON file(s) across all chunks.")
+
+          merged_dict = {}
+
+          for jf in json_files:
+              try:
+                  with open(jf, encoding="utf-8") as f:
+                      data = json.load(f)
+                  if not isinstance(data, list):
+                      print(f"  [!] Skipping {jf} (not a JSON array)")
+                      continue
+                  added = 0
+                  updated = 0
+                  for course in data:
+                      key = (
+                          str(course.get("name", "")).strip().lower(),
+                          str(course.get("uni",  "")).strip().lower(),
+                          course.get("page_num"),
+                          course.get("box_index"),
+                      )
+                      
+                      if key not in merged_dict:
+                          merged_dict[key] = course
+                          added += 1
+                      else:
+                          is_processed = course.get("processed_this_run") or course.get("reason", "") != ""
+                          old_is_processed = merged_dict[key].get("processed_this_run") or merged_dict[key].get("reason", "") != ""
+                          
+                          if is_processed and not old_is_processed:
+                              merged_dict[key] = course
+                              updated += 1
+
+                  print(f"  + {os.path.basename(jf)}: {len(data)} entries, {added} new, {updated} updated")
+              except Exception as e:
+                  print(f"  [!] Error reading {jf}: {e}")
+
+          merged = list(merged_dict.values())
+          merged.sort(key=lambda c: (c.get("page_num", 0), c.get("box_index", 0)))
+
+          out = "merged_run.json"
+          with open(out, "w", encoding="utf-8") as f:
+              json.dump(merged, f, indent=2, ensure_ascii=False)
+
+          print(f"\n[OK] Merged {len(merged)} total courses -> {out}")
+          PYEOF
+
+      - name: Upload Merged JSON
+        uses: actions/upload-artifact@v4
+        with:
+          name: merged-run-json
+          path: merged_run.json
