@@ -350,7 +350,13 @@
                         <!-- Filter Bar -->
                         <div class="filter-bar">
                             <input class="search-box" id="sf-search" placeholder="🔍  Search name, university, country…" type="text">
-                            <button class="btn-reset" id="sf-reset">✕ Reset</button>
+                            <select class="filter-select" id="sf-domain">
+                                <option value="all">All Domains</option>
+                            </select>
+                            <select class="filter-select" id="sf-courseType">
+                                <option value="all">All Course Types</option>
+                            </select>
+                            <button class="btn-reset" id="sf-reset">↻ Reset</button>
                         </div>
 
                         <!-- Table -->
@@ -512,6 +518,6 @@
     </div>
 </div>
 
-<script src="app.js?v=6"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>

@@ -120,7 +120,7 @@ let modalCourse = null;        // Currently open course in modal
 
 // ── Custom State ───────────────────────────────────────────────────
 let sfPage = 1;
-let sfFilter = { search: '' };
+let sfFilter = { search: '', domain: 'all', courseType: 'all' };
 let sortState = {
     vf: { col: 'id', dir: 1 },
     cf: { col: 'id', dir: 1 },
@@ -427,7 +427,7 @@ function populateFilters() {
         });
     });
 
-    ['vf-domain', 'cf-domain'].forEach(id => {
+    ['vf-domain', 'cf-domain', 'sf-domain'].forEach(id => {
         const sel = document.getElementById(id);
         domains.forEach(d => {
             const opt = document.createElement('option');
@@ -436,7 +436,7 @@ function populateFilters() {
         });
     });
     
-    ['vf-courseType', 'cf-courseType'].forEach(id => {
+    ['vf-courseType', 'cf-courseType', 'sf-courseType'].forEach(id => {
         const sel = document.getElementById(id);
         courseTypes.forEach(d => {
             const opt = document.createElement('option');
@@ -505,9 +505,13 @@ function initFilters() {
         clearTimeout(sfTimer);
         sfTimer = setTimeout(() => { sfFilter.search = e.target.value.toLowerCase(); sfPage = 1; renderSolvedTab(); }, 220);
     });
+    document.getElementById('sf-domain').addEventListener('change', e => { sfFilter.domain = e.target.value; sfPage = 1; renderSolvedTab(); });
+    document.getElementById('sf-courseType').addEventListener('change', e => { sfFilter.courseType = e.target.value; sfPage = 1; renderSolvedTab(); });
     document.getElementById('sf-reset').addEventListener('click', () => {
         document.getElementById('sf-search').value = '';
-        sfFilter = { search: '' };
+        document.getElementById('sf-domain').value = 'all';
+        document.getElementById('sf-courseType').value = 'all';
+        sfFilter = { search: '', domain: 'all', courseType: 'all' };
         sfPage = 1;
         renderSolvedTab();
     });
@@ -799,6 +803,14 @@ function renderSolvedTab() {
                        (c.country || '').toLowerCase().includes(q);
             }
         });
+    }
+    
+    if (sfFilter.domain && sfFilter.domain !== 'all') {
+        filtered = filtered.filter(c => getDomainLabel(c.id) === sfFilter.domain);
+    }
+    
+    if (sfFilter.courseType && sfFilter.courseType !== 'all') {
+        filtered = filtered.filter(c => c.domain === sfFilter.courseType);
     }
     
     const total = filtered.length;
