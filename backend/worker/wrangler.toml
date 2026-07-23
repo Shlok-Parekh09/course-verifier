@@ -2,6 +2,9 @@ name = "course-verifier-api"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
 
+[vars]
+KV_PUSH_KEY = "courseverify_secure_push_key_2026"
+
 [[kv_namespaces]]
 binding = "COURSE_DATA"
 id = "eef4c644239941a4b155eb9a7958c080"
