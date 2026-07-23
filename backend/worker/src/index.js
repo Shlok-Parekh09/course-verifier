@@ -66,9 +66,14 @@ export default {
           if (list && list.keys && list.keys.length > 0) {
             const fetchPromises = list.keys.map(async key => {
               try {
-                const update = await env.COURSE_DATA.get(key.name, { type: 'json' });
                 const id = key.name.split('_')[1];
-                if (update) pending.push({ id, update });
+                if (key.metadata) {
+                  const val = key.metadata;
+                  pending.push({ id, update: Array.isArray(val) ? val : val.update });
+                } else {
+                  const update = await env.COURSE_DATA.get(key.name, { type: 'json' });
+                  if (update) pending.push({ id, update: Array.isArray(update) ? update : update.update });
+                }
               } catch (e) {
                 // ignore individual key read error
               }
@@ -111,11 +116,17 @@ export default {
         if (list && list.keys && list.keys.length > 0) {
           const fetchPromises = list.keys.map(async key => {
             try {
-              const val = await env.COURSE_DATA.get(key.name, { type: 'json' });
               const id = key.name.split('_')[1];
-              if (val) {
+              if (key.metadata) {
+                const val = key.metadata;
                 if (Array.isArray(val)) pending.push({ id, update: val, ts: 0 });
                 else pending.push({ id, update: val.update, ts: val.ts || 0 });
+              } else {
+                const val = await env.COURSE_DATA.get(key.name, { type: 'json' });
+                if (val) {
+                  if (Array.isArray(val)) pending.push({ id, update: val, ts: 0 });
+                  else pending.push({ id, update: val.update, ts: val.ts || 0 });
+                }
               }
             } catch (e) {}
           });
@@ -185,7 +196,7 @@ export default {
           update: body.update,
           ts: Date.now()
         };
-        await env.COURSE_DATA.put(`solve_${body.id}`, JSON.stringify(payload));
+        await env.COURSE_DATA.put(`solve_${body.id}`, JSON.stringify(payload), { metadata: payload });
         return jsonResponse({ status: 'success', message: 'Solve recorded' }, 200, request, env);
       } catch (e) {
         return jsonResponse({ status: 'error', message: 'Failed to record solve: ' + e.message }, 500, request, env);
