@@ -854,3 +854,4 @@ button { cursor: pointer; font-family: inherit; }
     .kpi-value { font-size: 2rem; }
     .page-title { font-size: 1.15rem; }
 }
+.fee-row-hover:hover { background-color: rgba(255, 255, 255, 0.05); }

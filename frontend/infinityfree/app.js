@@ -1347,7 +1347,8 @@ async function loadFeesData() {
     if (feesData.length > 0) return;
     try {
         const res = await fetch('fees_data.json');
-        feesData = await res.json();
+        let allFees = await res.json();
+        feesData = allFees.filter(r => r.fees_link && String(r.fees_link).trim() !== \'\' && String(r.fees_link).trim() !== \'-\');
         // Add original index for stable sorting
         feesData.forEach((r, i) => r._idx = i + 1);
         renderFeesTab();
@@ -1390,7 +1391,7 @@ function renderFeesTab() {
         tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No results match your search.</td></tr>';
     } else {
         tbody.innerHTML = slice.map((r, i) => `
-            <tr>
+            <tr onclick="window.open(\'${escHtml(r.fees_link)}\', \'_blank\')" style="cursor: pointer;" class="fee-row-hover">
                 <td style="color:var(--text-dim);font-size:0.8rem;">${(feesPage-1)*FEES_PAGE_SIZE + i + 1}</td>
                 <td style="font-size:0.85rem;">${escHtml(r.institute || '—')}</td>
                 <td style="font-size:0.85rem;">${escHtml(r.course || '—')}</td>
