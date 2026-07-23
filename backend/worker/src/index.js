@@ -101,6 +101,41 @@ export default {
       }
     }
 
+    
+    // Route: /api/solves.json
+    if (path === '/api/solves.json' || path === '/api/solves') {
+      try {
+        let pending = [];
+        const list = await env.COURSE_DATA.list({ prefix: 'solve_' });
+        
+        if (list && list.keys && list.keys.length > 0) {
+          const fetchPromises = list.keys.map(async key => {
+            try {
+              const update = await env.COURSE_DATA.get(key.name, { type: 'json' });
+              const id = key.name.split('_')[1];
+              if (update) pending.push({ id, update });
+            } catch (e) {}
+          });
+          await Promise.all(fetchPromises);
+        }
+
+        try {
+          const legacy = await env.COURSE_DATA.get('pending_solves.json', { type: 'json' });
+          if (legacy && Array.isArray(legacy)) {
+            for (const item of legacy) {
+              if (!pending.find(p => p.id == item.id)) {
+                pending.push({ id: item.id, update: item.update });
+              }
+            }
+          }
+        } catch(e) {}
+
+        return jsonResponse({ pending_solves: pending }, 200, request, env);
+      } catch (e) {
+        return jsonResponse({ status: 'error', message: 'KV read error: ' + e.message }, 500, request, env);
+      }
+    }
+
     // Route: /api/analytics.json
     if (path === '/api/analytics.json' || path === '/api/analytics') {
       try {

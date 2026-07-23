@@ -1439,3 +1439,52 @@ function initFeesTab() {
         });
     });
 }
+
+
+// --- Background Polling for Live Sync ---
+async function pollSolves() {
+    if (!allCourses || allCourses.length === 0) return;
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/solves.json`);
+        if (res.ok) {
+            const data = await res.json();
+            const pending = data.pending_solves || [];
+            let changed = false;
+            
+            for (const solve of pending) {
+                const c = allCourses.find(x => x.id == solve.id);
+                if (c && solve.update) {
+                    const updateObj = solve.update.$set || solve.update;
+                    // Check if properties actually changed to avoid unnecessary re-renders
+                    for (const key of Object.keys(updateObj)) {
+                        if (c[key] !== updateObj[key]) {
+                            c[key] = updateObj[key];
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            if (changed) {
+                // If anything changed, update the UI safely
+                if (document.getElementById('courses-tab-btn') && document.getElementById('courses-tab-btn').classList.contains('active')) {
+                    safeRender();
+                } else if (document.getElementById('dashboard-tab-btn') && document.getElementById('dashboard-tab-btn').classList.contains('active')) {
+                    refreshKPIs();
+                    renderRecentSolved();
+                } else if (document.getElementById('solved-tab-btn') && document.getElementById('solved-tab-btn').classList.contains('active')) {
+                    renderSolvedTab();
+                } else if (document.getElementById('verification-tab-btn') && document.getElementById('verification-tab-btn').classList.contains('active')) {
+                    renderVerificationTab();
+                }
+                
+                // If a modal is open for a course that just changed, we might want to update it, but let's keep it simple.
+            }
+        }
+    } catch(e) {
+        console.error('Failed to poll solves', e);
+    }
+}
+
+// Start polling every 10 seconds
+setInterval(pollSolves, 10000);
+
