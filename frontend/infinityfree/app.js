@@ -1348,7 +1348,7 @@ async function loadFeesData() {
     try {
         const res = await fetch('fees_data.json');
         let allFees = await res.json();
-        feesData = allFees.filter(r => r.fees_link && String(r.fees_link).trim() !== \'\' && String(r.fees_link).trim() !== \'-\');
+        feesData = allFees.filter(r => r.fees_link && String(r.fees_link).trim() !== '' && String(r.fees_link).trim() !== '-');
         // Add original index for stable sorting
         feesData.forEach((r, i) => r._idx = i + 1);
         renderFeesTab();
