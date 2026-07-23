@@ -1925,9 +1925,9 @@ class AutonomousCourseVerifier:
 
         # Check if 405 or other WAF errors appear due to injections
         page_source_lower = driver.page_source.lower()
-        if "405 " in page_source_lower or ">405<" in page_source_lower or ("405" in page_source_lower and ("not allowed" in page_source_lower or "error" in page_source_lower or "nginx" in page_source_lower or "cloudflare" in page_source_lower)):
+        if "405 " in page_source_lower or ">405<" in page_source_lower or ("405" in page_source_lower and ("not allowed" in page_source_lower or "error" in page_source_lower or "nginx" in page_source_lower or "cloudflare" in page_source_lower)) or "403 forbidden" in page_source_lower or "403 " in page_source_lower:
             if "coursera.org" not in driver.current_url:
-                print("    -> [!] 405 / WAF error detected. Clearing cookies, turning off CDP network blocks, and reloading...")
+                print("    -> [!] 403/405 / WAF error detected. Clearing cookies, turning off CDP network blocks, and reloading...")
                 self._injections_disabled = True
                 try:
                     driver.delete_all_cookies()
@@ -6760,6 +6760,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             options.page_load_strategy = 'eager'
             options.set_capability("unhandledPromptBehavior", "dismiss")
             options.add_argument('--disable-blink-features=AutomationControlled')
+            if os.environ.get("USE_TOR") == "true":
+                options.add_argument("--proxy-server=socks5://127.0.0.1:9050")
             options.add_argument('--window-size=1280,800')
             options.add_argument('--ignore-certificate-errors')
             options.set_capability('acceptInsecureCerts', True)
@@ -8811,6 +8813,10 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 new_options = uc.ChromeOptions()
                                 new_options.page_load_strategy = 'eager'
                                 new_options.add_argument('--disable-blink-features=AutomationControlled')
+                                if os.environ.get("USE_TOR") == "true":
+                                    new_options.add_argument("--proxy-server=socks5://127.0.0.1:9050")
+            if os.environ.get("USE_TOR") == "true":
+                options.add_argument("--proxy-server=socks5://127.0.0.1:9050")
                                 new_options.add_argument(f'--window-size=1280,800')
                                 new_options.add_argument('--ignore-certificate-errors')
                                 new_options.set_capability('acceptInsecureCerts', True)
