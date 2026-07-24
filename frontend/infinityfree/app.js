@@ -190,11 +190,31 @@ async function fetchAllCourses() {
     const data = await res.json();
     let docs = [];
     let pending = [];
+    
+    // Parse the static courses.json from GitHub
     if (Array.isArray(data)) {
         docs = data;
     } else {
-        docs = data.documents || [];
-        pending = data.pending_solves || [];
+        docs = data.courses || data.documents || [];
+    }
+
+    // Now fetch the real-time solves from Cloudflare Worker
+    try {
+        const solvesRes = await fetch(`${API_BASE_URL}/api/solves.json?t=${Date.now()}`);
+        if (solvesRes.ok) {
+            const solvesData = await solvesRes.json();
+            if (solvesData.pending_solves) pending = solvesData.pending_solves;
+            if (solvesData.solved) {
+                // Cloudflare might return object map { "123": {by:"..."} }
+                const mapped = Object.entries(solvesData.solved).map(([id, val]) => ({
+                    id: parseInt(id),
+                    ...val
+                }));
+                pending = pending.concat(mapped);
+            }
+        }
+    } catch (e) {
+        console.error("Failed to fetch initial solves", e);
     }
 
     // Merge server solves into localStorage (once, at page load).
