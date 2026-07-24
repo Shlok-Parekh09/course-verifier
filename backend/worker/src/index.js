@@ -270,7 +270,7 @@ export default {
     }
 
     // ─── Route: /api/unsolve-after (admin) ─────────────────────────────────
-    // Body: { "after_ist": "YYYY-MM-DD HH:MM:SS" } OR { "after_ts": <unix ms> }
+    // Body: { "after_ist": "YYYY-MM-DD HH:MM:SS" } OR { "after_ts": <unix ms> } OR { "remove_ids": [123, 456] }
     if (path === '/api/unsolve-after' && request.method === 'POST') {
       const auth = request.headers.get('Authorization');
       if (auth !== `Bearer ${env.KV_PUSH_KEY}`) {
@@ -278,6 +278,31 @@ export default {
       }
       try {
         const body = await request.json();
+        const solvedMap = await readSolvedCourses(env);
+        const removed = [];
+        const kept = {};
+        
+        // Mode 1: Remove specific IDs
+        if (body.remove_ids && Array.isArray(body.remove_ids)) {
+          const idsToRemove = new Set(body.remove_ids.map(id => String(id)));
+          for (const [id, val] of Object.entries(solvedMap)) {
+            if (val == null) continue;
+            if (idsToRemove.has(id)) {
+              removed.push({ id, ts: val.ts });
+            } else {
+              kept[id] = val;
+            }
+          }
+          await env.COURSE_DATA.put(SOLVED_COURSES_KEY, JSON.stringify(kept));
+          return jsonResponse({
+            status: 'success',
+            removed_count: removed.length,
+            remaining_count: Object.keys(kept).length,
+            removed_courses: removed,
+          }, 200, request, env);
+        }
+
+        // Mode 2: Remove by timestamp
         let cutoffMs;
 
         if (body.after_ts) {
@@ -291,10 +316,6 @@ export default {
         if (isNaN(cutoffMs)) {
           return jsonResponse({ status: 'error', message: 'Invalid timestamp' }, 400, request, env);
         }
-
-        const solvedMap = await readSolvedCourses(env);
-        const removed = [];
-        const kept = {}; // ← MUST be an object, not an array
 
         for (const [id, val] of Object.entries(solvedMap)) {
           // Guard: skip null/undefined entries from legacy migration
