@@ -299,32 +299,63 @@ async function mongoUpdateCourse(courseId, update) {
             by: currentUserId
         });
 
+        resetPollingSpeed(); // Wake up the poller since activity is happening
+
         // 3. Resolve immediately so the UI doesn't hang waiting for the batch
         resolve({ status: 'queued' });
     });
 }
 
-// ─── Live Sync (Polling) ─────────────────────────────────────────
-// To keep everyone on the same page, we fetch the latest solves from the server
-// every 10 seconds. We pause fetching if the tab is hidden to save bandwidth.
-async function pollSolves() {
-    if (document.hidden) return; // Don't poll if user is looking at another tab
+// ─── Live Sync (Adaptive Polling) ──────────────────────────────────
+// To protect Cloudflare's 100k/day limit, we use Adaptive Polling.
+// Starts fast (15s), but if no one is solving anything, it slows down
+// to 2 minutes between checks.
+let currentPollInterval = 15000;
+const MAX_POLL_INTERVAL = 120000; // 2 minutes
+let pollTimerId = null;
+let lastKnownSolveCount = 0;
 
-    try {
-        const res = await fetch(`${API_BASE_URL}/api/solves.json?t=${Date.now()}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        
-        // Merge the server's truth into our local UI
-        mergeCloudflaresolves(data);
-        applyLocalSolves();
-    } catch (e) {
-        console.error("Poll failed:", e);
+async function pollSolves() {
+    // Only poll if tab is active
+    if (!document.hidden) {
+        try {
+            const res = await fetch(`${API_BASE_URL}/api/solves.json?t=${Date.now()}`);
+            if (res.ok) {
+                const data = await res.json();
+                
+                // Merge the server's truth into our local UI
+                mergeCloudflaresolves(data);
+                applyLocalSolves();
+
+                // If someone solved something new, speed up polling!
+                const newSolveCount = Object.keys(data.solved).length;
+                if (newSolveCount !== lastKnownSolveCount) {
+                    currentPollInterval = 15000; // Reset to fast
+                    lastKnownSolveCount = newSolveCount;
+                } else {
+                    // Nobody solved anything, slow down polling gradually
+                    currentPollInterval = Math.min(currentPollInterval + 15000, MAX_POLL_INTERVAL);
+                }
+            }
+        } catch (e) {
+            console.error("Poll failed, backing off:", e);
+            currentPollInterval = Math.min(currentPollInterval + 15000, MAX_POLL_INTERVAL);
+        }
     }
+    
+    // Schedule the next poll
+    pollTimerId = setTimeout(pollSolves, currentPollInterval);
 }
 
-// Start polling every 10 seconds
-setInterval(pollSolves, 10000);
+// Start the adaptive polling cycle
+pollTimerId = setTimeout(pollSolves, currentPollInterval);
+
+// If the user clicks solve themselves, they are active. Reset polling speed.
+function resetPollingSpeed() {
+    currentPollInterval = 15000;
+    if (pollTimerId) clearTimeout(pollTimerId);
+    pollTimerId = setTimeout(pollSolves, 5000); // Check again in 5s
+}
 
 
 // ── Loader helpers ────────────────────────────────────────────────
