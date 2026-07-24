@@ -306,41 +306,70 @@ async function mongoUpdateCourse(courseId, update) {
     });
 }
 
-// ─── Live Sync (Adaptive Polling) ──────────────────────────────────
-// To protect Cloudflare's 100k/day limit, we use Adaptive Polling.
-// Starts fast (15s), but if no one is solving anything, it slows down
-// to 2 minutes between checks.
+// ─── Live Sync (Adaptive Polling & Idle Detection) ──────────────────
+// To protect Cloudflare's 100k/day limit, we use Adaptive Polling + Idle Detection.
 let currentPollInterval = 15000;
 const MAX_POLL_INTERVAL = 120000; // 2 minutes
 let pollTimerId = null;
 let lastKnownSolveCount = 0;
 
-async function pollSolves() {
-    // Only poll if tab is active
-    if (!document.hidden) {
-        try {
-            const res = await fetch(`${API_BASE_URL}/api/solves.json?t=${Date.now()}`);
-            if (res.ok) {
-                const data = await res.json();
-                
-                // Merge the server's truth into our local UI
-                mergeCloudflaresolves(data);
-                applyLocalSolves();
+let lastActivityTime = Date.now();
+const IDLE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 
-                // If someone solved something new, speed up polling!
-                const newSolveCount = Object.keys(data.solved).length;
-                if (newSolveCount !== lastKnownSolveCount) {
-                    currentPollInterval = 15000; // Reset to fast
-                    lastKnownSolveCount = newSolveCount;
-                } else {
-                    // Nobody solved anything, slow down polling gradually
-                    currentPollInterval = Math.min(currentPollInterval + 15000, MAX_POLL_INTERVAL);
-                }
+// Reset idle timer when user interacts with the page
+function markUserActive() {
+    lastActivityTime = Date.now();
+    if (pollTimerId === null) {
+        // User woke up! Restart the polling loop instantly.
+        console.log("User active, resuming live sync...");
+        currentPollInterval = 15000; 
+        pollSolves();
+    }
+}
+
+// Track normal interactions
+window.addEventListener('mousemove', markUserActive, {passive: true});
+window.addEventListener('keydown', markUserActive, {passive: true});
+window.addEventListener('scroll', markUserActive, {passive: true});
+window.addEventListener('click', markUserActive, {passive: true});
+
+async function pollSolves() {
+    // If the tab is hidden, don't waste API calls.
+    if (document.hidden) {
+        pollTimerId = setTimeout(pollSolves, 15000); 
+        return;
+    }
+
+    // If they left their computer on for 5+ minutes without moving the mouse, pause completely.
+    if (Date.now() - lastActivityTime > IDLE_TIMEOUT) {
+        console.log("Polling paused due to 5 minutes of inactivity.");
+        clearTimeout(pollTimerId);
+        pollTimerId = null; // Break the loop completely
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/solves.json?t=${Date.now()}`);
+        if (res.ok) {
+            const data = await res.json();
+            
+            // Merge the server's truth into our local UI
+            mergeCloudflaresolves(data);
+            applyLocalSolves();
+
+            // If someone solved something new, speed up polling!
+            const newSolveCount = Object.keys(data.solved).length;
+            if (newSolveCount !== lastKnownSolveCount) {
+                currentPollInterval = 15000; // Reset to fast
+                lastKnownSolveCount = newSolveCount;
+            } else {
+                // Nobody solved anything, slow down polling gradually
+                currentPollInterval = Math.min(currentPollInterval + 15000, MAX_POLL_INTERVAL);
             }
-        } catch (e) {
-            console.error("Poll failed, backing off:", e);
-            currentPollInterval = Math.min(currentPollInterval + 15000, MAX_POLL_INTERVAL);
         }
+    } catch (e) {
+        console.error("Poll failed, backing off:", e);
+        currentPollInterval = Math.min(currentPollInterval + 15000, MAX_POLL_INTERVAL);
     }
     
     // Schedule the next poll
@@ -352,9 +381,7 @@ pollTimerId = setTimeout(pollSolves, currentPollInterval);
 
 // If the user clicks solve themselves, they are active. Reset polling speed.
 function resetPollingSpeed() {
-    currentPollInterval = 15000;
-    if (pollTimerId) clearTimeout(pollTimerId);
-    pollTimerId = setTimeout(pollSolves, 5000); // Check again in 5s
+    markUserActive();
 }
 
 
