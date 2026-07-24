@@ -182,7 +182,7 @@ const API_BASE_URL = 'https://course-verifier-api.shlokparekh08.workers.dev';
  */
 async function fetchAllCourses() {
     setLoaderSub('Fetching courses from database…');
-    const res = await fetch(`${API_BASE_URL}/api/courses.json`);
+    const res = await fetch(`./data/courses.json`);
     if (!res.ok) {
         const err = await res.text();
         throw new Error(`API error ${res.status}: ${err}`);
@@ -299,91 +299,10 @@ async function mongoUpdateCourse(courseId, update) {
             by: currentUserId
         });
 
-        resetPollingSpeed(); // Wake up the poller since activity is happening
-
         // 3. Resolve immediately so the UI doesn't hang waiting for the batch
         resolve({ status: 'queued' });
     });
 }
-
-// ─── Live Sync (Adaptive Polling & Idle Detection) ──────────────────
-// To protect Cloudflare's 100k/day limit, we use Adaptive Polling + Idle Detection.
-let currentPollInterval = 15000;
-const MAX_POLL_INTERVAL = 120000; // 2 minutes
-let pollTimerId = null;
-let lastKnownSolveCount = 0;
-
-let lastActivityTime = Date.now();
-const IDLE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
-
-// Reset idle timer when user interacts with the page
-function markUserActive() {
-    lastActivityTime = Date.now();
-    if (pollTimerId === null) {
-        // User woke up! Restart the polling loop instantly.
-        console.log("User active, resuming live sync...");
-        currentPollInterval = 15000; 
-        pollSolves();
-    }
-}
-
-// Track normal interactions
-window.addEventListener('mousemove', markUserActive, {passive: true});
-window.addEventListener('keydown', markUserActive, {passive: true});
-window.addEventListener('scroll', markUserActive, {passive: true});
-window.addEventListener('click', markUserActive, {passive: true});
-
-async function pollSolves() {
-    // If the tab is hidden, don't waste API calls.
-    if (document.hidden) {
-        pollTimerId = setTimeout(pollSolves, 15000); 
-        return;
-    }
-
-    // If they left their computer on for 5+ minutes without moving the mouse, pause completely.
-    if (Date.now() - lastActivityTime > IDLE_TIMEOUT) {
-        console.log("Polling paused due to 5 minutes of inactivity.");
-        clearTimeout(pollTimerId);
-        pollTimerId = null; // Break the loop completely
-        return;
-    }
-
-    try {
-        const res = await fetch(`${API_BASE_URL}/api/solves.json?t=${Date.now()}`);
-        if (res.ok) {
-            const data = await res.json();
-            
-            // Merge the server's truth into our local UI
-            mergeCloudflaresolves(data);
-            applyLocalSolves();
-
-            // If someone solved something new, speed up polling!
-            const newSolveCount = Object.keys(data.solved).length;
-            if (newSolveCount !== lastKnownSolveCount) {
-                currentPollInterval = 15000; // Reset to fast
-                lastKnownSolveCount = newSolveCount;
-            } else {
-                // Nobody solved anything, slow down polling gradually
-                currentPollInterval = Math.min(currentPollInterval + 15000, MAX_POLL_INTERVAL);
-            }
-        }
-    } catch (e) {
-        console.error("Poll failed, backing off:", e);
-        currentPollInterval = Math.min(currentPollInterval + 15000, MAX_POLL_INTERVAL);
-    }
-    
-    // Schedule the next poll
-    pollTimerId = setTimeout(pollSolves, currentPollInterval);
-}
-
-// Start the adaptive polling cycle
-pollTimerId = setTimeout(pollSolves, currentPollInterval);
-
-// If the user clicks solve themselves, they are active. Reset polling speed.
-function resetPollingSpeed() {
-    markUserActive();
-}
-
 
 // ── Loader helpers ────────────────────────────────────────────────
 
