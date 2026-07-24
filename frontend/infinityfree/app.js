@@ -1517,6 +1517,6 @@ async function pollSolves() {
     }
 }
 
-// Start polling every 10 seconds
-setInterval(pollSolves, 10000);
+// Start polling every 60 seconds (matches Cloudflare edge cache TTL)
+setInterval(pollSolves, 60000);
 

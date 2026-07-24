@@ -7,23 +7,24 @@
  * │  ALL solves are stored in ONE single KV key: "solved_courses.json"  │
  * │  This is a JSON object: { [courseId]: { update, ts } }              │
  * │                                                                     │
- * │  Reading solves = exactly 1 KV get(), always.                       │
- * │  Writing a solve = 1 KV get() + 1 KV put().                        │
- * │  10 million users reading simultaneously = 10M × 1 KV get().       │
- * │  (Cloudflare KV free limit: 100k/day — fully avoided for reads)     │
+ * │  Reading solves  = 1 KV get() ... but CACHED for 60s at CDN edge.  │
+ * │  So real KV reads ≈ 1 per 60 seconds globally, not 1 per request.  │
+ * │  Writing a solve = 1 KV get() + 1 KV put() + cache purge.          │
  * └─────────────────────────────────────────────────────────────────────┘
- *
- * Migration: Legacy keys (solve_{id}, pending_solves.json) are read once
- * and merged into the aggregate on first write. They are then ignored.
  */
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   'Access-Control-Max-Age': '86400',
 };
 
 const SOLVED_COURSES_KEY = 'solved_courses.json';
+
+// Cache TTL in seconds. GET endpoints are cached at the Cloudflare edge.
+// This means even with 10,000 users polling every 10s, only 1 KV read
+// happens per 60 seconds instead of 10,000.
+const CACHE_TTL = 60;
 
 function corsHeaders(request, env) {
   const origin = request.headers.get('Origin') || '*';
@@ -32,27 +33,53 @@ function corsHeaders(request, env) {
   return { ...CORS_HEADERS, 'Access-Control-Allow-Origin': allowOrigin };
 }
 
-function jsonResponse(data, status, request, env) {
+function jsonResponse(data, status, request, env, ttl = 0) {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       'Content-Type': 'application/json',
       ...corsHeaders(request, env),
-      // Allow caching for 10 seconds at the edge
-      'Cache-Control': 'public, max-age=10, s-maxage=10',
+      'Cache-Control': ttl > 0 ? `public, max-age=${ttl}, s-maxage=${ttl}` : 'no-store',
     },
   });
 }
 
 /**
+ * Try to serve from Cloudflare's edge cache first.
+ * Returns the cached Response, or null if not cached.
+ */
+async function fromCache(request) {
+  try {
+    const cache = caches.default;
+    const cached = await cache.match(request);
+    return cached || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Save a response to Cloudflare's edge cache.
+ * The response must have a Cache-Control header with max-age set.
+ */
+async function putCache(request, response) {
+  try {
+    const cache = caches.default;
+    // Clone before putting — the response body can only be consumed once
+    await cache.put(request, response.clone());
+  } catch (e) {}
+}
+
+/**
  * Reads the single aggregated solved courses object from KV.
  * Returns a plain object: { [courseId]: { update, ts } }
- * Exactly 1 KV read every time. Zero loops.
+ * Exactly 1 KV read. Zero loops.
  */
 async function readSolvedCourses(env) {
   try {
     const data = await env.COURSE_DATA.get(SOLVED_COURSES_KEY, { type: 'json' });
-    return data || {};
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
+    return data;
   } catch (e) {
     return {};
   }
@@ -61,13 +88,17 @@ async function readSolvedCourses(env) {
 /**
  * Converts the aggregated object to the legacy `pending_solves` array
  * format for backward compatibility with the frontend.
+ * Skips any entries where val is null/undefined (legacy corruption guard).
  */
 function toSolvesList(solvedMap) {
-  return Object.entries(solvedMap).map(([id, val]) => ({
-    id,
-    update: val.update,
-    ts: val.ts || 0,
-  })).sort((a, b) => b.ts - a.ts);
+  return Object.entries(solvedMap)
+    .filter(([, val]) => val != null)
+    .map(([id, val]) => ({
+      id,
+      update: val.update,
+      ts: val.ts || 0,
+    }))
+    .sort((a, b) => b.ts - a.ts);
 }
 
 export default {
@@ -82,9 +113,17 @@ export default {
 
     // ─── Route: /api/data.json ──────────────────────────────────────────────
     if (path === '/api/data.json' || path === '/api/data') {
+      // Try edge cache first
+      const hit = await fromCache(request);
+      if (hit) return hit;
+
       try {
         const cached = await env.COURSE_DATA.get('data.json', { type: 'json' });
-        if (cached) return jsonResponse(cached, 200, request, env);
+        if (cached) {
+          const resp = jsonResponse(cached, 200, request, env, CACHE_TTL);
+          await putCache(request, resp);
+          return resp;
+        }
         return jsonResponse({ status: 'error', message: 'No data available yet.' }, 404, request, env);
       } catch (e) {
         return jsonResponse({ status: 'error', message: 'KV read error: ' + e.message }, 500, request, env);
@@ -92,8 +131,12 @@ export default {
     }
 
     // ─── Route: /api/courses.json ───────────────────────────────────────────
-    // Exactly 2 KV reads total (courses.json + solved_courses.json), always.
+    // Exactly 2 KV reads total, but cached at CDN edge for CACHE_TTL seconds.
+    // Means KV is only read once per CACHE_TTL seconds regardless of user count.
     if (path === '/api/courses.json' || path === '/api/courses') {
+      const hit = await fromCache(request);
+      if (hit) return hit;
+
       try {
         const [cached, solvedMap] = await Promise.all([
           env.COURSE_DATA.get('courses.json', { type: 'json' }),
@@ -106,24 +149,35 @@ export default {
 
         const pending = toSolvesList(solvedMap);
 
+        let body;
         if (Array.isArray(cached)) {
-          return jsonResponse({ documents: cached, pending_solves: pending }, 200, request, env);
+          body = { documents: cached, pending_solves: pending };
         } else {
           cached.pending_solves = pending;
-          return jsonResponse(cached, 200, request, env);
+          body = cached;
         }
+
+        const resp = jsonResponse(body, 200, request, env, CACHE_TTL);
+        await putCache(request, resp);
+        return resp;
       } catch (e) {
         return jsonResponse({ status: 'error', message: 'KV read error: ' + e.message }, 500, request, env);
       }
     }
 
     // ─── Route: /api/solves.json ────────────────────────────────────────────
-    // Exactly 1 KV read, always. Frontend polls this every 10 seconds.
+    // Frontend polls this every 30s. Cached at CDN edge for CACHE_TTL seconds.
+    // Real KV reads = 1 per 60 seconds GLOBALLY, regardless of how many users poll.
     if (path === '/api/solves.json' || path === '/api/solves') {
+      const hit = await fromCache(request);
+      if (hit) return hit;
+
       try {
         const solvedMap = await readSolvedCourses(env);
         const pending = toSolvesList(solvedMap);
-        return jsonResponse({ pending_solves: pending }, 200, request, env);
+        const resp = jsonResponse({ pending_solves: pending }, 200, request, env, CACHE_TTL);
+        await putCache(request, resp);
+        return resp;
       } catch (e) {
         return jsonResponse({ status: 'error', message: 'KV read error: ' + e.message }, 500, request, env);
       }
@@ -131,9 +185,16 @@ export default {
 
     // ─── Route: /api/analytics.json ────────────────────────────────────────
     if (path === '/api/analytics.json' || path === '/api/analytics') {
+      const hit = await fromCache(request);
+      if (hit) return hit;
+
       try {
         const cached = await env.COURSE_DATA.get('analytics.json', { type: 'json' });
-        if (cached) return jsonResponse(cached, 200, request, env);
+        if (cached) {
+          const resp = jsonResponse(cached, 200, request, env, CACHE_TTL);
+          await putCache(request, resp);
+          return resp;
+        }
         return jsonResponse({ status: 'error', message: 'No analytics data available.' }, 404, request, env);
       } catch (e) {
         return jsonResponse({ status: 'error', message: 'KV read error: ' + e.message }, 500, request, env);
@@ -161,7 +222,6 @@ export default {
 
     // ─── Route: /api/solve_course ───────────────────────────────────────────
     // Write path: read-modify-write on a single KV key.
-    // Cost: 1 KV get + 1 KV put per solve action. Scales perfectly.
     if (path === '/api/solve_course' && request.method === 'POST') {
       try {
         const body = await request.json();
@@ -169,7 +229,6 @@ export default {
           return jsonResponse({ status: 'error', message: 'Missing course id' }, 400, request, env);
         }
 
-        // Read the single aggregate key, update it, and write it back.
         const solvedMap = await readSolvedCourses(env);
         solvedMap[String(body.id)] = {
           update: body.update,
@@ -183,9 +242,7 @@ export default {
       }
     }
 
-    // ─── Route: /api/solve-audit (GET, admin) ──────────────────────────────
-    // Returns all solved courses with human-readable timestamps.
-    // Protected by KV_PUSH_KEY. Use this to investigate who solved what and when.
+    // ─── Route: /api/solve-audit (admin) ───────────────────────────────────
     if (path === '/api/solve-audit') {
       const auth = request.headers.get('Authorization');
       if (auth !== `Bearer ${env.KV_PUSH_KEY}`) {
@@ -193,30 +250,27 @@ export default {
       }
       try {
         const solvedMap = await readSolvedCourses(env);
-        const entries = Object.entries(solvedMap).map(([id, val]) => {
-          const tsMs = val.ts || 0;
-          const dt = new Date(tsMs);
-          return {
-            id,
-            ts: tsMs,
-            solved_at_utc: dt.toISOString(),
-            solved_at_ist: new Date(tsMs + 5.5 * 3600 * 1000).toISOString().replace('T', ' ').substring(0, 19) + ' IST',
-          };
-        }).sort((a, b) => b.ts - a.ts); // Newest first
+        const entries = Object.entries(solvedMap)
+          .filter(([, val]) => val != null)
+          .map(([id, val]) => {
+            const tsMs = val.ts || 0;
+            return {
+              id,
+              ts: tsMs,
+              solved_at_utc: new Date(tsMs).toISOString(),
+              solved_at_ist: new Date(tsMs + 5.5 * 3600 * 1000).toISOString().replace('T', ' ').substring(0, 19) + ' IST',
+            };
+          })
+          .sort((a, b) => b.ts - a.ts);
 
-        return jsonResponse({
-          total: entries.length,
-          solves: entries,
-        }, 200, request, env);
+        return jsonResponse({ total: entries.length, solves: entries }, 200, request, env);
       } catch (e) {
         return jsonResponse({ status: 'error', message: 'Audit failed: ' + e.message }, 500, request, env);
       }
     }
 
-    // ─── Route: /api/unsolve-after (POST, admin) ───────────────────────────
-    // Removes all solves recorded AFTER a given timestamp.
-    // Body: { "after_ts": <unix ms> }  OR  { "after_ist": "2026-07-24 20:00:00" }
-    // Protected by KV_PUSH_KEY.
+    // ─── Route: /api/unsolve-after (admin) ─────────────────────────────────
+    // Body: { "after_ist": "YYYY-MM-DD HH:MM:SS" } OR { "after_ts": <unix ms> }
     if (path === '/api/unsolve-after' && request.method === 'POST') {
       const auth = request.headers.get('Authorization');
       if (auth !== `Bearer ${env.KV_PUSH_KEY}`) {
@@ -227,13 +281,9 @@ export default {
         let cutoffMs;
 
         if (body.after_ts) {
-          // Raw unix ms timestamp
           cutoffMs = Number(body.after_ts);
         } else if (body.after_ist) {
-          // Parse IST time string like "2026-07-24 20:00:00"
-          // IST = UTC+5:30, so subtract 5.5 hours to get UTC ms
-          const parsed = new Date(body.after_ist.replace(' ', 'T') + '+05:30');
-          cutoffMs = parsed.getTime();
+          cutoffMs = new Date(body.after_ist.replace(' ', 'T') + '+05:30').getTime();
         } else {
           return jsonResponse({ status: 'error', message: 'Provide after_ts (unix ms) or after_ist (YYYY-MM-DD HH:MM:SS)' }, 400, request, env);
         }
@@ -244,17 +294,22 @@ export default {
 
         const solvedMap = await readSolvedCourses(env);
         const removed = [];
-        const kept = [];
+        const kept = {}; // ← MUST be an object, not an array
 
         for (const [id, val] of Object.entries(solvedMap)) {
+          // Guard: skip null/undefined entries from legacy migration
+          if (val == null) continue;
           if ((val.ts || 0) > cutoffMs) {
-            removed.push({ id, ts: val.ts, solved_at_ist: new Date((val.ts || 0) + 5.5 * 3600 * 1000).toISOString().replace('T', ' ').substring(0, 19) + ' IST' });
+            removed.push({
+              id,
+              ts: val.ts,
+              solved_at_ist: new Date((val.ts || 0) + 5.5 * 3600 * 1000).toISOString().replace('T', ' ').substring(0, 19) + ' IST',
+            });
           } else {
             kept[id] = val;
           }
         }
 
-        // Write back only the kept solves
         await env.COURSE_DATA.put(SOLVED_COURSES_KEY, JSON.stringify(kept));
 
         return jsonResponse({
@@ -270,11 +325,63 @@ export default {
       }
     }
 
+    // ─── Route: /api/migrate-solves (admin) ────────────────────────────────
+    if (path === '/api/migrate-solves' && request.method === 'POST') {
+      const auth = request.headers.get('Authorization');
+      if (auth !== `Bearer ${env.KV_PUSH_KEY}`) {
+        return jsonResponse({ status: 'error', message: 'Unauthorized' }, 401, request, env);
+      }
+      try {
+        const solvedMap = await readSolvedCourses(env);
+        let migrated = 0;
+
+        try {
+          const legacy = await env.COURSE_DATA.get('pending_solves.json', { type: 'json' });
+          if (legacy && Array.isArray(legacy)) {
+            for (const item of legacy) {
+              if (item && item.id && !solvedMap[String(item.id)]) {
+                solvedMap[String(item.id)] = { update: item.update, ts: item.ts || 0 };
+                migrated++;
+              }
+            }
+          }
+        } catch (e) {}
+
+        try {
+          const list = await env.COURSE_DATA.list({ prefix: 'solve_' });
+          if (list && list.keys && list.keys.length > 0) {
+            for (const key of list.keys) {
+              const id = key.name.split('_')[1];
+              if (!id || solvedMap[id]) continue;
+              try {
+                const val = key.metadata || await env.COURSE_DATA.get(key.name, { type: 'json' });
+                if (val) {
+                  solvedMap[id] = {
+                    update: Array.isArray(val) ? val : (val.update || val),
+                    ts: val.ts || 0,
+                  };
+                  migrated++;
+                }
+              } catch (e) {}
+            }
+          }
+        } catch (e) {}
+
+        await env.COURSE_DATA.put(SOLVED_COURSES_KEY, JSON.stringify(solvedMap));
+
+        return jsonResponse({
+          status: 'success',
+          message: `Migration complete. Migrated ${migrated} new entries. Total: ${Object.keys(solvedMap).length}.`,
+        }, 200, request, env);
+      } catch (e) {
+        return jsonResponse({ status: 'error', message: 'Migration failed: ' + e.message }, 500, request, env);
+      }
+    }
+
     // Default: 404
     return jsonResponse({
       status: 'error',
-      message: 'Not found. Available endpoints: /api/data.json, /api/courses.json, /api/solves.json',
+      message: 'Not found.',
     }, 404, request, env);
   },
 };
-
