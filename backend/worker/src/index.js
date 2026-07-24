@@ -97,6 +97,7 @@ function toSolvesList(solvedMap) {
       id,
       update: val.update,
       ts: val.ts || 0,
+      by: val.by || 'unknown'
     }))
     .sort((a, b) => b.ts - a.ts);
 }
@@ -222,21 +223,32 @@ export default {
 
     // ─── Route: /api/solve_course ───────────────────────────────────────────
     // Write path: read-modify-write on a single KV key.
+    // Now supports batching to drastically reduce KV writes and request counts.
     if (path === '/api/solve_course' && request.method === 'POST') {
       try {
         const body = await request.json();
-        if (!body.id) {
-          return jsonResponse({ status: 'error', message: 'Missing course id' }, 400, request, env);
+        const solvesToProcess = body.solves ? body.solves : (body.id ? [body] : []);
+        
+        if (solvesToProcess.length === 0) {
+          return jsonResponse({ status: 'error', message: 'No solves provided' }, 400, request, env);
         }
 
         const solvedMap = await readSolvedCourses(env);
-        solvedMap[String(body.id)] = {
-          update: body.update,
-          ts: Date.now(),
-        };
+        const now = Date.now();
+        
+        for (const solve of solvesToProcess) {
+          if (solve.id) {
+            solvedMap[String(solve.id)] = {
+              update: solve.update,
+              ts: now,
+              by: solve.by || 'unknown'
+            };
+          }
+        }
+        
         await env.COURSE_DATA.put(SOLVED_COURSES_KEY, JSON.stringify(solvedMap));
 
-        return jsonResponse({ status: 'success', message: 'Solve recorded' }, 200, request, env);
+        return jsonResponse({ status: 'success', message: `Recorded ${solvesToProcess.length} solves` }, 200, request, env);
       } catch (e) {
         return jsonResponse({ status: 'error', message: 'Failed to record solve: ' + e.message }, 500, request, env);
       }
@@ -257,6 +269,7 @@ export default {
             return {
               id,
               ts: tsMs,
+              by: val.by || 'unknown',
               solved_at_utc: new Date(tsMs).toISOString(),
               solved_at_ist: new Date(tsMs + 5.5 * 3600 * 1000).toISOString().replace('T', ' ').substring(0, 19) + ' IST',
             };

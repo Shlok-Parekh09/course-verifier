@@ -229,31 +229,78 @@ async function fetchAllCourses() {
 /**
  * Write an updated course back to the Cloudflare Worker queue.
  */
-let solveQueue = Promise.resolve();
+// ─── User Identification ───────────────────────────────────────────
+let currentUserId = localStorage.getItem('cv_user_id');
+if (!currentUserId) {
+    currentUserId = 'user_' + Math.random().toString(36).substring(2, 9);
+    localStorage.setItem('cv_user_id', currentUserId);
+}
+
+// ─── Batched Solve Queue ─────────────────────────────────────────
+// Instead of sending 1 request per solve, we queue them up and send
+// them all at once every 10 seconds. If 100k users each do 10 solves
+// quickly, this turns 1,000,000 requests into 100k requests max.
+let pendingSolveQueue = [];
+let isFlushingQueue = false;
+
+async function flushSolveQueue() {
+    if (pendingSolveQueue.length === 0 || isFlushingQueue) return;
+    isFlushingQueue = true;
+    
+    // Grab everything currently in the queue
+    const batch = [...pendingSolveQueue];
+    pendingSolveQueue = []; // clear it immediately so new clicks start a new batch
+    
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/solve_course`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ solves: batch })
+        });
+        
+        if (!res.ok) {
+            console.error('Failed to flush solve queue', await res.text());
+            // Put them back in the queue to try again later
+            pendingSolveQueue = [...batch, ...pendingSolveQueue];
+        }
+    } catch (err) {
+        console.error('Network error flushing solve queue', err);
+        // Put them back in the queue to try again later
+        pendingSolveQueue = [...batch, ...pendingSolveQueue];
+    } finally {
+        isFlushingQueue = false;
+    }
+}
+
+// Flush the queue every 10 seconds automatically
+setInterval(flushSolveQueue, 10000);
+// Also try to flush when the user leaves the page
+window.addEventListener('beforeunload', () => {
+    if (pendingSolveQueue.length > 0) {
+        // Use keepalive for page unloads
+        fetch(`${API_BASE_URL}/api/solve_course`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ solves: pendingSolveQueue }),
+            keepalive: true
+        }).catch(e => console.error(e));
+    }
+});
 
 async function mongoUpdateCourse(courseId, update) {
     return new Promise((resolve, reject) => {
-        // Write to localStorage FIRST — instant, no network needed
+        // 1. Write to localStorage FIRST — instant UI response, zero network delay
         lsSetSolve(courseId, update);
 
-        solveQueue = solveQueue.then(async () => {
-            try {
-                const res = await fetch(`${API_BASE_URL}/api/solve_course`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id: courseId, update: update })
-                });
-                if (!res.ok) {
-                    const err = await res.text();
-                    throw new Error(`API error ${res.status}: ${err}`);
-                }
-                const data = await res.json();
-                resolve(data);
-            } catch (err) {
-                // localStorage already updated — user sees the change even if network fails
-                reject(err);
-            }
-        }).catch(() => {});
+        // 2. Add to the background queue with the user's ID
+        pendingSolveQueue.push({
+            id: courseId,
+            update: update,
+            by: currentUserId
+        });
+
+        // 3. Resolve immediately so the UI doesn't hang waiting for the batch
+        resolve({ status: 'queued' });
     });
 }
 
