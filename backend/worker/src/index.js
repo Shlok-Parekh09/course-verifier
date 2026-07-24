@@ -183,64 +183,90 @@ export default {
       }
     }
 
-    // ─── Route: /api/migrate-solves ─────────────────────────────────────────
-    // One-time migration endpoint. Call this once from Cloudflare dashboard to
-    // consolidate all legacy solve_{id} and pending_solves.json keys into the
-    // single solved_courses.json aggregate. Safe to call multiple times.
-    if (path === '/api/migrate-solves' && request.method === 'POST') {
+    // ─── Route: /api/solve-audit (GET, admin) ──────────────────────────────
+    // Returns all solved courses with human-readable timestamps.
+    // Protected by KV_PUSH_KEY. Use this to investigate who solved what and when.
+    if (path === '/api/solve-audit') {
       const auth = request.headers.get('Authorization');
       if (auth !== `Bearer ${env.KV_PUSH_KEY}`) {
         return jsonResponse({ status: 'error', message: 'Unauthorized' }, 401, request, env);
       }
       try {
         const solvedMap = await readSolvedCourses(env);
-        let migrated = 0;
+        const entries = Object.entries(solvedMap).map(([id, val]) => {
+          const tsMs = val.ts || 0;
+          const dt = new Date(tsMs);
+          return {
+            id,
+            ts: tsMs,
+            solved_at_utc: dt.toISOString(),
+            solved_at_ist: new Date(tsMs + 5.5 * 3600 * 1000).toISOString().replace('T', ' ').substring(0, 19) + ' IST',
+          };
+        }).sort((a, b) => b.ts - a.ts); // Newest first
 
-        // Migrate legacy pending_solves.json (array format)
-        try {
-          const legacy = await env.COURSE_DATA.get('pending_solves.json', { type: 'json' });
-          if (legacy && Array.isArray(legacy)) {
-            for (const item of legacy) {
-              if (item.id && !solvedMap[String(item.id)]) {
-                solvedMap[String(item.id)] = { update: item.update, ts: item.ts || 0 };
-                migrated++;
-              }
-            }
+        return jsonResponse({
+          total: entries.length,
+          solves: entries,
+        }, 200, request, env);
+      } catch (e) {
+        return jsonResponse({ status: 'error', message: 'Audit failed: ' + e.message }, 500, request, env);
+      }
+    }
+
+    // ─── Route: /api/unsolve-after (POST, admin) ───────────────────────────
+    // Removes all solves recorded AFTER a given timestamp.
+    // Body: { "after_ts": <unix ms> }  OR  { "after_ist": "2026-07-24 20:00:00" }
+    // Protected by KV_PUSH_KEY.
+    if (path === '/api/unsolve-after' && request.method === 'POST') {
+      const auth = request.headers.get('Authorization');
+      if (auth !== `Bearer ${env.KV_PUSH_KEY}`) {
+        return jsonResponse({ status: 'error', message: 'Unauthorized' }, 401, request, env);
+      }
+      try {
+        const body = await request.json();
+        let cutoffMs;
+
+        if (body.after_ts) {
+          // Raw unix ms timestamp
+          cutoffMs = Number(body.after_ts);
+        } else if (body.after_ist) {
+          // Parse IST time string like "2026-07-24 20:00:00"
+          // IST = UTC+5:30, so subtract 5.5 hours to get UTC ms
+          const parsed = new Date(body.after_ist.replace(' ', 'T') + '+05:30');
+          cutoffMs = parsed.getTime();
+        } else {
+          return jsonResponse({ status: 'error', message: 'Provide after_ts (unix ms) or after_ist (YYYY-MM-DD HH:MM:SS)' }, 400, request, env);
+        }
+
+        if (isNaN(cutoffMs)) {
+          return jsonResponse({ status: 'error', message: 'Invalid timestamp' }, 400, request, env);
+        }
+
+        const solvedMap = await readSolvedCourses(env);
+        const removed = [];
+        const kept = [];
+
+        for (const [id, val] of Object.entries(solvedMap)) {
+          if ((val.ts || 0) > cutoffMs) {
+            removed.push({ id, ts: val.ts, solved_at_ist: new Date((val.ts || 0) + 5.5 * 3600 * 1000).toISOString().replace('T', ' ').substring(0, 19) + ' IST' });
+          } else {
+            kept[id] = val;
           }
-        } catch (e) {}
+        }
 
-        // Migrate legacy solve_{id} keys (iterate using list)
-        try {
-          const list = await env.COURSE_DATA.list({ prefix: 'solve_' });
-          if (list && list.keys && list.keys.length > 0) {
-            for (const key of list.keys) {
-              const id = key.name.split('_')[1];
-              if (!id) continue;
-              if (!solvedMap[id]) {
-                try {
-                  const val = key.metadata || await env.COURSE_DATA.get(key.name, { type: 'json' });
-                  if (val) {
-                    solvedMap[id] = {
-                      update: Array.isArray(val) ? val : (val.update || val),
-                      ts: val.ts || 0,
-                    };
-                    migrated++;
-                  }
-                } catch (e) {}
-              }
-            }
-          }
-        } catch (e) {}
-
-        // Save the consolidated map
-        await env.COURSE_DATA.put(SOLVED_COURSES_KEY, JSON.stringify(solvedMap));
+        // Write back only the kept solves
+        await env.COURSE_DATA.put(SOLVED_COURSES_KEY, JSON.stringify(kept));
 
         return jsonResponse({
           status: 'success',
-          message: `Migration complete. Migrated ${migrated} new entries. Total in aggregate: ${Object.keys(solvedMap).length}.`,
+          cutoff_utc: new Date(cutoffMs).toISOString(),
+          cutoff_ist: new Date(cutoffMs + 5.5 * 3600 * 1000).toISOString().replace('T', ' ').substring(0, 19) + ' IST',
+          removed_count: removed.length,
+          remaining_count: Object.keys(kept).length,
+          removed_courses: removed,
         }, 200, request, env);
       } catch (e) {
-        return jsonResponse({ status: 'error', message: 'Migration failed: ' + e.message }, 500, request, env);
+        return jsonResponse({ status: 'error', message: 'Unsolve failed: ' + e.message }, 500, request, env);
       }
     }
 
@@ -251,3 +277,4 @@ export default {
     }, 404, request, env);
   },
 };
+
