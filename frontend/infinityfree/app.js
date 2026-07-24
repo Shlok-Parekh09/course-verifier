@@ -197,28 +197,13 @@ async function fetchAllCourses() {
         pending = data.pending_solves || [];
     }
 
-    // Apply pending solves from Edge queue
-    for (const solve of pending) {
-        const c = docs.find(x => x.id == solve.id);
-        if (c && solve.update) {
-            // handle $set update structure if present
-            const updateObj = solve.update.$set || solve.update;
-            Object.assign(c, updateObj);
-        }
-    }
+    // Merge server solves into localStorage (once, at page load).
+    // Server is authoritative for solves other users did on other browsers.
+    mergeCloudflaresolves(pending);
 
-    // Apply local optimistic solves to instantly fix KV edge cache delays
-    try {
-        const localSolves = JSON.parse(localStorage.getItem('cv_pending_solves') || '{}');
-        for (const [id, updateObj] of Object.entries(localSolves)) {
-            const c = docs.find(x => x.id == id);
-            if (c) {
-                Object.assign(c, updateObj);
-            }
-        }
-    } catch(e) {
-        console.error("Local solve cache error", e);
-    }
+    // Apply all localStorage solves to the in-memory course list.
+    // This covers both server-synced solves and local optimistic solves.
+    applyLocalSolves(docs);
 
     // Normalize Course Types
     for (const c of docs) {
@@ -248,6 +233,9 @@ let solveQueue = Promise.resolve();
 
 async function mongoUpdateCourse(courseId, update) {
     return new Promise((resolve, reject) => {
+        // Write to localStorage FIRST — instant, no network needed
+        lsSetSolve(courseId, update);
+
         solveQueue = solveQueue.then(async () => {
             try {
                 const res = await fetch(`${API_BASE_URL}/api/solve_course`, {
@@ -260,23 +248,15 @@ async function mongoUpdateCourse(courseId, update) {
                     throw new Error(`API error ${res.status}: ${err}`);
                 }
                 const data = await res.json();
-                
-                // Cache locally so page reloads instantly reflect the solve before Cloudflare KV edge cache propagates (which can take 60s)
-                try {
-                    const localSolves = JSON.parse(localStorage.getItem('cv_pending_solves') || '{}');
-                    localSolves[courseId] = update;
-                    localStorage.setItem('cv_pending_solves', JSON.stringify(localSolves));
-                } catch(e) {}
-
                 resolve(data);
             } catch (err) {
+                // localStorage already updated — user sees the change even if network fails
                 reject(err);
             }
-        }).catch(() => {
-            // Prevent a single network failure from breaking the queue for future clicks
-        });
+        }).catch(() => {});
     });
 }
+
 
 // ── Loader helpers ────────────────────────────────────────────────
 
@@ -1472,51 +1452,85 @@ function initFeesTab() {
 }
 
 
-// --- Background Polling for Live Sync ---
-async function pollSolves() {
-    if (!allCourses || allCourses.length === 0) return;
+// ─────────────────────────────────────────────────────────────────
+// SOLVE STORAGE: localStorage-first, Cloudflare write-through
+//
+// All solves are stored in localStorage under 'cv_solves'.
+// Structure: { [courseId]: { update: {...}, ts: <unix ms> } }
+//
+// On page load: Cloudflare solves are merged INTO localStorage once.
+// On solve: written to localStorage immediately + posted to Cloudflare.
+// On unsolve: removed from localStorage immediately + posted to Cloudflare.
+// Zero ongoing network/KV reads after the initial page load.
+// ─────────────────────────────────────────────────────────────────
+
+const LS_SOLVES_KEY = 'cv_solves';
+
+/** Read the full solves map from localStorage */
+function lsGetSolves() {
     try {
-        const res = await fetch(`${API_BASE_URL}/api/solves.json`);
-        if (res.ok) {
-            const data = await res.json();
-            const pending = data.pending_solves || [];
-            window.globalPendingSolves = pending;
-            let changed = false;
-            
-            for (const solve of pending) {
-                const c = allCourses.find(x => x.id == solve.id);
-                if (c && solve.update) {
-                    const updateObj = solve.update.$set || solve.update;
-                    // Check if properties actually changed to avoid unnecessary re-renders
-                    for (const key of Object.keys(updateObj)) {
-                        if (c[key] !== updateObj[key]) {
-                            c[key] = updateObj[key];
-                            changed = true;
-                        }
-                    }
-                }
-            }
-            if (changed) {
-                // If anything changed, update the UI safely
-                if (document.getElementById('courses-tab-btn') && document.getElementById('courses-tab-btn').classList.contains('active')) {
-                    safeRender();
-                } else if (document.getElementById('dashboard-tab-btn') && document.getElementById('dashboard-tab-btn').classList.contains('active')) {
-                    refreshKPIs();
-                    renderRecentSolved();
-                } else if (document.getElementById('solved-tab-btn') && document.getElementById('solved-tab-btn').classList.contains('active')) {
-                    renderSolvedTab();
-                } else if (document.getElementById('verification-tab-btn') && document.getElementById('verification-tab-btn').classList.contains('active')) {
-                    renderVerificationTab();
-                }
-                
-                // If a modal is open for a course that just changed, we might want to update it, but let's keep it simple.
-            }
+        return JSON.parse(localStorage.getItem(LS_SOLVES_KEY) || '{}');
+    } catch (e) { return {}; }
+}
+
+/** Write the full solves map to localStorage */
+function lsSaveSolves(map) {
+    try { localStorage.setItem(LS_SOLVES_KEY, JSON.stringify(map)); } catch (e) {}
+}
+
+/** Apply a single solve into localStorage */
+function lsSetSolve(courseId, updateObj) {
+    const map = lsGetSolves();
+    map[String(courseId)] = { update: updateObj, ts: Date.now() };
+    lsSaveSolves(map);
+}
+
+/** Remove a single solve from localStorage */
+function lsRemoveSolve(courseId) {
+    const map = lsGetSolves();
+    delete map[String(courseId)];
+    lsSaveSolves(map);
+}
+
+/**
+ * Merge Cloudflare solves into localStorage.
+ * Called once at startup. Cloudflare is authoritative for solves the local
+ * browser has never seen. Local is authoritative for anything newer.
+ */
+function mergeCloudflaresolves(pendingFromServer) {
+    const local = lsGetSolves();
+    let changed = false;
+    for (const solve of (pendingFromServer || [])) {
+        const id = String(solve.id);
+        const serverTs = solve.ts || 0;
+        const localTs = local[id] ? (local[id].ts || 0) : -1;
+        // Only update if server has a newer entry than local
+        if (localTs < serverTs) {
+            const updateObj = solve.update && solve.update.$set ? solve.update.$set : solve.update;
+            local[id] = { update: updateObj, ts: serverTs };
+            changed = true;
         }
-    } catch(e) {
-        console.error('Failed to poll solves', e);
+    }
+    if (changed) lsSaveSolves(local);
+}
+
+/**
+ * Apply all localStorage solves to the loaded course list.
+ * Called once after courses are fetched.
+ */
+function applyLocalSolves(docs) {
+    const map = lsGetSolves();
+    for (const [id, entry] of Object.entries(map)) {
+        if (!entry || !entry.update) continue;
+        const c = docs.find(x => x.id == id);
+        if (c) {
+            const updateObj = entry.update.$set || entry.update;
+            Object.assign(c, updateObj);
+        }
     }
 }
 
-// Start polling every 60 seconds (matches Cloudflare edge cache TTL)
-setInterval(pollSolves, 60000);
+// No more polling — localStorage is the single source of truth for solves.
+// pollSolves() and setInterval() removed entirely.
+
 
