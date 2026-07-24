@@ -304,6 +304,28 @@ async function mongoUpdateCourse(courseId, update) {
     });
 }
 
+// ─── Live Sync (Polling) ─────────────────────────────────────────
+// To keep everyone on the same page, we fetch the latest solves from the server
+// every 10 seconds. We pause fetching if the tab is hidden to save bandwidth.
+async function pollSolves() {
+    if (document.hidden) return; // Don't poll if user is looking at another tab
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/solves.json?t=${Date.now()}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        
+        // Merge the server's truth into our local UI
+        mergeCloudflaresolves(data);
+        applyLocalSolves();
+    } catch (e) {
+        console.error("Poll failed:", e);
+    }
+}
+
+// Start polling every 10 seconds
+setInterval(pollSolves, 10000);
+
 
 // ── Loader helpers ────────────────────────────────────────────────
 
