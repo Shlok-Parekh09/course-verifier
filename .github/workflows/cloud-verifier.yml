@@ -175,7 +175,7 @@ jobs:
         run: |
           Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset &
           sleep 3
-          cd backend && python autonomous_course_verifier.py || echo "::warning::Verifier exited with non-zero status"
+          cd backend && python autonomous_course_verifier.py link_compile.pdf || echo "::warning::Verifier exited with non-zero status"
           echo "Taking a 5-minute cooldown break..."
           sleep 300
 
