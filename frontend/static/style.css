@@ -1822,3 +1822,472 @@ body[data-loading="true"] .kpi-strip-val { opacity: 0.35; }
     .kpi-strip { grid-template-columns: 1fr 1fr; }
     .filter-input { flex: 1 1 100%; }
 }
+
+/* ================================================================
+   DASHBOARD v2  ·  THREE-COLUMN GLOBE LAYOUT
+   ================================================================ */
+
+.dash-layout {
+    position: relative;
+    display: flex;
+    justify-content: space-between;
+    min-height: calc(100vh - var(--navbar-h));
+    padding: 24px 32px;
+    overflow: hidden;
+}
+
+/* ── Left Sidebar ──────────────────────────────────────────── */
+.dash-left {
+    width: 260px;
+    background: transparent;
+    border-right: none;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    z-index: 10;
+}
+
+.dash-total-card {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 16px 18px;
+}
+
+.dash-total-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.dash-total-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-2);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.dash-total-period {
+    font-size: 0.68rem;
+    color: var(--text-3);
+    background: transparent;
+    padding: 2px 8px;
+    border-radius: 20px;
+}
+
+.dash-total-value {
+    font-size: 2.6rem;
+    font-weight: 900;
+    letter-spacing: -0.05em;
+    line-height: 1;
+    color: var(--text-1);
+    margin-bottom: 10px;
+}
+
+.dash-total-sparkline {
+    width: 100%;
+    height: 28px;
+}
+
+.sparkline-svg {
+    width: 100%;
+    height: 100%;
+}
+
+/* ── IIT / IIIT / NIT stat items ──────────────────────────── */
+.dash-stat-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    transition: var(--transition);
+}
+
+.dash-stat-item:hover {
+    transform: translateX(3px);
+}
+
+.dash-stat-dot {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.9;
+}
+
+.dash-stat-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.dash-stat-label {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--text-1);
+}
+
+.dash-stat-sublabel {
+    font-size: 0.68rem;
+    color: var(--text-3);
+    margin-top: 1px;
+}
+
+.dash-stat-value {
+    font-size: 1.3rem;
+    font-weight: 800;
+    color: var(--text-1);
+    letter-spacing: -0.03em;
+}
+
+/* ── COURSES (PARCLES) section ────────────────────────────── */
+.dash-parcles {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 16px 18px;
+}
+
+.dash-parcles-title {
+    font-size: 0.72rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--text-3);
+    margin-bottom: 14px;
+}
+
+.dash-parcle-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.dash-parcle-row:last-child {
+    border-bottom: none;
+}
+
+.dash-parcle-label {
+    flex: 1;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text-2);
+}
+
+.dash-parcle-val {
+    font-size: 1.1rem;
+    font-weight: 800;
+    color: var(--text-1);
+    letter-spacing: -0.02em;
+}
+
+.dash-parcle-trend {
+    font-size: 0.68rem;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 6px;
+}
+
+.dash-parcle-trend.up {
+    background: var(--green-bg);
+    color: var(--green);
+}
+
+/* ── Status summary rows ──────────────────────────────────── */
+.dash-status-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.dash-status-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+}
+
+.dash-status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.dash-status-dot.verified { background: var(--green); box-shadow: 0 0 8px rgba(29,218,159,0.4); }
+.dash-status-dot.discrepancy { background: var(--amber); box-shadow: 0 0 8px rgba(245,166,35,0.4); }
+.dash-status-dot.error { background: var(--red); box-shadow: 0 0 8px rgba(241,107,107,0.4); }
+
+.dash-status-name {
+    flex: 1;
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: var(--text-2);
+}
+
+.dash-status-val {
+    font-size: 0.95rem;
+    font-weight: 800;
+    color: var(--text-1);
+}
+
+/* ── Center ────────────────────────────────────────────────── */
+.dash-center {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none; /* Let clicks pass through to sidebars */
+}
+
+.dash-globe-wrap {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+    pointer-events: auto; /* Globe rotation */
+}
+
+.dash-globe-wrap canvas {
+    width: 100% !important;
+    height: 100% !important;
+    display: block;
+}
+
+.globe-glow {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 65%;
+    height: 65%;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(99,102,241,0.15) 0%, rgba(99,102,241,0.04) 50%, transparent 70%);
+    pointer-events: none;
+    animation: globePulse 4s ease-in-out infinite;
+}
+
+@keyframes globePulse {
+    0%, 100% { opacity: 0.6; transform: translate(-50%, -50%) scale(1); }
+    50% { opacity: 1; transform: translate(-50%, -50%) scale(1.06); }
+}
+
+.dash-charts-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+
+.dash-chart-panel {
+    align-self: start;
+}
+
+/* ── Right Sidebar ─────────────────────────────────────────── */
+.dash-right {
+    width: 260px;
+    background: transparent;
+    border-left: none;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    z-index: 10;
+}
+
+/* Quantity Card */
+.dash-quantity-card {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 18px;
+}
+
+.dash-quantity-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 18px;
+}
+
+.dash-quantity-title {
+    font-size: 0.88rem;
+    font-weight: 700;
+    color: var(--text-1);
+}
+
+.dash-quantity-sub {
+    font-size: 0.7rem;
+    color: var(--text-3);
+    margin-top: 2px;
+}
+
+.dash-quantity-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.dash-qbar-item {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.dash-qbar-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.dash-qbar-name {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-2);
+}
+
+.dash-qbar-pct {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--text-1);
+}
+
+.dash-qbar-track {
+    width: 100%;
+    height: 8px;
+    background: var(--bg-2);
+    border-radius: 20px;
+    overflow: hidden;
+}
+
+.dash-qbar-fill {
+    height: 100%;
+    border-radius: 20px;
+    transition: width 1s ease;
+}
+
+/* Verification Mini Ring */
+.dash-verification-mini {
+    background: rgba(255, 255, 255, 0.02);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: var(--radius-md);
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.dash-vmini-title {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-2);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.dash-vmini-ring-wrap {
+    position: relative;
+    width: 110px;
+    height: 110px;
+}
+
+.dash-vmini-ring {
+    width: 100%;
+    height: 100%;
+    transform: rotate(-90deg);
+}
+
+.dash-vmini-pct {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 1.5rem;
+    font-weight: 900;
+    color: var(--green);
+    letter-spacing: -0.03em;
+}
+
+.dash-vmini-label {
+    font-size: 0.72rem;
+    color: var(--text-3);
+    font-weight: 500;
+}
+
+/* Status Legend */
+.dash-legend {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.dash-legend-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.dash-legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.dash-legend-name {
+    flex: 1;
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: var(--text-2);
+}
+
+.dash-legend-time {
+    font-size: 0.72rem;
+    color: var(--text-3);
+    font-weight: 500;
+}
+
+/* ── Dashboard responsive ─────────────────────────────────── */
+@media (max-width: 1200px) {
+    .dash-layout {
+        grid-template-columns: 220px 1fr 220px;
+    }
+}
+
+@media (max-width: 960px) {
+    .dash-layout {
+        grid-template-columns: 1fr;
+    }
+    .dash-left, .dash-right {
+        max-height: none;
+        border: none;
+    }
+    .dash-center {
+        max-height: none;
+    }
+    .dash-charts-row {
+        grid-template-columns: 1fr;
+    }
+}

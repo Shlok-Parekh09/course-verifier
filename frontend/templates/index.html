@@ -7,10 +7,11 @@
     <meta name="description" content="Live course verification and country-wise analysis platform by Khushboo Singh">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=10">
+    <link rel="stylesheet" href="/static/style.css?v=14">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://unpkg.com/chartjs-chart-geo@4.2.8/build/index.umd.min.js"></script>
     <script src="https://kit.fontawesome.com/997b419143.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
 
@@ -43,127 +44,122 @@
 
     <!-- ══════════ DASHBOARD TAB ══════════ -->
     <div id="tab-dashboard" class="tab-content active">
-        <div class="dash-wrap">
+        <div class="dash-layout">
 
-            <!-- KPI Cards -->
-            <div class="kpi-row">
-                <div class="kpi-card">
-                    <div class="kpi-label">Total Courses</div>
-                    <div class="kpi-value" id="total-count">0</div>
-                    <span class="kpi-trend neu" id="kpi-total-trend">— All time</span>
+            <!-- ═══ LEFT SIDEBAR ═══ -->
+            <div class="dash-left">
+
+                <!-- Total Courses Card -->
+                <div class="dash-total-card">
+                    <div class="dash-total-header">
+                        <span class="dash-total-label">Total</span>
+                        <span class="dash-total-period">All time</span>
+                    </div>
+                    <div class="dash-total-value" id="total-count">0</div>
+                    <div class="dash-total-sparkline">
+                        <svg viewBox="0 0 80 24" class="sparkline-svg">
+                            <polyline points="0,20 10,16 20,18 30,10 40,14 50,6 60,8 70,4 80,2" fill="none" stroke="var(--accent)" stroke-width="2"/>
+                            <polyline points="0,20 10,16 20,18 30,10 40,14 50,6 60,8 70,4 80,2" fill="url(#sparkGrad)" stroke="none"/>
+                            <defs><linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.3"/>
+                                <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
+                            </linearGradient></defs>
+                        </svg>
+                    </div>
                 </div>
-                <div class="kpi-card">
-                    <div class="kpi-label">Perfect Matches</div>
-                    <div class="kpi-value" id="verified-count">0</div>
-                    <span class="kpi-trend up" id="kpi-verified-trend">↑ Verified</span>
+
+                <!-- IIT / IIIT / NIT Stats -->
+                <div class="dash-stat-item">
+                    <div class="dash-stat-dot" style="background: #6366f1;"></div>
+                    <div class="dash-stat-info">
+                        <div class="dash-stat-label">IITs</div>
+                        <div class="dash-stat-sublabel">Unique Courses</div>
+                    </div>
+                    <div class="dash-stat-value" id="dash-iit-count">0</div>
                 </div>
-                <div class="kpi-card" id="kpi-card-discrepancies" style="cursor:pointer;" title="Click to view discrepancies">
-                    <div class="kpi-label">Discrepancies</div>
-                    <div class="kpi-value" id="discrepancy-count">0</div>
-                    <span class="kpi-trend warn" id="kpi-disc-trend">⚠ Need review</span>
+                <div class="dash-stat-item">
+                    <div class="dash-stat-dot" style="background: #1dda9f;"></div>
+                    <div class="dash-stat-info">
+                        <div class="dash-stat-label">IIITs</div>
+                        <div class="dash-stat-sublabel">Unique Courses</div>
+                    </div>
+                    <div class="dash-stat-value" id="dash-iiit-count">0</div>
                 </div>
-                <div class="kpi-card">
-                    <div class="kpi-label">Errors / Unverified</div>
-                    <div class="kpi-value" id="error-count">0</div>
-                    <span class="kpi-trend down" id="kpi-err-trend">✕ Failed</span>
+                <div class="dash-stat-item">
+                    <div class="dash-stat-dot" style="background: #f5a623;"></div>
+                    <div class="dash-stat-info">
+                        <div class="dash-stat-label">NITs</div>
+                        <div class="dash-stat-sublabel">Unique Courses</div>
+                    </div>
+                    <div class="dash-stat-value" id="dash-nit-count">0</div>
+                </div>
+
+                <!-- COURSES Section (like PARCLES) -->
+                <div class="dash-parcles">
+                    <div class="dash-parcles-title">COURSES</div>
+
+                    <div class="dash-parcle-row">
+                        <div class="dash-parcle-label">Free</div>
+                        <div class="dash-parcle-val" id="dash-free-count">0</div>
+                        <div class="dash-parcle-trend up" id="dash-free-pct">0%</div>
+                    </div>
+                    <div class="dash-parcle-row">
+                        <div class="dash-parcle-label">Free to Audit</div>
+                        <div class="dash-parcle-val" id="dash-fta-count">0</div>
+                        <div class="dash-parcle-trend up" id="dash-fta-pct">0%</div>
+                    </div>
+                    <div class="dash-parcle-row">
+                        <div class="dash-parcle-label">High Value Low Cost</div>
+                        <div class="dash-parcle-val" id="dash-hvlc-count">0</div>
+                        <div class="dash-parcle-trend up" id="dash-hvlc-pct">0%</div>
+                    </div>
+                </div>
+
+
+            </div>
+
+            <!-- ═══ CENTER ═══ -->
+            <div class="dash-center">
+                <!-- 3D Globe -->
+                <div class="dash-globe-wrap" id="globe-container">
+                    <!-- globe.gl will render here -->
+                </div>
+
+                <!-- Filter Summary Cards (hidden by default) -->
+                <div class="panel" id="course-details-panel" style="display:none;">
+                    <div class="panel-hdr">
+                        <div class="panel-title">Filtered Courses &nbsp;<span id="active-filter-badge" class="badge badge-open"></span></div>
+                        <button id="clear-filter" class="btn-pg">✕ Clear</button>
+                    </div>
+                    <div class="tbl-wrap" style="max-height:280px;">
+                        <table class="data-table">
+                            <thead><tr>
+                                <th>Name</th><th>University</th>
+                                <th>Country</th><th>QS</th><th>NIRF</th>
+                            </tr></thead>
+                            <tbody id="course-details-body"></tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
 
-            <!-- Country-wise Analysis  ← MAIN DASHBOARD SECTION -->
-            <div class="country-split">
-                <!-- World Map -->
-                <div class="panel">
-                    <div class="panel-hdr">
+            <!-- ═══ RIGHT SIDEBAR ═══ -->
+            <div class="dash-right">
+                <!-- Quantity Card (Top 3 Countries) -->
+                <div class="dash-quantity-card">
+                    <div class="dash-quantity-header">
                         <div>
-                            <div class="panel-title">Course Distribution Map</div>
-                            <div class="panel-sub">Courses by country of origin</div>
+                            <div class="dash-quantity-title">Quantity</div>
+                            <div class="dash-quantity-sub">Average by category</div>
                         </div>
-                        <div class="icon-btn" id="map-expand-btn" title="Expand">⤢</div>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
                     </div>
-                    <div class="chart-wrap chart-h420">
-                        <canvas id="countryMapChart"></canvas>
-                    </div>
-                </div>
-
-                <!-- Country Leaderboard -->
-                <div class="panel">
-                    <div class="panel-hdr">
-                        <div>
-                            <div class="panel-title">Country Leaders</div>
-                            <div class="panel-sub">Top countries by course count</div>
-                        </div>
-                        <div class="icon-btn" id="country-toggle-view" title="Switch view">≡</div>
-                    </div>
-                    <div id="country-list" class="country-list">
-                        <!-- populated by JS -->
+                    <div class="dash-quantity-bars" style="position: relative; height: 160px; width: 100%; margin-top: 10px;">
+                        <canvas id="quantityBarChart"></canvas>
                     </div>
                 </div>
-            </div>
 
-            <!-- Charts Row -->
-            <div class="main-grid">
-                <div style="display:grid; gap:20px; align-items:start;">
 
-                    <!-- Line Chart: Country Trend -->
-                    <div class="panel">
-                        <div class="panel-hdr">
-                            <div>
-                                <div class="panel-title">Country-wise Course Trend</div>
-                                <div class="panel-sub">Distribution across countries</div>
-                            </div>
-                        </div>
-                        <div class="chart-wrap chart-h260">
-                            <canvas id="countryLineChart"></canvas>
-                        </div>
-                    </div>
-
-                    <!-- Bar Chart -->
-                    <div class="panel">
-                        <div class="panel-hdr">
-                            <div class="panel-title">Course Breakdown</div>
-                            <div class="pill-toggle" id="bar-toggle-pills">
-                                <button class="active" data-val="domain">Domain</button>
-                            </div>
-                        </div>
-                        <div class="chart-wrap chart-h260">
-                            <canvas id="coursesBarChart"></canvas>
-                        </div>
-                        <p class="hint">Click a bar to filter the detail table</p>
-                    </div>
-
-                </div>
-
-                <!-- Right: Donut + Filtered Table -->
-                <div style="display:grid; gap:20px; align-items:start;">
-
-                    <!-- Issue Category Doughnut -->
-                    <div class="panel">
-                        <div class="panel-hdr">
-                            <div class="panel-title">Issue Category Breakdown</div>
-                        </div>
-                        <div class="chart-wrap chart-h260">
-                            <canvas id="issuePieChart"></canvas>
-                        </div>
-                    </div>
-
-                    <!-- Filter Summary Cards -->
-                    <div class="panel" id="course-details-panel" style="display:none;">
-                        <div class="panel-hdr">
-                            <div class="panel-title">Filtered Courses &nbsp;<span id="active-filter-badge" class="badge badge-open"></span></div>
-                            <button id="clear-filter" class="btn-pg">✕ Clear</button>
-                        </div>
-                        <div class="tbl-wrap" style="max-height:280px;">
-                            <table class="data-table">
-                                <thead><tr>
-                                    <th>Name</th><th>University</th>
-                                    <th>Country</th><th>QS</th><th>NIRF</th>
-                                </tr></thead>
-                                <tbody id="course-details-body"></tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                </div>
             </div>
 
         </div>
@@ -706,6 +702,6 @@
 <script>
   window.__INITIAL_DATA__ = JSON.parse(document.getElementById('initial-data').textContent);
 </script>
-<script src="/static/app.js?v=15"></script>
+<script src="/static/app.js?v=22"></script>
 </body>
 </html>

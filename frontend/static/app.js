@@ -117,7 +117,7 @@ const SUBTYPE_LABELS = {
     'scholarship_box_mismatch': 'Scholarship Box Mismatch',
     'course_replaced': 'Replaced', 'wrong_url': 'Wrong URL', 'perfect_match': 'Perfect Match'
 };
-let barChart, mapChart, lineChart;
+let barChart, mapChart, lineChart, quantityBarChartInstance;
 let barMode = 'domain'; // 'domain' | 'country'
 
 // ── Country flag emoji helper ─────────────────────────────────────
@@ -192,6 +192,285 @@ function initTabs() {
             switchTab(a.getAttribute('data-target'));
         });
     });
+}
+
+// ================================================================
+//  3D ROTATING GLOBE (Three.js with Textures)
+// ================================================================
+let globeScene, globeCamera, globeRenderer, globeMesh, globePoints;
+let globeAnimId = null;
+let globeMouseDown = false, globeLastMouse = {x:0, y:0}, globeRotSpeed = {x:0, y:0.002};
+
+function initGlobe() {
+    const container = document.getElementById('globe-container');
+    if (!container || typeof THREE === 'undefined') return;
+
+    // Create canvas dynamically
+    const canvas = document.createElement('canvas');
+    canvas.id = 'globe-canvas';
+    container.appendChild(canvas);
+
+    const w = container.clientWidth || 600;
+    const h = container.clientHeight || 500;
+
+    globeScene = new THREE.Scene();
+    globeCamera = new THREE.PerspectiveCamera(45, w / h, 0.1, 1000);
+    globeCamera.position.z = 2.8;
+
+    globeRenderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+    globeRenderer.setSize(w, h);
+    globeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    globeRenderer.setClearColor(0x000000, 0);
+
+    // Load Textures
+    const textureLoader = new THREE.TextureLoader();
+    const earthMap = textureLoader.load('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg');
+    const bumpMap = textureLoader.load('https://unpkg.com/three-globe/example/img/earth-topology.png');
+
+    // Earth sphere
+    const geo = new THREE.SphereGeometry(1, 64, 64);
+    const earthMat = new THREE.MeshPhongMaterial({
+        map: earthMap,
+        bumpMap: bumpMap,
+        bumpScale: 0.015,
+        color: 0xffffff,
+        specular: 0x223344,
+        shininess: 15
+    });
+    globeMesh = new THREE.Mesh(geo, earthMat);
+    globeScene.add(globeMesh);
+
+    // No atmosphere glow per reference image
+
+    // Lights
+    const ambLight = new THREE.AmbientLight(0xffffff, 0.4);
+    globeScene.add(ambLight);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    dirLight.position.set(5, 3, 5);
+    globeScene.add(dirLight);
+
+    // Country dots group
+    globePoints = new THREE.Group();
+    globeScene.add(globePoints);
+
+    // Mouse interaction
+    canvas.addEventListener('mousedown', e => {
+        globeMouseDown = true;
+        globeLastMouse = { x: e.clientX, y: e.clientY };
+    });
+    window.addEventListener('mouseup', () => { globeMouseDown = false; });
+    window.addEventListener('mousemove', e => {
+        if (!globeMouseDown) return;
+        const dx = e.clientX - globeLastMouse.x;
+        const dy = e.clientY - globeLastMouse.y;
+        globeRotSpeed.y = dx * 0.003;
+        globeRotSpeed.x = dy * 0.003;
+        globeLastMouse = { x: e.clientX, y: e.clientY };
+    });
+
+    // Resize
+    const ro = new ResizeObserver(() => {
+        const nw = container.clientWidth;
+        const nh = container.clientHeight;
+        if (nw > 0 && nh > 0) {
+            globeCamera.aspect = nw / nh;
+            globeCamera.updateProjectionMatrix();
+            globeRenderer.setSize(nw, nh);
+        }
+    });
+    ro.observe(container);
+
+    // Animate
+    function animateGlobe() {
+        globeAnimId = requestAnimationFrame(animateGlobe);
+        if (!globeMouseDown) {
+            globeRotSpeed.y += (0.001 - globeRotSpeed.y) * 0.05;
+            globeRotSpeed.x *= 0.95;
+        }
+        globeMesh.rotation.y += globeRotSpeed.y;
+        globeMesh.rotation.x += globeRotSpeed.x;
+        globePoints.rotation.y = globeMesh.rotation.y;
+        globePoints.rotation.x = globeMesh.rotation.x;
+        
+        globeRenderer.render(globeScene, globeCamera);
+    }
+    animateGlobe();
+}
+
+// Add glowing dots to the globe for countries with courses
+const COUNTRY_COORDS = {
+    'India': [20.5937, 78.9629], 'United States': [37.0902, -95.7129], 'United States of America': [37.0902, -95.7129],
+    'United Kingdom': [55.3781, -3.4360], 'Australia': [-25.2744, 133.7751], 'Canada': [56.1304, -106.3468],
+    'Germany': [51.1657, 10.4515], 'France': [46.2276, 2.2137], 'Singapore': [1.3521, 103.8198],
+    'South Africa': [-30.5595, 22.9375], 'New Zealand': [-40.9006, 174.886], 'UAE': [23.4241, 53.8478],
+    'United Arab Emirates': [23.4241, 53.8478], 'China': [35.8617, 104.1954], 'Japan': [36.2048, 138.2529],
+    'Netherlands': [52.1326, 5.2913], 'Switzerland': [46.8182, 8.2275], 'Brazil': [-14.235, -51.9253],
+    'Italy': [41.8719, 12.5674], 'Spain': [40.4637, -3.7492], 'Ireland': [53.1424, -7.6921],
+    'Sweden': [60.1282, 18.6435], 'Denmark': [56.2639, 9.5018], 'South Korea': [35.9078, 127.7669],
+    'Malaysia': [4.2105, 101.9758], 'Hong Kong': [22.3193, 114.1694], 'Saudi Arabia': [23.8859, 45.0792],
+    'Luxembourg': [49.8153, 6.1296], 'Russia': [61.524, 105.3188], 'Mexico': [23.6345, -102.5528],
+    'Israel': [31.0461, 34.8516], 'Turkey': [38.9637, 35.2433], 'Thailand': [15.87, 100.9925],
+    'Indonesia': [-0.7893, 113.9213], 'Philippines': [12.8797, 121.774], 'Colombia': [4.5709, -74.2973],
+    'Chile': [-35.6751, -71.543], 'Nigeria': [9.082, 8.6753], 'Kenya': [-0.0236, 37.9062],
+    'Egypt': [26.8206, 30.8025], 'Pakistan': [30.3753, 69.3451], 'Bangladesh': [23.685, 90.3563],
+    'Sri Lanka': [7.8731, 80.7718], 'Nepal': [28.3949, 84.124], 'Taiwan': [23.6978, 120.9605],
+    'Finland': [61.9241, 25.7482], 'Norway': [60.472, 8.4689], 'Poland': [51.9194, 19.1451],
+    'Austria': [47.5162, 14.5501], 'Belgium': [50.5039, 4.4699], 'Portugal': [39.3999, -8.2245],
+    'Greece': [39.0742, 21.8243], 'Czech Republic': [49.8175, 15.473]
+};
+
+function latLonToVec3(lat, lon, r) {
+    const phi = (90 - lat) * (Math.PI / 180);
+    const theta = (lon + 180) * (Math.PI / 180);
+    return new THREE.Vector3(
+        -r * Math.sin(phi) * Math.cos(theta),
+        r * Math.cos(phi),
+        r * Math.sin(phi) * Math.sin(theta)
+    );
+}
+
+function updateGlobeDots(countryCounts) {
+    if (!globePoints || typeof THREE === 'undefined') return;
+    // Clear existing dots just in case
+    while (globePoints.children.length > 0) globePoints.remove(globePoints.children[0]);
+    // The user requested NO dots on the globe, so we don't add any back.
+}
+
+// ================================================================
+//  DASHBOARD EXTRAS (IIT/IIIT/NIT, Free/FTA/HVLC, Top 3 Countries)
+// ================================================================
+function updateDashboardExtras(data) {
+    if (!data) return;
+    const docs = data.recent || data.documents || [];
+    const total = docs.length || data.stats?.total || 1;
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+
+    // IIT / IIIT / NIT counts
+    let iitCount = 0, iiitCount = 0, nitCount = 0;
+    const seen = { iit: new Set(), iiit: new Set(), nit: new Set() };
+    docs.forEach(c => {
+        const uni = (c.university || '').toUpperCase();
+        const name = (c.name || '').toLowerCase();
+        const key = name;
+        if (/\bIIIT\b/.test(uni) || /\bIIIT\b/.test(c.university || '')) {
+            if (!seen.iiit.has(key)) { iiitCount++; seen.iiit.add(key); }
+        } else if (/\bIIT\b/.test(uni) && !/\bIIIT\b/.test(uni) && !/\bNIT\b/.test(uni)) {
+            if (!seen.iit.has(key)) { iitCount++; seen.iit.add(key); }
+        }
+        if (/\bNIT\b/.test(uni)) {
+            if (!seen.nit.has(key)) { nitCount++; seen.nit.add(key); }
+        }
+    });
+    set('dash-iit-count', iitCount.toLocaleString());
+    set('dash-iiit-count', iiitCount.toLocaleString());
+    set('dash-nit-count', nitCount.toLocaleString());
+
+    // Free / FTA / HVLC counts
+    const domainCounts = data.domain_counts || {};
+    const freeCount = domainCounts['Free'] || 0;
+    const ftaCount = domainCounts['Free to Audit'] || 0;
+    const hvlcCount = domainCounts['High Value Low Cost'] || 0;
+    set('dash-free-count', freeCount.toLocaleString());
+    set('dash-fta-count', ftaCount.toLocaleString());
+    set('dash-hvlc-count', hvlcCount.toLocaleString());
+    set('dash-free-pct', Math.round(freeCount / total * 100) + '%');
+    set('dash-fta-pct', Math.round(ftaCount / total * 100) + '%');
+    set('dash-hvlc-pct', Math.round(hvlcCount / total * 100) + '%');
+
+    // Top 5 countries
+    const countryCounts = data.country_counts || {};
+    const topCountries = Object.entries(countryCounts)
+        .filter(([k]) => isValidCountry(k))
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5);
+        
+    const qCtx = document.getElementById('quantityBarChart');
+    if (qCtx && topCountries.length) {
+        if (quantityBarChartInstance) {
+            quantityBarChartInstance.destroy();
+        }
+        
+        const labels = topCountries.map(c => Math.round((c[1] / total) * 100) + '%');
+        const dVals = topCountries.map(c => c[1]);
+        const colors = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ec4899']; // Blue, Green, Purple, Orange, Pink
+
+        quantityBarChartInstance = new Chart(qCtx.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: dVals,
+                    backgroundColor: colors,
+                    borderRadius: 4,
+                    barThickness: 16
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'bottom',
+                        labels: {
+                            color: 'rgba(255,255,255,0.7)',
+                            usePointStyle: true,
+                            boxWidth: 8,
+                            font: { size: 10 },
+                            generateLabels: (chart) => {
+                                return chart.data.labels.map((label, i) => ({
+                                    text: topCountries[i][0],
+                                    fillStyle: chart.data.datasets[0].backgroundColor[i],
+                                    hidden: false,
+                                    index: i
+                                }));
+                            }
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            title: (ctx) => topCountries[ctx[0].dataIndex][0],
+                            label: (ctx) => `${ctx.raw} courses`
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { display: false, drawBorder: false },
+                        ticks: { color: 'rgba(255,255,255,0.7)', font: { size: 10 } }
+                    },
+                    y: {
+                        display: false,
+                        grid: { display: false, drawBorder: false }
+                    }
+                },
+                layout: {
+                    padding: { top: 10, bottom: 0 }
+                }
+            }
+        });
+    }
+
+    // Verification ring
+    const stats = data.stats || {};
+    const verified = stats.verified || 0;
+    const t = stats.total || 1;
+    const pct = Math.round(verified / t * 100);
+    set('dash-verif-pct', pct + '%');
+    const ring = document.getElementById('dash-verif-ring');
+    if (ring) {
+        const circumference = 2 * Math.PI * 52; // r=52
+        ring.style.strokeDashoffset = circumference - (circumference * pct / 100);
+    }
+
+    // Legend sub-values
+    set('dash-verif-sub', verified + ' courses');
+    set('dash-disc-sub', (stats.discrepancies || 0) + ' courses');
+    set('dash-err-sub', (stats.errors || 0) + ' courses');
+    set('dash-unverif-sub', (t - verified - (stats.discrepancies || 0) - (stats.errors || 0)) + ' courses');
+
+    // Update globe dots
+    updateGlobeDots(countryCounts);
 }
 
 // ================================================================
@@ -366,32 +645,27 @@ function initCharts() {
 //  DATA UPDATES
 // ================================================================
 function updateCards(stats) {
-    document.getElementById('total-count').textContent = stats.total || 0;
-    document.getElementById('verified-count').textContent = stats.verified || 0;
-    document.getElementById('discrepancy-count').textContent = stats.discrepancies || 0;
-
-    const wCount = document.getElementById('website-issue-count');
-    if (wCount) wCount.textContent = stats.website_issues || 0;
-
     // Extra Dashboard KPI cards — all populated from real stats only.
     const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    
+    set('total-count', stats.total || 0);
+    set('verified-count', stats.verified || 0);
+    set('discrepancy-count', stats.discrepancies || 0);
+    set('website-issue-count', stats.website_issues || 0);
+    
     set('error-count', stats.errors || 0);
     set('course-issue-count', stats.course_issues || 0);
     set('open-issue-count', stats.open_issues || 0);
 
     // Dynamic trend % labels
     const t = stats.total || 1;
-    document.getElementById('kpi-verified-trend').textContent = `↑ ${Math.round((stats.verified || 0) / t * 100)}% match rate`;
-    document.getElementById('kpi-disc-trend').textContent = `⚠ ${Math.round((stats.discrepancies || 0) / t * 100)}% flagged`;
-
-    const kpiWebTrend = document.getElementById('kpi-webissue-trend');
-    if (kpiWebTrend) kpiWebTrend.textContent = `🔗 ${Math.round((stats.website_issues || 0) / t * 100)}% site broken`;
-
+    set('kpi-verified-trend', `↑ ${Math.round((stats.verified || 0) / t * 100)}% match rate`);
+    set('kpi-disc-trend', `⚠ ${Math.round((stats.discrepancies || 0) / t * 100)}% flagged`);
+    set('kpi-webissue-trend', `🔗 ${Math.round((stats.website_issues || 0) / t * 100)}% site broken`);
     set('kpi-err-trend', `✕ ${Math.round((stats.errors || 0) / t * 100)}% failed`);
     set('kpi-courseissue-trend', `📋 ${Math.round((stats.course_issues || 0) / t * 100)}% mismatch`);
     set('kpi-openissue-trend', stats.open_issues ? `${stats.open_issues} open` : '✓ none open');
-
-    document.getElementById('kpi-total-trend').textContent = `— ${t} records`;
+    set('kpi-total-trend', `— ${t} records`);
 
     // Sticky KPI strips on the Verification & All Courses tabs share the same
     // four real numbers so the headline parameters are always visible.
@@ -1102,6 +1376,7 @@ function _applyData(data, animate) {
         lastCountryHash = countryHash;
     }
     updateRecentVerifications(data.recent || []);
+    updateDashboardExtras(data);
     if (currentFilter.type) applyFilter(currentFilter.type, currentFilter.value);
     document.body.dataset.loading = 'false';
 }
@@ -1845,6 +2120,7 @@ function escJs(str) {
 document.addEventListener('DOMContentLoaded', () => {
     initTheme();
     initTabs();
+    initGlobe();
     initCharts();
     initFilters();
     initModal();
