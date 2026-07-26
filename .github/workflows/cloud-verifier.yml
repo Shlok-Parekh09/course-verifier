@@ -49,7 +49,7 @@ jobs:
 
       - name: Install PyMuPDF & gdown
         run: |
-          uv venv .venv
+          uv venv --clear .venv
           uv pip install PyMuPDF gdown
 
       - name: Download Main PDF
@@ -137,7 +137,7 @@ jobs:
 
       - name: Install Python Dependencies
         run: |
-          uv venv .venv
+          uv venv --clear .venv
           uv pip install -r requirements.txt python-dotenv gdown
 
       - name: Download Main PDF
@@ -213,7 +213,7 @@ jobs:
 
       - name: Install PyMuPDF for merging
         run: |
-          uv venv .venv
+          uv venv --clear .venv
           uv pip install PyMuPDF
 
       - name: Merge JSON Files
