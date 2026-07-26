@@ -6814,7 +6814,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         print(f"    -> Synchronously updating ChromeDriver to prevent thread collisions...")
         try:
             _t_opts = uc.ChromeOptions()
-            _t_opts.add_argument('--headless')
+            # Removed --headless to bypass captchas, using Xvfb instead
             _t_opts.set_capability("unhandledPromptBehavior", "dismiss")
             _t_drv = uc.Chrome(options=_t_opts, version_main=get_chrome_main_version())
             _t_drv.quit()
@@ -6853,7 +6853,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             options.add_argument('--js-flags=--max-old-space-size=1024')
             # CI-specific flags to prevent crashes on GitHub Actions 2-core runner
             if is_ci:
-                options.add_argument('--headless=new')
+                # Removed --headless=new to bypass captchas, using Xvfb instead
                 options.add_argument('--disable-software-rasterizer')
                 options.add_argument('--disable-gl-drawing-for-tests')
                 options.add_argument('--disable-web-security')
