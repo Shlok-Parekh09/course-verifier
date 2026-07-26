@@ -3849,7 +3849,7 @@ CRITICAL RULES:
                             use_vision = vision_pages_sent < VISION_PAGE_CAP
                             if use_vision:
                                 vision_pages_sent += 1
-                                print(f"      -> [PDF OCR] Fee keywords detected! Using Ollama Vision for perfect extraction on page {page_idx+1}...")
+                                print(f"      -> [PDF OCR] Fee keywords detected! Using Vision API for perfect extraction on page {page_idx+1}...")
                                 _, buffer = cv2.imencode('.jpg', img_data)
                                 b64_img = base64.b64encode(buffer).decode('utf-8')
                             else:
