@@ -870,17 +870,8 @@ def verify_cost_in_text(target_cost_tuple, text, target_cost_str="", uni_name=""
     # these amounts and the college is Anna University affiliated, accept the
     # match even if the fee is not explicitly published on the college page
     # (most affiliated college pages don't list fees — they redirect to TNEA).
-    if target_cost in (200000.0, 220000.0) and uni_name:
-        uni_lower_check = uni_name.lower()
-        anna_indicators = [
-            'anna university', 'anna univ',
-            # Common TN college name fragments that are almost always Anna-affiliated
-            's.a.', 'svcet', 'saet', 'thiruv', 'chennai', 'coimbatore',
-            'madurai', 'trichy', 'tirunelveli', 'salem', 'vellore',
-            'tirupur', 'erode', 'kanchipuram', 'chengalpattu',
-        ]
-        if any(ind in uni_lower_check for ind in anna_indicators):
-            return True  # Standard Anna University regulated fee — accepted
+    if target_cost in (200000.0, 220000.0) and is_indian:
+        return True  # Standard Anna University regulated fee — accepted
 
 
     if target_cost == 0.0:
@@ -915,7 +906,8 @@ def verify_cost_in_text(target_cost_tuple, text, target_cost_str="", uni_name=""
     # Direct ₹ pattern matching (e.g., "₹735", "₹ 735", "Rs.735")
     target_int = str(int(target_cost)) if target_cost == int(target_cost) else str(target_cost)
     target_indian = format_indian_number(target_cost)
-    for sym in ['₹', 'Rs.', 'Rs ', 'INR ', '$ ', '$', '€', '£']:
+    check_symbols = target_symbols + ['₹', 'Rs.', 'Rs ', 'INR ', '$ ', '$', '€', '£', 'GBP ', 'USD ', 'EUR ']
+    for sym in check_symbols:
         if f"{sym}{target_int}" in text or f"{sym} {target_int}" in text:
             return True
         if target_indian and (f"{sym}{target_indian}" in text or f"{sym} {target_indian}" in text):
@@ -8388,6 +8380,29 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     def _a9_indian_college_search_and_llm():
                         # googlesearch + LLM -> raw ACTUAL_UNIVERSITY/CONFIDENCE response, or None.
                         # No outer-scope mutation; returns a value only.
+                        
+                        # 1. Local Database Fast-Path
+                        try:
+                            import sqlite3, os
+                            db_path = os.path.join(os.path.dirname(__file__), 'local_database.db')
+                            if os.path.exists(db_path):
+                                conn = sqlite3.connect(db_path)
+                                c = conn.cursor()
+                                # Try exact course + college match
+                                c.execute("SELECT affiliated_uni FROM affiliations WHERE LOWER(university) = LOWER(?) AND LOWER(course_name) = LOWER(?)", (course_uni_check.strip(), course_name_short.strip()))
+                                row = c.fetchone()
+                                if not row:
+                                    # Fallback to just college match
+                                    c.execute("SELECT affiliated_uni FROM affiliations WHERE LOWER(university) = LOWER(?)", (course_uni_check.strip(),))
+                                    row = c.fetchone()
+                                conn.close()
+                                
+                                if row and row[0]:
+                                    print(f"    -> [Indian College Check] Found affiliation in local database: {row[0]}")
+                                    return f"ACTUAL_UNIVERSITY: {row[0]}\nCONFIDENCE: HIGH"
+                        except Exception as e:
+                            print(f"    -> [Indian College Check] Database query error: {e}")
+                            
                         print(f"    -> [Indian College Check] Searching affiliation for '{course_uni_check}' (course: {course_name_short})...")
                         try:
                             from googlesearch import search as g_search
@@ -9215,7 +9230,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 
             cost_is_free = 'free' in str(course.get('cost', '')).lower()
             has_free_box = course.get('has_free_box', False)
-            course['cost_match'] = True if (cost_is_free or has_free_box) else False
+            if cost_is_free or has_free_box:
+                course['cost_match'] = True
 
             pdf.add_page()
             pdf.set_font(font_name, '', 10)
