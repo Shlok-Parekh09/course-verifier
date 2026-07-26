@@ -57,7 +57,7 @@ jobs:
         with:
           python-version: "3.10"
           cache: "pip"                      # ← cache pip packages between runs
-          cache-dependency-path: requirements-verifier.txt
+          cache-dependency-path: requirements.txt
 
       - name: Install System Dependencies (Chrome & Xvfb)
         run: |
@@ -76,7 +76,7 @@ jobs:
       - name: Install Python Dependencies
         run: |
           pip install --upgrade pip
-          pip install -r requirements-verifier.txt python-dotenv gdown
+          pip install -r requirements.txt python-dotenv gdown
 
       - name: Cache Input PDF
         id: cache-pdf
@@ -88,7 +88,7 @@ jobs:
       - name: Download PDF from Google Drive
         if: steps.cache-pdf.outputs.cache-hit != 'true'
         run: |
-          gdown "1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd" -O link_compile.pdf
+          gdown "1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd" -O backend/link_compile.pdf
 
       - name: Run Verification (Virtual Display)
         env:
@@ -114,28 +114,22 @@ jobs:
         run: |
           Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset 2>/dev/null &
           sleep 3
-          python autonomous_course_verifier.py || echo "::warning::Verifier exited with non-zero status, but checkpoint should be saved"
+          cd backend && python autonomous_course_verifier.py || echo "::warning::Verifier exited with non-zero status, but checkpoint should be saved"
 
       - name: Remove input PDF before upload
         if: always()
         run: |
-          rm -f link_compile.pdf
+          rm -f backend/link_compile.pdf
 
-      - name: Upload Results as Zip
+      - name: Upload Results Archive
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: verification-results-${{ matrix.chunk.start }}-to-${{ matrix.chunk.end }}
           path: |
-            *.pdf
-            autonomous_verified_*.json
-
-      - name: Upload Affiliation DB
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: affiliation-db-${{ matrix.chunk.start }}-to-${{ matrix.chunk.end }}
-          path: affiliation_db.json
+            backend/*.pdf
+            backend/autonomous_verified_*.json
+            backend/local_database.db
 
   # ── Final merge: collect all 24 chunk JSONs → one file ──────────────────────
   merge-json:
@@ -153,7 +147,7 @@ jobs:
 
       # Download all verification-results-* artifacts into ./chunk_artifacts/
       # Each artifact lands in its own sub-folder:
-      #   chunk_artifacts/verification-results-7-to-46/autonomous_verified_*.json
+      #   chunk_artifacts/verification-results-7-to-46/backend/autonomous_verified_*.json
       - name: Download All Chunk Artifacts
         uses: actions/download-artifact@v4
         with:
@@ -255,4 +249,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: merged-run-json
-          path: merged_run.json
+          path: backend/merged_run.json

@@ -1,7 +1,0 @@
-name = "course-verifier-api"
-main = "index.js"
-compatibility_date = "2024-01-01"
-
-[[kv_namespaces]]
-binding = "COURSE_CACHE"
-id = "eef4c644239941a4b155eb9a7958c080"

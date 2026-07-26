@@ -16,5 +16,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy source code
 COPY . .
 
-# Run gunicorn with exactly 1 worker to ensure in-memory state remains consistent
+# Run gunicorn from frontend dir
+WORKDIR /app/frontend
 CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "8", "--timeout", "0", "dashboard:app"]

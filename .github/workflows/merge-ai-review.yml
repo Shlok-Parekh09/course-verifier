@@ -52,12 +52,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-${{ hashFiles('requirements-verifier.txt') }}
+          key: pip-${{ hashFiles('requirements.txt') }}
 
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
-          pip install -r requirements-verifier.txt python-dotenv
+          pip install -r requirements.txt python-dotenv
 
       - name: Validate JSON inputs
         run: |
@@ -103,7 +103,7 @@ jobs:
             fi
           fi
 
-          python consensus_merger.py \
+          cd backend && python consensus_merger.py \
             "${JSON_DIR}/test1.json" \
             "${JSON_DIR}/test2.json" \
             "${JSON_DIR}/test3.json" \
@@ -118,8 +118,8 @@ jobs:
         with:
           name: ${{ github.event.inputs.out_name }}
           path: |
-            ${{ github.event.inputs.out_name }}.json
-            ${{ github.event.inputs.out_name }}.pdf
+            backend/${{ github.event.inputs.out_name }}.json
+            backend/${{ github.event.inputs.out_name }}.pdf
           retention-days: 30
           if-no-files-found: warn
 
