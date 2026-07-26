@@ -189,13 +189,6 @@ async function fetchAllCourses() {
     }
     const data = await res.json();
     
-    let lastMod = res.headers.get('Last-Modified') || res.headers.get('Date');
-    if (lastMod) {
-        const dateObj = new Date(lastMod);
-        const el = document.getElementById('last-updated-label');
-        if (el) el.textContent = 'Last Updated: ' + dateObj.toLocaleString();
-    }
-
     let docs = [];
     let pending = [];
     
@@ -219,6 +212,17 @@ async function fetchAllCourses() {
                     ...val
                 }));
                 pending = pending.concat(mapped);
+            }
+
+            let maxTs = 0;
+            pending.forEach(s => {
+                const ts = (s.update && s.update.solved_ts) ? s.update.solved_ts : (s.ts || 0);
+                if (ts > maxTs) maxTs = ts;
+            });
+            if (maxTs > 0) {
+                const dateObj = new Date(maxTs);
+                const el = document.getElementById('last-updated-label');
+                if (el) el.textContent = 'Last Updated: ' + dateObj.toLocaleString();
             }
         }
     } catch (e) {
