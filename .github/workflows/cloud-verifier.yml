@@ -39,10 +39,8 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.10"
+      - name: Use Native System Python
+        run: python3 --version
       
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -114,10 +112,8 @@ jobs:
         run: |
           echo "$ENV_FILE" > .env
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.10"
+      - name: Use Native System Python
+        run: python3 --version
 
       - name: Install System Dependencies (Chrome & Xvfb)
         run: |
@@ -202,10 +198,8 @@ jobs:
     if: always()
 
     steps:
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.10"
+      - name: Use Native System Python
+        run: python3 --version
 
       - name: Download All Chunk Artifacts
         uses: actions/download-artifact@v4
