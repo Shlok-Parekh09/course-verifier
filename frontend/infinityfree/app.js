@@ -188,6 +188,14 @@ async function fetchAllCourses() {
         throw new Error(`API error ${res.status}: ${err}`);
     }
     const data = await res.json();
+    
+    let lastMod = res.headers.get('Last-Modified') || res.headers.get('Date');
+    if (lastMod) {
+        const dateObj = new Date(lastMod);
+        const el = document.getElementById('last-updated-label');
+        if (el) el.textContent = 'Last Updated: ' + dateObj.toLocaleString();
+    }
+
     let docs = [];
     let pending = [];
     
