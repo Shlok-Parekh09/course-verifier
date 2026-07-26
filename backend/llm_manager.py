@@ -552,10 +552,10 @@ class LLMManagerOllama:
             raw_ollama_url = raw_ollama_url[:-4]
         self.ollama_api_url = raw_ollama_url
 
-        # Text model: nemotron-3-nano:30b is the fast option for 20K-char page
-        # prompts. gemini-3-flash-preview:cloud is slower but can be used as a
+        # Text model: gemini-3-flash:cloud is the fast option for 20K-char page
+        # prompts. gemini-3-flash:cloud is slower but can be used as a
         # fallback via OLLAMA_MODEL if nemotron misbehaves.
-        self.ollama_model = os.environ.get("OLLAMA_MODEL", "nemotron-3-nano:30b")
+        self.ollama_model = os.environ.get("OLLAMA_MODEL", "gemini-3-flash:cloud")
 
         # Ordered list of Ollama-hosted fallback models. If the primary model
         # fails (rate limit, timeout, model error), we try each in turn before
@@ -567,14 +567,14 @@ class LLMManagerOllama:
             self.ollama_fallback_models = [
                 "gemma4:31b-cloud",
                 "gemma4:26b-cloud",
-                "gemini-3-flash-preview:cloud",
+                "gemini-3-flash:cloud",
             ]
 
         # Google AI Studio fallback (last resort)
         self.google_api_key = os.environ.get("GOOGLE_API_KEY")
-        # Default to gemini-3-flash-preview because that model is available and
+        # Default to gemini-3-flash because that model is available and
         # within quota for this Google AI Studio key. Override via GOOGLE_MODEL.
-        self.google_model = os.environ.get("GOOGLE_MODEL", "gemini-3-flash-preview")
+        self.google_model = os.environ.get("GOOGLE_MODEL", "gemini-3-flash")
         default_url = "https://ollama.com" if self.ollama_api_key else "http://localhost:11434"
         raw_ollama_url = os.environ.get("OLLAMA_API_URL", default_url)
 
@@ -585,21 +585,21 @@ class LLMManagerOllama:
             raw_ollama_url = raw_ollama_url[:-4]
         self.ollama_api_url = raw_ollama_url
 
-        # Text model: nemotron-3-nano:30b is the fast option for 20K-char page
-        # prompts. gemini-3-flash-preview:cloud is slower but can be used as a
+        # Text model: gemini-3-flash:cloud is the fast option for 20K-char page
+        # prompts. gemini-3-flash:cloud is slower but can be used as a
         # fallback via OLLAMA_MODEL if nemotron misbehaves.
-        self.ollama_model = os.environ.get("OLLAMA_MODEL", "nemotron-3-nano:30b")
+        self.ollama_model = os.environ.get("OLLAMA_MODEL", "gemini-3-flash:cloud")
 
         # Vision model used for accuracy-critical OCR (fee tables, scanned PDFs).
         # Keep this on a strong vision model even if it's slower.
-        self.ollama_vision_model = os.environ.get("OLLAMA_VISION_MODEL", "gemini-3-flash-preview:cloud")
+        self.ollama_vision_model = os.environ.get("OLLAMA_VISION_MODEL", "gemini-3-flash:cloud")
 
         # Lightweight navigation-only vision model for the action-decision rounds
         # (click/scroll/finish). This is called 3-6 times per hard course, strictly
         # serial, so a small fast model is a big wall-clock win. If it returns
         # unparseable JSON the caller can fall back to the main vision model.
         # Override via OLLAMA_NAV_VISION_MODEL env var.
-        self.ollama_nav_vision_model = os.environ.get("OLLAMA_NAV_VISION_MODEL", "gemma3:4b")
+        self.ollama_nav_vision_model = os.environ.get("OLLAMA_NAV_VISION_MODEL", "gemini-3-flash:cloud")
 
         # Track last call time per key to enforce rate limits
         self.last_call = {}
