@@ -1,0 +1,76 @@
+# ── Secrets & credentials ────────────────────────────────────────────────────
+.env
+serviceAccountKey.json
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# ── Chrome browser profiles ───────────────────────────────────────────────────
+chrome_profile/
+chrome_profile_fallback/
+chrome_profile_*/
+chrome_profile_fallback_*/
+
+# ── Data / Reports / PDFs ─────────────────────────────────────────────────────
+!CombinedWork.xlsx
+!fees.xlsx
+*.json
+!firebase.json
+!public/api/courses.json
+!public/api/data.json
+!public/api/analytics.json
+!test5/*.json
+*_floating_items.json
+master_dashboard_results.json
+verification_screenshots/
+*.pdf
+!1.json
+!affiliation_db.json
+!university_abbreviations.json
+
+# ── Secrets & credentials ────────────────────────────────────────────────────
+.env
+serviceAccountKey.json
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# ── Chrome browser profiles ───────────────────────────────────────────────────
+chrome_profile/
+chrome_profile_fallback/
+chrome_profile_*/
+chrome_profile_fallback_*/
+
+# ── Data / Reports / PDFs ─────────────────────────────────────────────────────
+!CombinedWork.xlsx
+!fees.xlsx
+*.json
+!firebase.json
+!public/api/courses.json
+!public/api/data.json
+!public/api/analytics.json
+!test5/*.json
+*_floating_items.json
+master_dashboard_results.json
+verification_screenshots/
+*.pdf
+!1.json
+!affiliation_db.json
+!university_abbreviations.json
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+.gcloudignore
+
+# MongoDB Connection
+mongo_uri.txt
+*.pdf
+!autonomous_verified_*.json
+backend/chrome_profiles/

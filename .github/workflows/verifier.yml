@@ -1,0 +1,252 @@
+name: Cloud Course Verifier (Chunked 7-978)
+
+on:
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    strategy:
+      max-parallel: 3 # Run 3 chunks concurrently to match Ollama Pro concurrency
+      fail-fast: false # Prevents one failed chunk from canceling the rest
+      matrix:
+        chunk:
+          - {start: 7, end: 46}
+          - {start: 47, end: 86}
+          - {start: 87, end: 126}
+          - {start: 127, end: 166}
+          - {start: 167, end: 206}
+          - {start: 207, end: 246}
+          - {start: 247, end: 286}
+          - {start: 287, end: 326}
+          - {start: 327, end: 366}
+          - {start: 367, end: 406}
+          - {start: 407, end: 446}
+          - {start: 447, end: 486}
+          - {start: 487, end: 526}
+          - {start: 527, end: 566}
+          - {start: 567, end: 606}
+          - {start: 607, end: 646}
+          - {start: 647, end: 686}
+          - {start: 687, end: 726}
+          - {start: 727, end: 766}
+          - {start: 767, end: 806}
+          - {start: 807, end: 846}
+          - {start: 847, end: 886}
+          - {start: 887, end: 926}
+          - {start: 927, end: 965}
+
+    env:
+      CI: true
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Load All API Keys
+        env:
+          ENV_FILE: ${{ secrets.ENV_FILE }}
+        run: |
+          echo "$ENV_FILE" > .env
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+          cache: "pip"                      # ← cache pip packages between runs
+          cache-dependency-path: requirements.txt
+
+      - name: Install System Dependencies (Chrome & Xvfb)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr libtesseract-dev xvfb x11-utils \
+            xkb-data x11-xkb-utils
+          sudo mount -t tmpfs -o size=2g tmpfs /dev/shm || true
+          pkill -9 chrome 2>/dev/null || true
+          google-chrome --version || true
+
+      - name: Increase Swap Space
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 10
+
+      - name: Install Python Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt python-dotenv gdown
+
+      - name: Cache Input PDF
+        id: cache-pdf
+        uses: actions/cache@v4
+        with:
+          path: link_compile.pdf
+          key: link-compile-pdf-1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd
+
+      - name: Download PDF from Google Drive
+        if: steps.cache-pdf.outputs.cache-hit != 'true'
+        run: |
+          gdown "1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd" -O backend/link_compile.pdf
+
+      - name: Run Verification (Virtual Display)
+        env:
+          START_PAGE: ${{ matrix.chunk.start }}
+          END_PAGE: ${{ matrix.chunk.end }}
+          PDF_NAME: autonomous_verified_report
+          DISPLAY: ":99"
+          CI: true
+          VERIFIER_NO_FORCE_EXIT: true
+          VERIFIER_NUM_BROWSERS: 3
+          OLLAMA_MAX_CONCURRENCY: 3
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+          OLLAMA_API_URL: ${{ secrets.OLLAMA_API_URL }}
+          # Fast text model + accuracy-critical OCR vision model.
+          # Navigation-only vision uses a small lightweight model to speed up
+          # the 3-4 serial action-decision rounds per hard course.
+          OLLAMA_MODEL: "nemotron-3-nano:30b"
+          OLLAMA_VISION_MODEL: "gemma4:31b-cloud"
+          OLLAMA_NAV_VISION_MODEL: "gemma3:4b"
+          # URLs that consistently hang or crash (e.g. CAPTCHA loops, broken servers).
+          # Comma-separated. The verifier marks these FALSE and moves on immediately.
+          VERIFIER_SKIP_URLS: "https://cmies.eng.cmu.ac.th/informaion-systems-and-cybersecurity/"
+        run: |
+          Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset 2>/dev/null &
+          sleep 3
+          cd backend && python autonomous_course_verifier.py || echo "::warning::Verifier exited with non-zero status, but checkpoint should be saved"
+
+      - name: Remove input PDF before upload
+        if: always()
+        run: |
+          rm -f backend/link_compile.pdf
+
+      - name: Upload Results Archive
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-results-${{ matrix.chunk.start }}-to-${{ matrix.chunk.end }}
+          path: |
+            backend/*.pdf
+            backend/autonomous_verified_*.json
+            backend/local_database.db
+
+  # ── Final merge: collect all 24 chunk JSONs → one file ──────────────────────
+  merge-json:
+    name: "Merge All 24 Chunk JSONs → merged_run.json"
+    needs: verify
+    runs-on: ubuntu-latest
+    # Always run this job even if some verify chunks failed
+    if: always()
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      # Download all verification-results-* artifacts into ./chunk_artifacts/
+      # Each artifact lands in its own sub-folder:
+      #   chunk_artifacts/verification-results-7-to-46/backend/autonomous_verified_*.json
+      - name: Download All Chunk Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: verification-results-*
+          path: chunk_artifacts
+          merge-multiple: false
+
+      # Fallback for 87-to-126 if it failed in the current run
+      - name: Download Fallback Chunk 87-to-126
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          FALLBACK_RUN_ID: 28643647783
+        run: |
+          if [ ! -d "chunk_artifacts/verification-results-87-to-126" ]; then
+            echo "::warning::Chunk 87-to-126 missing. Fetching artifact from fallback run $FALLBACK_RUN_ID ..."
+            ART_ID=$(gh api "repos/$REPO/actions/runs/$FALLBACK_RUN_ID/artifacts?per_page=100" \
+              --jq '.artifacts[] | select(.name == "verification-results") | .id')
+            if [ -n "$ART_ID" ]; then
+              echo "  -> Downloading fallback (id=$ART_ID)"
+              mkdir -p "chunk_artifacts/verification-results-87-to-126"
+              gh api "repos/$REPO/actions/artifacts/$ART_ID/zip" > /tmp/fallback.zip
+              unzip -q -o /tmp/fallback.zip -d "chunk_artifacts/verification-results-87-to-126" || true
+              rm -f /tmp/fallback.zip
+            else
+              echo "::warning::Could not find fallback artifact in run $FALLBACK_RUN_ID"
+            fi
+          else
+            echo "[*] Chunk 87-to-126 is present from the current run. No fallback needed."
+          fi
+
+      # Merge every chunk JSON into one sorted, deduplicated file
+      - name: Merge JSON Files
+        run: |
+          python3 - <<'PYEOF'
+          import os, json, glob
+
+          merged = []
+          seen_keys = set()
+
+          # Find only the link_compile JSON files (not floating_items or other JSONs)
+          json_files = sorted(glob.glob("chunk_artifacts/**/*link_compile*.json", recursive=True))
+
+          if not json_files:
+              print("::warning::No JSON files found in downloaded artifacts!")
+          else:
+              print(f"Found {len(json_files)} JSON file(s) across all chunks.")
+
+          merged_dict = {}
+
+          for jf in json_files:
+              try:
+                  with open(jf, encoding="utf-8") as f:
+                      data = json.load(f)
+                  if not isinstance(data, list):
+                      print(f"  [!] Skipping {jf} (not a JSON array)")
+                      continue
+                  added = 0
+                  updated = 0
+                  for course in data:
+                      key = (
+                          str(course.get("name", "")).strip().lower(),
+                          str(course.get("uni",  "")).strip().lower(),
+                          course.get("page_num"),
+                          course.get("box_index"),
+                      )
+                      
+                      if key not in merged_dict:
+                          merged_dict[key] = course
+                          added += 1
+                      else:
+                          # Overwrite if the NEW one was actually processed
+                          is_processed = course.get("processed_this_run") or course.get("reason", "") != ""
+                          old_is_processed = merged_dict[key].get("processed_this_run") or merged_dict[key].get("reason", "") != ""
+                          
+                          if is_processed and not old_is_processed:
+                              merged_dict[key] = course
+                              updated += 1
+
+                  print(f"  + {os.path.basename(jf)}: {len(data)} entries, {added} new, {updated} updated")
+              except Exception as e:
+                  print(f"  [!] Error reading {jf}: {e}")
+
+          # Convert back to list
+          merged = list(merged_dict.values())
+
+          # Sort by page_num then box_index (preserves original PDF order)
+          merged.sort(key=lambda c: (c.get("page_num", 0), c.get("box_index", 0)))
+
+          out = "merged_run.json"
+          with open(out, "w", encoding="utf-8") as f:
+              json.dump(merged, f, indent=2, ensure_ascii=False)
+
+          print(f"\n[OK] Merged {len(merged)} total courses -> {out}")
+          PYEOF
+
+      # Upload the single merged JSON as its own artifact
+      - name: Upload Merged JSON
+        uses: actions/upload-artifact@v4
+        with:
+          name: merged-run-json
+          path: backend/merged_run.json
