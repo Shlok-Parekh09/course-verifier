@@ -555,7 +555,7 @@ class LLMManagerOllama:
         # Text model: gemini-3-flash:cloud is the fast option for 20K-char page
         # prompts. gemini-3-flash:cloud is slower but can be used as a
         # fallback via OLLAMA_MODEL if nemotron misbehaves.
-        self.ollama_model = os.environ.get("OLLAMA_MODEL", "gemini-3-flash:cloud")
+        self.ollama_model = os.environ.get("OLLAMA_MODEL", "mistral-large-3:675b-cloud")
 
         # Ordered list of Ollama-hosted fallback models. If the primary model
         # fails (rate limit, timeout, model error), we try each in turn before
@@ -567,7 +567,7 @@ class LLMManagerOllama:
             self.ollama_fallback_models = [
                 "gemma4:31b-cloud",
                 "gemma4:26b-cloud",
-                "gemini-3-flash:cloud",
+                "mistral-large-3:675b-cloud",
             ]
 
         # Google AI Studio fallback (last resort)
@@ -588,18 +588,18 @@ class LLMManagerOllama:
         # Text model: gemini-3-flash:cloud is the fast option for 20K-char page
         # prompts. gemini-3-flash:cloud is slower but can be used as a
         # fallback via OLLAMA_MODEL if nemotron misbehaves.
-        self.ollama_model = os.environ.get("OLLAMA_MODEL", "gemini-3-flash:cloud")
+        self.ollama_model = os.environ.get("OLLAMA_MODEL", "mistral-large-3:675b-cloud")
 
         # Vision model used for accuracy-critical OCR (fee tables, scanned PDFs).
         # Keep this on a strong vision model even if it's slower.
-        self.ollama_vision_model = os.environ.get("OLLAMA_VISION_MODEL", "gemini-3-flash:cloud")
+        self.ollama_vision_model = os.environ.get("OLLAMA_VISION_MODEL", "qwen3.5:cloud")
 
         # Lightweight navigation-only vision model for the action-decision rounds
         # (click/scroll/finish). This is called 3-6 times per hard course, strictly
         # serial, so a small fast model is a big wall-clock win. If it returns
         # unparseable JSON the caller can fall back to the main vision model.
         # Override via OLLAMA_NAV_VISION_MODEL env var.
-        self.ollama_nav_vision_model = os.environ.get("OLLAMA_NAV_VISION_MODEL", "gemini-3-flash:cloud")
+        self.ollama_nav_vision_model = os.environ.get("OLLAMA_NAV_VISION_MODEL", "qwen3.5:cloud")
 
         # Track last call time per key to enforce rate limits
         self.last_call = {}
