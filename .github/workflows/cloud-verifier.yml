@@ -31,11 +31,19 @@ on:
         options:
           - api
           - ollama
+      runner_type:
+        description: "Where to run this workflow"
+        required: true
+        default: "self-hosted"
+        type: choice
+        options:
+          - self-hosted
+          - ubuntu-latest
 
 jobs:
   setup:
     name: "Calculate PDF Chunks"
-    runs-on: self-hosted
+    runs-on: ${{ github.event.inputs.runner_type }}
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
@@ -91,7 +99,7 @@ jobs:
   verify:
     name: "Verify Pages ${{ matrix.chunk.start }} to ${{ matrix.chunk.end }}"
     needs: setup
-    runs-on: self-hosted
+    runs-on: ${{ github.event.inputs.runner_type }}
     permissions:
       contents: write
     
@@ -116,6 +124,14 @@ jobs:
 
       - name: Use Native System Python
         run: python3 --version
+
+      - name: Install System Dependencies (Cloud Only)
+        if: github.event.inputs.runner_type == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr libtesseract-dev xvfb x11-utils libgl1
+          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo apt-get install -y ./google-chrome-stable_current_amd64.deb
 
       - name: Verify System Dependencies
         run: |
@@ -189,7 +205,7 @@ jobs:
   merge-json:
     name: "Merge All Chunk JSONs -> merged_run.json"
     needs: verify
-    runs-on: self-hosted
+    runs-on: ${{ github.event.inputs.runner_type }}
     if: always()
 
     steps:
