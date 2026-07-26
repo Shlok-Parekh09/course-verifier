@@ -35,7 +35,7 @@ on:
 jobs:
   setup:
     name: "Calculate PDF Chunks"
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
@@ -91,7 +91,7 @@ jobs:
   verify:
     name: "Verify Pages ${{ matrix.chunk.start }} to ${{ matrix.chunk.end }}"
     needs: setup
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       contents: write
     
@@ -198,7 +198,7 @@ jobs:
   merge-json:
     name: "Merge All Chunk JSONs -> merged_run.json"
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     if: always()
 
     steps:
