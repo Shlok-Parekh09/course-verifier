@@ -54,7 +54,7 @@ jobs:
 
       - name: Download Main PDF
         run: |
-          gdown "${{ github.event.inputs.gdrive_id || '1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd' }}" -O link_compile.pdf
+          uv run gdown "${{ github.event.inputs.gdrive_id || '1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd' }}" -O link_compile.pdf
 
       - name: Generate Matrix
         id: set-matrix
@@ -142,13 +142,13 @@ jobs:
 
       - name: Download Main PDF
         run: |
-          gdown "${{ github.event.inputs.gdrive_id || '1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd' }}" -O backend/link_compile.pdf
+          uv run gdown "${{ github.event.inputs.gdrive_id || '1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd' }}" -O backend/link_compile.pdf
 
       - name: Download NDU Screenshots PDF
         run: |
           if [ -n "${{ github.event.inputs.gdrive_id_ndu }}" ]; then
             echo "Downloading NDU PDF..."
-            gdown "${{ github.event.inputs.gdrive_id_ndu }}" -O backend/ndu.pdf
+            uv run gdown "${{ github.event.inputs.gdrive_id_ndu }}" -O backend/ndu.pdf
           else
             echo "No NDU Google Drive ID provided. Skipping NDU PDF download."
           fi
