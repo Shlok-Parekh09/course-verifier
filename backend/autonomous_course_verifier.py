@@ -6811,6 +6811,16 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 subprocess.run('pkill -9 -f "chrome"', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except: pass
         
+        print(f"    -> Clearing undetected_chromedriver cache to prevent corrupted driver collisions...")
+        try:
+            import shutil
+            uc_cache_linux = os.path.expanduser("~/.local/share/undetected_chromedriver")
+            uc_cache_win = os.path.expanduser("~\\AppData\\Roaming\\undetected_chromedriver")
+            if os.path.exists(uc_cache_linux): shutil.rmtree(uc_cache_linux, ignore_errors=True)
+            if os.path.exists(uc_cache_win): shutil.rmtree(uc_cache_win, ignore_errors=True)
+        except Exception as e:
+            pass
+
         print(f"    -> Synchronously updating ChromeDriver to prevent thread collisions...")
         try:
             _t_opts = uc.ChromeOptions()
