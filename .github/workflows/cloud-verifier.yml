@@ -48,7 +48,7 @@ jobs:
           enable-cache: false
 
       - name: Install PyMuPDF & gdown
-        run: uv pip install --system PyMuPDF gdown
+        run: uv pip install --system --break-system-packages PyMuPDF gdown
 
       - name: Download Main PDF
         run: |
@@ -135,7 +135,7 @@ jobs:
 
       - name: Install Python Dependencies
         run: |
-          uv pip install --system -r requirements.txt python-dotenv gdown
+          uv pip install --system --break-system-packages -r requirements.txt python-dotenv gdown
 
       - name: Download Main PDF
         run: |
