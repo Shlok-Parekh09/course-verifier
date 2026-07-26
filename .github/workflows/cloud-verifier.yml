@@ -117,18 +117,10 @@ jobs:
       - name: Use Native System Python
         run: python3 --version
 
-      - name: Install System Dependencies (Chrome & Xvfb)
+      - name: Verify System Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y tesseract-ocr libtesseract-dev xvfb x11-utils
-          sudo mount -t tmpfs -o size=2g tmpfs /dev/shm || true
           pkill -9 chrome 2>/dev/null || true
-          google-chrome --version || true
-
-      - name: Increase Swap Space
-        uses: pierotofy/set-swap-space@master
-        with:
-          swap-size-gb: 10
+          google-chrome --version || echo "::warning::Google Chrome not found! Make sure to install it."
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
