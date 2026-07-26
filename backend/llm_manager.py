@@ -314,7 +314,7 @@ class LLMManagerAPI:
         if format == "json": payload["generationConfig"]["responseMimeType"] = "application/json"
             
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=120)
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
             if resp.status_code == 200: return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
             print(f"      -> [LLM Manager] Gemini API Error {resp.status_code}: {resp.text}")
             if self._check_token_error(resp.text): return "ERROR_TOKEN_EXCEEDED"
@@ -392,7 +392,7 @@ class LLMManagerAPI:
         payload = {"contents": [{"parts": parts}], "generationConfig": {"temperature": 0.0}}
             
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=(60, 60))
+            resp = requests.post(url, headers=headers, json=payload, timeout=(15, 30))
             if resp.status_code == 200: return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
             print(f"      -> [LLM Manager] Gemini Vision Error {resp.status_code}: {resp.text}")
             return None
@@ -439,7 +439,7 @@ class LLMManagerAPI:
             "temperature": 0.0
         }
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=120)
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
             else:
