@@ -48,7 +48,9 @@ jobs:
           enable-cache: false
 
       - name: Install PyMuPDF & gdown
-        run: uv pip install --system --break-system-packages PyMuPDF gdown
+        run: |
+          uv venv .venv
+          uv pip install PyMuPDF gdown
 
       - name: Download Main PDF
         run: |
@@ -57,7 +59,7 @@ jobs:
       - name: Generate Matrix
         id: set-matrix
         run: |
-          python3 - <<'EOF'
+          uv run python3 - <<'EOF'
           import os, fitz, json
           doc = fitz.open("link_compile.pdf")
           
@@ -135,7 +137,8 @@ jobs:
 
       - name: Install Python Dependencies
         run: |
-          uv pip install --system --break-system-packages -r requirements.txt python-dotenv gdown
+          uv venv .venv
+          uv pip install -r requirements.txt python-dotenv gdown
 
       - name: Download Main PDF
         run: |
@@ -171,7 +174,7 @@ jobs:
         run: |
           Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset &
           sleep 3
-          cd backend && python3 autonomous_course_verifier.py link_compile.pdf || echo "::warning::Verifier exited with non-zero status"
+          cd backend && uv run python3 autonomous_course_verifier.py link_compile.pdf || echo "::warning::Verifier exited with non-zero status"
           echo "Taking a 5-minute cooldown break..."
           sleep 300
 
@@ -210,12 +213,12 @@ jobs:
 
       - name: Install PyMuPDF for merging
         run: |
-          python3 -m pip install --upgrade pip
-          pip install PyMuPDF
+          uv venv .venv
+          uv pip install PyMuPDF
 
       - name: Merge JSON Files
         run: |
-          python3 - <<'PYEOF'
+          uv run python3 - <<'PYEOF'
           import os, json, glob
 
           merged = []
