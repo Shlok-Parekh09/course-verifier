@@ -4197,11 +4197,11 @@ CRITICAL RULES:
         # Default to a 120000-char cap to utilize 128k context windows for API providers
         # without blowing up laptop memory.
         try:
-            LLM_TEXT_BUDGET = int(os.environ.get('VERIFIER_LLM_TEXT_BUDGET', '45000'))
+            LLM_TEXT_BUDGET = int(os.environ.get('VERIFIER_LLM_TEXT_BUDGET', '150000'))
         except ValueError:
-            LLM_TEXT_BUDGET = 45000
+            LLM_TEXT_BUDGET = 150000
         if LLM_TEXT_BUDGET <= 0:
-            LLM_TEXT_BUDGET = 45000
+            LLM_TEXT_BUDGET = 150000
 
         def _smart_truncate(text, limit):
             if len(text) <= limit: return text
