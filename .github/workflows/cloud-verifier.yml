@@ -132,11 +132,11 @@ jobs:
       - name: Install System Dependencies & 10GB Swap (Cloud Only)
         if: github.event.inputs.runner_type == 'ubuntu-latest'
         run: |
-          echo "Setting up 10GB Swap to prevent OOM Kills..."
-          sudo fallocate -l 10G /swapfile
+          echo "Setting up Swap to prevent OOM Kills..."
+          sudo fallocate -l 10G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=10240
           sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          sudo mkswap /swapfile || true
+          sudo swapon /swapfile || true
           sudo apt-get update
           sudo apt-get install -y tesseract-ocr libtesseract-dev xvfb x11-utils libgl1
           wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
