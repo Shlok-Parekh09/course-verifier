@@ -7923,56 +7923,45 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 # re-scrolling, re-clicking accordions, or re-running image OCR
                                 # (all of that was already done above).
                                 _js_light_extract = """
-                                    function getCleanText(root) {
-                                        let ignoreTags = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'SVG', 'FOOTER', 'HEADER', 'NAV', 'ASIDE', 'PATH', 'FORM', 'IFRAME', 'DIALOG', 'OPTION', 'VIDEO', 'AUDIO', 'CANVAS', 'MAP', 'OBJECT', 'EMBED', 'SELECT', 'TEXTAREA', 'INPUT', 'BUTTON']);
-                                        let skipClasses = ['footer', 'navbar', 'site-nav', 'cookie-banner', 'cookie-notice', 'sidebar-menu', 'widget', 'social-share', 'promo-banner'];
-                                        let textOut = [];
-                                        function walk(node) {
-                                            if (node.nodeType === Node.TEXT_NODE) {
-                                                let t = node.nodeValue.replace(/\\s+/g, ' ').trim();
-                                                if (t) textOut.push(t);
-                                                return;
-                                            }
-                                            if (node.nodeType === Node.ELEMENT_NODE) {
-                                                let tag = node.tagName.toUpperCase();
-                                                if (ignoreTags.has(tag)) return;
-                                                let c = (node.className || "").toString().toLowerCase();
-                                                let id = (node.id || "").toString().toLowerCase();
-                                                if (node.style && (node.style.display === 'none' || node.style.visibility === 'hidden')) return;
-                                                if (skipClasses.some(term => c.includes(term) || id.includes(term))) return;
-                                                
-                                                let prefix = "";
-                                                if (tag === 'H1') prefix = "\\n\\n#";
-                                                else if (tag === 'H2') prefix = "\\n\\n##";
-                                                else if (tag === 'H3') prefix = "\\n\\n###";
-                                                else if (tag === 'H4' || tag === 'H5' || tag === 'H6') prefix = "\\n\\n####";
-                                                else if (tag === 'LI') prefix = "\\n-";
-                                                else if (tag === 'TR') prefix = "\\n";
-                                                else if (tag === 'P' || tag === 'DIV' || tag === 'SECTION' || tag === 'ARTICLE' || tag === 'BR') prefix = "\\n";
-                                                else if (tag === 'TD' || tag === 'TH') prefix = "|";
-                                                
-                                                if (prefix) textOut.push(prefix);
-                                                for (let i = 0; i < node.childNodes.length; i++) walk(node.childNodes[i]);
-                                                
-                                                let suffix = "";
-                                                if (tag === 'P' || tag === 'DIV' || tag === 'SECTION' || tag === 'ARTICLE' || tag === 'TR' || tag.startsWith('H')) suffix = "\\n";
-                                                if (suffix) textOut.push(suffix);
-                                            }
+                                    let ignoreTags = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'SVG', 'FOOTER', 'HEADER', 'NAV', 'ASIDE', 'PATH', 'FORM', 'IFRAME', 'DIALOG', 'OPTION', 'VIDEO', 'AUDIO', 'CANVAS', 'MAP', 'OBJECT', 'EMBED', 'SELECT', 'TEXTAREA', 'INPUT', 'BUTTON']);
+                                    let skipClasses = ['footer', 'navbar', 'site-nav', 'cookie-banner', 'cookie-notice', 'sidebar-menu', 'widget', 'social-share', 'promo-banner'];
+                                    let textOut = [];
+                                    function walk(node) {
+                                        if (node.nodeType === Node.TEXT_NODE) {
+                                            let t = node.nodeValue.replace(/\\s+/g, ' ').trim();
+                                            if (t) textOut.push(t);
+                                            return;
                                         }
-                                        walk(root);
-                                        let finalStr = textOut.join(' ');
-                                        finalStr = finalStr.replace(/[ \\t]*\\n[ \\t]*/g, '\\n');
-                                        finalStr = finalStr.replace(/[ \\t]*\\|[ \\t]*/g, ' | ');
-                                        finalStr = finalStr.replace(/\\n{3,}/g, '\\n\\n');
-                                        return finalStr.trim();
+                                        if (node.nodeType === Node.ELEMENT_NODE) {
+                                            let tag = node.tagName.toUpperCase();
+                                            if (ignoreTags.has(tag)) return;
+                                            let c = (node.className || "").toString().toLowerCase();
+                                            let id = (node.id || "").toString().toLowerCase();
+                                            if (node.style && (node.style.display === 'none' || node.style.visibility === 'hidden')) return;
+                                            if (skipClasses.some(term => c.includes(term) || id.includes(term))) return;
+                                            
+                                            let prefix = "";
+                                            if (tag === 'H1') prefix = "\\n\\n# ";
+                                            else if (tag === 'H2') prefix = "\\n\\n## ";
+                                            else if (tag === 'H3') prefix = "\\n\\n### ";
+                                            else if (tag === 'H4' || tag === 'H5' || tag === 'H6') prefix = "\\n\\n#### ";
+                                            else if (tag === 'LI') prefix = "\\n- ";
+                                            else if (tag === 'TR') prefix = "\\n";
+                                            else if (tag === 'P' || tag === 'DIV' || tag === 'SECTION' || tag === 'ARTICLE' || tag === 'BR') prefix = "\\n";
+                                            else if (tag === 'TD' || tag === 'TH') prefix = " | ";
+                                            
+                                            if (prefix) textOut.push(prefix);
+                                            for (let i = 0; i < node.childNodes.length; i++) walk(node.childNodes[i]);
+                                            
+                                            let suffix = "";
+                                            if (tag === 'P' || tag === 'DIV' || tag === 'SECTION' || tag === 'ARTICLE' || tag === 'TR' || tag.startsWith('H')) suffix = "\\n";
+                                            if (suffix) textOut.push(suffix);
+                                        }
                                     }
-                                    let text = getCleanText(document.body);
+                                    walk(document.body);
+                                    let text = textOut.join(' ');
                                     if (text.length < 100) text = document.body.textContent || "";
                                     let result = text.substring(0, 150000);
-                                    if (typeof arguments[arguments.length - 1] === 'function') {
-                                        arguments[arguments.length - 1](result);
-                                    }
-                                    return result;
                                 """
                                 try:
                                     driver.set_script_timeout(15)
@@ -7983,6 +7972,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                         try {{
                                             {_js_light_extract}
                                             finished = true;
+                                            callback(result);
                                         }} catch(e) {{
                                             if(!finished) callback("");
                                         }}
