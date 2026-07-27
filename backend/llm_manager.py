@@ -11,41 +11,46 @@ from dotenv import load_dotenv
 import os; load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 class LLMManagerAPI:
-    def __init__(self):
-        self.openrouter_keys = [os.environ.get(f"OPENROUTER_KEY_{i}") for i in range(1, 7) if os.environ.get(f"OPENROUTER_KEY_{i}")]
-        self.gemini_keys = [os.environ.get(f"GEMINI_KEY_{i}") for i in range(1, 7) if os.environ.get(f"GEMINI_KEY_{i}")]
-        self.nvidia_keys = [os.environ.get(f"NVIDIA_KEY_{i}") for i in range(1, 7) if os.environ.get(f"NVIDIA_KEY_{i}")]
-        self.groq_keys = [os.environ.get(f"GROQ_API_KEY_{i}") for i in range(1, 7) if os.environ.get(f"GROQ_API_KEY_{i}")] or ([os.environ.get("GROQ_API_KEY")] if os.environ.get("GROQ_API_KEY") else [])
-        self.mistral_keys = [os.environ.get(f"MISTRAL_API_KEY_{i}") for i in range(1, 7) if os.environ.get(f"MISTRAL_API_KEY_{i}")] or ([os.environ.get("MISTRAL_API_KEY")] if os.environ.get("MISTRAL_API_KEY") else [])
-        self.sambanova_keys = [os.environ.get(f"SAMBANOVA_API_KEY_{i}") for i in range(1, 7) if os.environ.get(f"SAMBANOVA_API_KEY_{i}")] or ([os.environ.get("SAMBANOVA_API_KEY")] if os.environ.get("SAMBANOVA_API_KEY") else [])
+    def _parse_keys(self, prefix: str) -> list[str]:
+        keys = []
+        plural_env = os.environ.get(f"{prefix}_API_KEYS") or os.environ.get(f"{prefix}_KEYS")
+        if plural_env:
+            keys = [k.strip() for k in plural_env.split(",") if k.strip()]
+        if not keys:
+            keys = [os.environ.get(f"{prefix}_API_KEY_{i}") for i in range(1, 51) if os.environ.get(f"{prefix}_API_KEY_{i}")]
+        if not keys:
+            keys = [os.environ.get(f"{prefix}_KEY_{i}") for i in range(1, 51) if os.environ.get(f"{prefix}_KEY_{i}")]
+        if not keys:
+            singular = os.environ.get(f"{prefix}_API_KEY") or os.environ.get(f"{prefix}_KEY")
+            if singular:
+                keys = [singular]
+        return keys
 
-        # ΓöÇΓöÇ Single-name env var fallbacks ΓöÇΓöÇ
-        # If numbered keys aren't found, fall back to common single-name env vars
-        # (e.g. GEMINI_API_KEY instead of GEMINI_KEY_1)
-        if not self.gemini_keys:
-            self.gemini_keys = [k for k in [os.environ.get("GEMINI_API_KEY"), os.environ.get("GEMINI_KEY")] if k]
-        if not self.nvidia_keys:
-            self.nvidia_keys = [k for k in [os.environ.get("NVIDIA_API_KEY"), os.environ.get("NVIDIA_KEY")] if k]
-        if not self.openrouter_keys:
-            self.openrouter_keys = [k for k in [os.environ.get("OPENROUTER_API_KEY"), os.environ.get("OPENROUTER_KEY")] if k]
-        if not self.groq_keys:
-            self.groq_keys = [k for k in [os.environ.get("GROQ_API_KEY"), os.environ.get("GROQ_KEY")] if k]
-        if not self.mistral_keys:
-            self.mistral_keys = [k for k in [os.environ.get("MISTRAL_API_KEY"), os.environ.get("MISTRAL_KEY")] if k]
+    def __init__(self):
+        self.github_keys = self._parse_keys("GITHUB")
+        self.nvidia_keys = self._parse_keys("NVIDIA")
+        self.hf_urls = [os.environ.get(f"HF_OLLAMA_URL_{i}") for i in range(1, 51) if os.environ.get(f"HF_OLLAMA_URL_{i}")]
+        self._hf_clients = {}
+        self.groq_keys = self._parse_keys("GROQ")
+        self.mistral_keys = self._parse_keys("MISTRAL")
+        self.sambanova_keys = self._parse_keys("SAMBANOVA")
+        self.gemini_keys = self._parse_keys("GEMINI")
         
         # Cloud/remote Ollama - must be explicitly set via env vars
         self.cloud_ollama_url = os.environ.get("OLLAMA_API_URL")
         self.cloud_ollama_model = os.environ.get("OLLAMA_MODEL")
         self.ollama_api_key = os.environ.get("OLLAMA_API_KEY")
 
-        # Default to ollama.com if API key is present, else local
-        default_url = "https://ollama.com" if self.ollama_api_key else "http://localhost:11434"
-        raw_ollama_url = os.environ.get("OLLAMA_API_URL", default_url)
+        # In API mode, we do NOT default to localhost. We only use Ollama if URL is explicitly provided.
+        self.backend_mode = os.environ.get("LLM_BACKEND", "api").lower().strip()
+        raw_ollama_url = os.environ.get("OLLAMA_API_URL")
+        if not raw_ollama_url and self.ollama_api_key:
+            raw_ollama_url = "https://ollama.com"
         self.vision_call_counter = 0
         self._vision_lock = threading.Lock()
-        if raw_ollama_url.endswith("/api/generate"):
+        if raw_ollama_url and raw_ollama_url.endswith("/api/generate"):
             raw_ollama_url = raw_ollama_url[:-13]
-        elif raw_ollama_url.endswith("/api"):
+        elif raw_ollama_url and raw_ollama_url.endswith("/api"):
             raw_ollama_url = raw_ollama_url[:-4]
         self.ollama_api_url = raw_ollama_url
         self.ollama_model   = os.environ.get("OLLAMA_MODEL", "mistral-large-3:675b-cloud")
@@ -58,91 +63,131 @@ class LLMManagerAPI:
 
         # ΓöÇΓöÇ Diagnostic logging ΓöÇΓöÇ
         print(f"[LLM Manager] Keys loaded: Mistral={len(self.mistral_keys)}, NVIDIA={len(self.nvidia_keys)}, "
-              f"Gemini={len(self.gemini_keys)}, OpenRouter={len(self.openrouter_keys)}, "
-              f"Groq={len(self.groq_keys)}")
-        if not any([self.mistral_keys, self.nvidia_keys, self.gemini_keys, self.openrouter_keys, self.groq_keys, self.ollama_api_url]):
+              f"Gemini={len(self.gemini_keys)}, GitHub={len(self.github_keys)}, "
+              f"Groq={len(self.groq_keys)}, HF_Ollama={len(self.hf_urls)}")
+        if not any([self.mistral_keys, self.nvidia_keys, self.gemini_keys, self.github_keys, self.groq_keys, self.ollama_api_url, self.hf_urls]):
             print("[LLM Manager] ⚠ WARNING: No text-generation API keys or Ollama URL found! All LLM calls will return None.")
 
     def _rate_limit(self, key_identifier: str, min_interval: float = 4.29):
-        """Enforces a minimum interval (in seconds) between API calls for a given key."""
+        """Enforces a minimum interval (in seconds) between API calls for a given key.
+        IMPORTANT: sleep is done OUTSIDE the lock so other threads are not blocked."""
+        wait_time = 0.0
         with self.lock:
             now = time.time()
             if key_identifier not in self.last_call:
                 self.last_call[key_identifier] = 0.0
-                
             elapsed = now - self.last_call[key_identifier]
             if elapsed < min_interval:
                 wait_time = min_interval - elapsed
-                print(f"      -> [Rate Limit] Sleeping for {wait_time:.1f}s for key {key_identifier} (14 req/min)...")
-                time.sleep(wait_time)
-            self.last_call[key_identifier] = time.time()
+            # Mark the call time NOW (under lock) so parallel threads on different
+            # keys don't all see elapsed=0 and skip the rate limit.
+            self.last_call[key_identifier] = time.time() + wait_time
+        if wait_time > 0:
+            print(f"      -> [Rate Limit] Sleeping for {wait_time:.1f}s for key {key_identifier} (14 req/min)...")
+            time.sleep(wait_time)
 
-    def _get_key_sequence(self, worker_id: int, num_keys: int, num_workers: int = 3) -> list[int]:
-        if num_keys == 0: return []
-        keys = [i for i in range(num_keys) if i % num_workers == worker_id % num_workers]
-        return keys if keys else [worker_id % num_keys]
+    def _get_key_sequence(self, worker_id: int, num_keys: int, num_workers: int = 0) -> list[int]:
+        """Return the ordered list of key indices this worker should try.
+        
+        Uses a SPREAD pattern so each worker gets keys from opposite ends of the
+        list (e.g. 6 keys, 3 workers → worker 0: [0,5], worker 1: [1,4], worker 2: [2,3]).
+        This maximises the gap between consecutive calls on the same key, naturally
+        avoiding rate-limit collisions without explicit sleeping.
+        """
+        if num_keys == 0:
+            return []
+        # Read actual browser/worker count from env so the pattern always matches
+        if num_workers <= 0:
+            try:
+                num_workers = int(os.environ.get("VERIFIER_NUM_BROWSERS", "3"))
+            except (ValueError, TypeError):
+                num_workers = 3
+        if num_workers <= 0:
+            num_workers = 3
+
+        w = worker_id % num_workers
+        keys = []
+        # Assign keys from the front and mirrored from the back for this worker
+        for offset in range(0, num_keys, num_workers):
+            front_idx = offset + w
+            back_idx  = num_keys - 1 - offset - w
+            if front_idx < num_keys:
+                keys.append(front_idx)
+            if back_idx >= 0 and back_idx != front_idx and back_idx not in keys:
+                keys.append(back_idx)
+        return keys if keys else [w % num_keys]
 
     def _check_token_error(self, text: str) -> bool:
         err = text.lower()
         return "context" in err or "token" in err or "too large" in err or "exceeds" in err
 
     def generate(self, prompt: str, system: Optional[str] = None, format: str = "text", temperature: float = 0.0, provider: str = "auto", worker_id: Optional[int] = None, model_name: Optional[str] = None, timeout: int = 120) -> Optional[str]:
-        # Text Generation: Ollama -> Mistral -> Groq -> SambaNova -> OpenRouter -> NVIDIA -> Gemini
+        # Text Generation with round-robin provider rotation.
+        # When worker_id is given each worker starts at a different provider so all
+        # providers (Mistral, Groq, OpenRouter, NVIDIA, Gemini) get used equally
+        # rather than NVIDIA/Gemini only being reached as last-resort fallbacks.
 
         if worker_id is not None:
-            # DEDICATED KEY LOGIC for Multithreading
-            # Chain: Ollama -> Mistral -> Groq -> SambaNova -> OpenRouter -> NVIDIA -> Gemini
+            # Build the ordered provider list for this specific call.
+            # Each provider entry is (name, keys_list, rate_interval, call_fn)
+            provider_pool = []
+            if self.hf_urls:
+                # Use ALL URLs for text to maximize concurrency and achieve API-like speeds
+                # Placed OUTSIDE the strict isolation block so it runs during local_ollama mode
+                provider_pool.append(("Local Ollama (HF)", self.hf_urls, 1.0, "local_ollama"))
 
-            if self.mistral_keys and provider in ["auto", "mistral"]:
-                for idx in self._get_key_sequence(worker_id, len(self.mistral_keys)):
-                    m_key = self.mistral_keys[idx]
-                    key_id = f"mistral_text_{idx}"
-                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying Mistral Key {idx+1}...")
-                    self._rate_limit(key_id, min_interval=1.0)
-                    res = self._call_mistral(m_key, prompt, system, format, 0.0)
+            # STRICT ISOLATION: Do not add API keys if the user specifically requested Local Ollama
+            if self.backend_mode != "ollama" and provider != "ollama":
+                if self.mistral_keys:
+                    # Append Mistral FIRST to heavily prioritize it as requested
+                    provider_pool.insert(0, ("Mistral", self.mistral_keys, 1.0, "mistral"))
+                
+                if self.groq_keys:
+                    provider_pool.append(("Groq (Llama 3.3 70B)", self.groq_keys, 4.0, "groq"))
+                if self.nvidia_keys:
+                    provider_pool.append(("NVIDIA (Mistral Medium 3.5 128B)", self.nvidia_keys, 1.0, "nvidia"))
+
+            if not provider_pool:
+                print(f"      -> [LLM Manager] Worker {worker_id+1}: No API keys available!")
+                return None
+
+            # Filter by explicit provider request
+            if provider != "auto" and provider != "ollama":
+                provider_pool = [p for p in provider_pool if p[3] == provider] or provider_pool
+
+            # Disable provider round-robin to ensure Mistral is ALWAYS prioritized first
+            # The keys themselves are still load-balanced across workers.
+            start = 0
+
+            for offset in range(len(provider_pool)):
+                p_name, p_keys, p_rate, p_tag = provider_pool[(start + offset) % len(provider_pool)]
+                for idx in self._get_key_sequence(worker_id, len(p_keys)):
+                    key_id = f"{p_tag}_{idx}"
+                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying {p_name} Key {idx+1}...")
+                    self._rate_limit(key_id, min_interval=p_rate)
+                    if p_tag == "mistral":
+                        res = self._call_mistral(p_keys[idx], prompt, system, format, 0.0)
+                    elif p_tag == "groq":
+                        res = self._call_groq(p_keys[idx], prompt, system, format, 0.0)
+                    elif p_tag == "nvidia":
+                        res = self._call_nvidia(p_keys[idx], prompt, system, format, 0.0, timeout=timeout)
+                    elif p_tag == "local_ollama":
+                        res = self._call_local_ollama(p_keys[idx], prompt, system, format, 0.0, is_vision=False)
+                    else:
+                        res = None
+                    if res:
+                        return res
+                print(f"      -> [LLM Manager] Worker {worker_id+1}'s {p_name} keys failed. Trying next provider...")
+
+            # FINAL FALLBACK TO GITHUB MODELS (Last resort)
+            if self.github_keys:
+                print(f"      -> [LLM Manager] Worker {worker_id+1} all standard providers failed. Falling back to GitHub Models...")
+                for idx, key in enumerate(self.github_keys):
+                    self._rate_limit(f"github_{idx}", min_interval=1.0)
+                    res = self._call_github(key, prompt, system, format, 0.0)
                     if res: return res
-                print(f"      -> [LLM Manager] Worker {worker_id+1}'s Mistral keys failed. Failing over to Groq...")
 
-            if self.groq_keys and provider in ["auto", "groq"]:
-                for idx in self._get_key_sequence(worker_id, len(self.groq_keys)):
-                    g_key = self.groq_keys[idx]
-                    key_id = f"groq_{idx}"
-                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying Groq Key {idx+1} (Llama 3.3 70B)...")
-                    self._rate_limit(key_id, min_interval=4.0)
-                    res = self._call_groq(g_key, prompt, system, format, 0.0)
-                    if res: return res
-                print(f"      -> [LLM Manager] Worker {worker_id+1}'s Groq keys failed. Failing over to SambaNova...")
-
-            if self.openrouter_keys and provider in ["auto", "openrouter"]:
-                for idx in self._get_key_sequence(worker_id, len(self.openrouter_keys)):
-                    o_key = self.openrouter_keys[idx]
-                    key_id = f"openrouter_{idx}"
-                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying OpenRouter Key {idx+1}...")
-                    self._rate_limit(key_id, min_interval=1.0)
-                    res = self._call_openrouter(o_key, prompt, system, format, 0.0)
-                    if res: return res
-                print(f"      -> [LLM Manager] Worker {worker_id+1}'s OpenRouter keys failed. Failing over to NVIDIA...")
-
-            if self.nvidia_keys and provider in ["auto", "nvidia"]:
-                for idx in self._get_key_sequence(worker_id, len(self.nvidia_keys)):
-                    n_key = self.nvidia_keys[idx]
-                    key_id = f"nvidia_{idx}"
-                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying NVIDIA Key {idx+1} (Nemotron Super)...")
-                    self._rate_limit(key_id, min_interval=1.0)
-                    res = self._call_nvidia(n_key, prompt, system, format, 0.0, timeout=timeout)
-                    if res: return res
-                print(f"      -> [LLM Manager] Worker {worker_id+1}'s NVIDIA keys failed. Failing over to Gemini...")
-
-            if self.gemini_keys and provider in ["auto", "gemini"]:
-                for idx in self._get_key_sequence(worker_id, len(self.gemini_keys)):
-                    g_key = self.gemini_keys[idx]
-                    key_id = f"gemini_text_{idx}"
-                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying Gemini Key {idx+1} (Gemini 2.5 Flash)...")
-                    self._rate_limit(key_id, min_interval=4.0)
-                    res = self._call_gemini(g_key, prompt, system, format, 0.0, model_name="gemini-2.5-flash")
-                    if res: return res
-                print(f"      -> [LLM Manager] Worker {worker_id+1}'s Gemini keys failed.")
-
+            print(f"      -> [LLM Manager] Worker {worker_id+1}: ALL providers exhausted!")
             return None
 
         # FALLBACK SEQUENTIAL LOGIC (If worker_id is not provided)
@@ -152,6 +197,11 @@ class LLMManagerAPI:
             result = self._call_ollama(prompt, system, format, temperature, url=self.ollama_api_url, model=self.ollama_model, timeout=timeout)
             if result: return result
             print(f"      -> [LLM Manager] Ollama failed. Failing over...")
+            
+        # STRICT ISOLATION: Do not proceed to APIs if Local Ollama was requested
+        if self.backend_mode == "ollama" or provider == "ollama":
+            print("      -> [LLM Manager] Local Ollama exhausted (APIs disabled). Returning None.")
+            return None
 
         # Provider 0: MISTRAL
         if provider in ["auto", "mistral"]:
@@ -174,22 +224,22 @@ class LLMManagerAPI:
         # Provider 4: NVIDIA
         if provider in ["auto", "nvidia"]:
             for idx, key in enumerate(self.nvidia_keys):
-                print(f"      -> [LLM Manager] Trying NVIDIA Key {idx+1}/{len(self.nvidia_keys)} (Llama 70B)...")
+                print(f"      -> [LLM Manager] Trying NVIDIA Key {idx+1}/{len(self.nvidia_keys)} (Mistral Medium 3.5 128B)...")
                 self._rate_limit(f"nvidia_{idx}", min_interval=1.0)
                 result = self._call_nvidia(key, prompt, system, format, 0.0, timeout=timeout)
                 if result: return result
                 print(f"      -> [LLM Manager] NVIDIA Key {idx+1} failed. Failing over...")
 
-        # Provider 5: GEMINI (Gemini 2.5 Flash - 1M context, final fallback)
-        if provider in ["auto", "gemini"]:
-            for idx, key in enumerate(self.gemini_keys):
-                print(f"      -> [LLM Manager] Trying Gemini Key {idx+1}/{len(self.gemini_keys)} (Gemini 2.5 Flash)...")
-                self._rate_limit(f"gemini_{idx}", min_interval=1.0)
-                result = self._call_gemini(key, prompt, system, format, 0.0, model_name="gemini-2.5-flash")
+        # Provider 5: GitHub Models (Final text fallback)
+        if provider in ["auto", "github"]:
+            for idx, key in enumerate(self.github_keys):
+                print(f"      -> [LLM Manager] Trying GitHub Key {idx+1}/{len(self.github_keys)} (Llama-3.3-70B-Instruct)...")
+                self._rate_limit(f"github_{idx}", min_interval=1.0)
+                result = self._call_github(key, prompt, system, format, 0.0)
                 if result: return result
-                print(f"      -> [LLM Manager] Gemini Key {idx+1} failed. Failing over...")
+                print(f"      -> [LLM Manager] GitHub Key {idx+1} failed. Failing over...")
 
-        print("      -> [LLM Manager] CRITICAL ERROR: All API keys for Mistral, Groq, SambaNova, OpenRouter, NVIDIA, and Gemini failed!")
+        print("      -> [LLM Manager] CRITICAL ERROR: All API keys for Mistral, Groq, NVIDIA, and GitHub failed!")
         return None
 
     def generate_with_image(self, prompt: str, base64_image: str, system: Optional[str] = None, worker_id: Optional[int] = None) -> Optional[str]:
@@ -210,6 +260,18 @@ class LLMManagerAPI:
             res = self._call_ollama_vision(prompt, base64_image, system)
             if res: return res
             print("      -> [LLM Manager] Ollama Vision failed. Failing over to API keys...")
+            
+        if self.hf_urls:
+            print(f"      -> [LLM Manager] Trying Local Ollama Vision (Qwen) via Dedicated HF Space...")
+            for v_url in reversed(self.hf_urls):
+                res = self._call_local_ollama(v_url, prompt, system, "text", 0.0, is_vision=True, base64_image=base64_image)
+                if res: return res
+            print("      -> [LLM Manager] Local Ollama Vision failed. Failing over...")
+            
+        # STRICT ISOLATION: Do not proceed to APIs if Local Ollama was requested
+        if self.backend_mode == "ollama":
+            print("      -> [LLM Manager] Local Ollama Vision exhausted (APIs disabled). Returning None.")
+            return None
         
         if max_keys == 0:
             print("      -> [LLM Manager] CRITICAL ERROR: No API keys for Vision!")
@@ -243,6 +305,38 @@ class LLMManagerAPI:
         return None
         
 
+    def _call_local_ollama(self, api_url, prompt, system, format, temperature, is_vision=False, base64_image=None):
+        """Calls the Hugging Face ZeroGPU Gradio endpoint via gradio_client."""
+        model = "qwen3.5:9b" if is_vision else "granite4.1:8b"
+        
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": prompt}] if system else [{"role": "user", "content": prompt}]
+        
+        try:
+            from gradio_client import Client
+            import json
+            
+            clean_url = api_url.replace('/api/predict', '').rstrip('/')
+            
+            with self.lock:
+                if clean_url not in self._hf_clients:
+                    print(f"      -> [LLM Manager] Initializing Gradio Client for {clean_url}...")
+                    self._hf_clients[clean_url] = Client(clean_url)
+                client = self._hf_clients[clean_url]
+            
+            result = client.predict(
+                model_name=model,
+                messages_json=json.dumps(messages),
+                image_base64=base64_image if base64_image else "",
+                api_name="/predict"
+            )
+            return str(result).strip()
+        except ImportError:
+            print("      -> [LLM Manager] CRITICAL ERROR: gradio_client is not installed! Run `uv pip install gradio_client`")
+            return None
+        except Exception as e:
+            print(f"      -> [LLM Manager] Local Ollama Exception: {e}")
+            return None
+
     def _call_ollama(self, prompt: str, system: Optional[str], format: str, temperature: float, *, url: Optional[str] = None, model: Optional[str] = None, timeout: int = 120) -> Optional[str]:
         url = (url or self.ollama_api_url).rstrip('/')
         if not url.endswith('/api/generate'): url += '/api/generate'
@@ -271,35 +365,34 @@ class LLMManagerAPI:
         except Exception:
             return None
 
-    def _call_openrouter(self, api_key: Optional[str], prompt: str, system: Optional[str], format: str, temperature: float) -> Optional[str]:
-        url = "https://openrouter.ai/api/v1/chat/completions"
+    def _call_github(self, api_key: Optional[str], prompt: str, system: Optional[str], format: str, temperature: float) -> Optional[str]:
+        url = "https://models.inference.ai.azure.com/chat/completions"
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        messages = []
-        if system: messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
-        
-        payload = {"model": "meta-llama/llama-3.3-70b-instruct:free", "messages": messages, "temperature": temperature}
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": prompt}] if system else [{"role": "user", "content": prompt}]
+        if format == "json":
+            messages.append({"role": "user", "content": "You MUST return ONLY a valid JSON object. No other text."})
+        payload = {"model": "Llama-3.3-70B-Instruct", "messages": messages, "temperature": temperature, "max_tokens": 4096}
         if format == "json": payload["response_format"] = {"type": "json_object"}
             
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=30)
-            if resp.status_code == 200: return resp.json()["choices"][0]["message"]["content"]
-            print(f"      -> [LLM Manager] OpenRouter API Error {resp.status_code}: {resp.text[:200]}")
-            if self._check_token_error(resp.text): return "ERROR_TOKEN_EXCEEDED"
+            resp = requests.post(url, headers=headers, json=payload, timeout=120)
+            if resp.status_code == 200:
+                text = resp.json()['choices'][0]['message']['content'].strip()
+                return text
+            print(f"      -> [LLM Manager] GitHub API Error {resp.status_code}: {resp.text[:200]}")
             return None
-        except Exception as e: 
-            print(f"      -> [LLM Manager] OpenRouter API Exception: {e}")
+        except Exception as e:
+            print(f"      -> [LLM Manager] GitHub API Exception: {e}")
             return None
 
     def _call_nvidia(self, api_key: Optional[str], prompt: str, system: Optional[str], format: str, temperature: float, timeout: int = 120) -> Optional[str]:
-        """Call NVIDIA NIM API with nemotron-3-super-120b-a12b."""
+        """Call NVIDIA NIM API with mistral-medium-3.5-128b."""
         url = "https://integrate.api.nvidia.com/v1/chat/completions"
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        messages = []
-        if system: messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
-        
-        payload = {"model": "nvidia/nemotron-3-super-120b-a12b", "messages": messages, "temperature": temperature, "max_tokens": 4096}
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": prompt}] if system else [{"role": "user", "content": prompt}]
+        if format == "json":
+            messages.append({"role": "user", "content": "You MUST return ONLY a valid JSON object. No other text."})
+        payload = {"model": "mistralai/mistral-medium-3.5-128b", "messages": messages, "temperature": temperature, "max_tokens": 4096}
         if format == "json": payload["response_format"] = {"type": "json_object"}
             
         try:
@@ -903,7 +996,7 @@ class LLMManagerOllama:
             "stream": False,
             "options": {
                 "temperature": temperature,
-                "num_ctx": 16384
+                "num_ctx": 8192
             }
         }
         if system:
@@ -967,7 +1060,7 @@ class LLMManagerOllama:
             "images": [base64_image],
             "options": {
                 "temperature": 0.0,
-                "num_ctx": 16384
+                "num_ctx": 4096
             }
         }
         if system:

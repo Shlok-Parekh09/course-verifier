@@ -8,15 +8,15 @@ def get_chrome_main_version():
             match = re.search(r'version\s+REG_SZ\s+(\d+)\.', out)
             if match: return int(match.group(1))
         else:
-            for bin_name in ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser']:
+            for bin_name in ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser', '/usr/bin/google-chrome']:
                 try:
-                    out = subprocess.check_output([bin_name, '--version']).decode()
-                    match = re.search(r'(?:Chrome|Chromium) (\d+)\.', out)
+                    out = subprocess.check_output([bin_name, '--version'], stderr=subprocess.STDOUT).decode()
+                    match = re.search(r'(\d{3})\.', out)
                     if match: return int(match.group(1))
                 except:
                     continue
     except: pass
-    return 149  # Fallback to 149 to avoid undetected_chromedriver v150 bug
+    return 139  # Fallback to 139 which matches Kali Linux default
 
 def kill_process_tree(pid):
     try:
@@ -2009,7 +2009,7 @@ class AutonomousCourseVerifier:
         def _has_real_content():
             try:
                 title = (driver.title or "").lower()
-                body_text = driver.execute_script("return document.body ? document.body.innerText : ''") or ""
+                body_text = driver.execute_script("return document.body ? document.body.textContent : ''") or ""
                 page_src = (driver.page_source or "").lower()
                 # A rendered page has a meaningful title (not the challenge titles) and
                 # more than ~300 chars of body text with no challenge markers.
@@ -3816,14 +3816,14 @@ CRITICAL RULES:
                         pages_to_ocr = []  # ordered list of {page_idx, b64_img, gray}
                         for page_idx, page in enumerate(doc):
                             if page_idx > 60: break # Absolute max limit of 60 pages to prevent infinite loops
-                            # Use higher resolution matrix (3,3) ~216 DPI to handle blurred/photo PDFs
-                            pix = page.get_pixmap(matrix=fitz.Matrix(3, 3))
+                            # Use 288 DPI (4x) for better text resolution on blurred/photo PDFs
+                            pix = page.get_pixmap(matrix=fitz.Matrix(4, 4))
                             img_data = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
                             if pix.n == 4: img_data = cv2.cvtColor(img_data, cv2.COLOR_RGBA2RGB)
 
-                            # Sharpen image using OpenCV to fix blurred or photo-clicked PDFs
-                            kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
-                            img_data = cv2.filter2D(img_data, -1, kernel)
+                            # Unsharp Masking to enhance blurred or photo-clicked PDFs without excessive noise
+                            gaussian = cv2.GaussianBlur(img_data, (5, 5), 0)
+                            img_data = cv2.addWeighted(img_data, 1.5, gaussian, -0.5, 0)
 
                             # Fast Tesseract pre-scan to detect if page contains fee data
                             gray = cv2.cvtColor(img_data, cv2.COLOR_RGB2GRAY)
@@ -3888,7 +3888,9 @@ CRITICAL RULES:
                             ocr_text = ocr_results.get(item['page_idx'])
                             if not ocr_text or not ocr_text.strip():
                                 try:
-                                    ocr_text = pytesseract.image_to_string(item['gray'])
+                                    # Adaptive thresholding for optimal Tesseract extraction on blurred PDFs
+                                    gray_thresh = cv2.adaptiveThreshold(item['gray'], 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 41, 5)
+                                    ocr_text = pytesseract.image_to_string(gray_thresh)
                                 except Exception:
                                     ocr_text = ""
                             if ocr_text:
@@ -4049,7 +4051,7 @@ CRITICAL RULES:
                         let parent = b.closest('nav, header, aside, .sidebar, .popup, .modal, .offcanvas, .floating, .navbar, .main-nav, .top-nav, .site-header, .header-menu, .mega-menu, #header, #sidebar, [role="dialog"], [role="navigation"]');
                         if (parent) continue;
                         
-                        let txt = (b.innerText || b.textContent || '').toLowerCase().trim();
+                        let txt = (b.textContent || b.textContent || '').toLowerCase().trim();
                         if (txt.length < 2 || txt.length > 100) continue;
                         if (txt.includes('login') || txt.includes('sign in') || txt.includes('student portal')) {
                             b.remove(); // Destroy login buttons
@@ -4123,12 +4125,16 @@ CRITICAL RULES:
             js_tables = """
                 let tables = document.querySelectorAll('table');
                 let result = '=== TABLE PAGE TITLE: ' + document.title + ' ===\\n\\n';
+                let tChars = 0;
                 tables.forEach(function(table) {
+                    if (tChars > 150000) return;
                     let rows = table.querySelectorAll('tr');
                     rows.forEach(function(row) {
+                        if (tChars > 150000) return;
                         let cells = row.querySelectorAll('th, td');
-                        let rowText = Array.from(cells).map(c => c.innerText.trim()).join(' | ');
+                        let rowText = Array.from(cells).map(c => c.textContent.trim()).join(' | ');
                         result += rowText + '\\n';
+                        tChars += rowText.length;
                     });
                     result += '\\n';
                 });
@@ -4188,20 +4194,46 @@ CRITICAL RULES:
         sk_match = pre_match_skills
         sk_detail = ""
         
-        # VERIFIER_LLM_TEXT_BUDGET caps the page text fed to the LLM. Default
-        # 400000 preserves historical behavior; the token-overflow retry below
-        # re-runs with a tight 40000-char cap so oversized courses succeed (or
-        # fail fast) instead of burning pointless fallback round-trips.
+        # Default to a 120000-char cap to utilize 128k context windows for API providers
+        # without blowing up laptop memory.
         try:
-            LLM_TEXT_BUDGET = int(os.environ.get('VERIFIER_LLM_TEXT_BUDGET', '400000'))
+            LLM_TEXT_BUDGET = int(os.environ.get('VERIFIER_LLM_TEXT_BUDGET', '120000'))
         except ValueError:
-            LLM_TEXT_BUDGET = 400000
+            LLM_TEXT_BUDGET = 120000
         if LLM_TEXT_BUDGET <= 0:
-            LLM_TEXT_BUDGET = 400000
+            LLM_TEXT_BUDGET = 120000
+
+        def _smart_truncate(text, limit):
+            if len(text) <= limit: return text
+            top_budget = int(limit * 0.6)
+            keyword_budget = limit - top_budget - 500
+            top_text = text[:top_budget]
+            keywords = ['fee', 'tuition', 'cost', 'pricing', 'duration', 'curriculum', 'syllabus', 'module', 'admission', 'eligibility', 'inr', 'usd', '£', '$', '€', 'hour', 'credit', 'semester', 'year', 'month', 'week', 'scholarship', 'financial', 'intake', 'deadline', 'requirement', 'rupee', 'lakh']
+            important_lines = []
+            current_len = 0
             
-        if os.environ.get('LLM_BACKEND') == 'ollama':
-            # Strict safety cap for local Ollama to prevent 100% RAM / Memory Swapping
-            LLM_TEXT_BUDGET = min(LLM_TEXT_BUDGET, 40000)
+            lines = text[top_budget:].split('\n')
+            captured_indices = set()
+            
+            for i, line in enumerate(lines):
+                if any(k in line.lower() for k in keywords):
+                    # Capture 2 lines before and 5 lines after the keyword to ensure context is preserved
+                    start_idx = max(0, i - 2)
+                    end_idx = min(len(lines), i + 6)
+                    for j in range(start_idx, end_idx):
+                        if j not in captured_indices:
+                            captured_indices.add(j)
+                            line_content = lines[j].strip()
+                            if line_content: # Ignore empty lines to save budget
+                                if current_len + len(line_content) + 1 > keyword_budget:
+                                    break
+                                important_lines.append(line_content)
+                                current_len += len(line_content) + 1
+                    if current_len >= keyword_budget:
+                        break
+                        
+            if not important_lines: return text[:limit]
+            return top_text + "\n...[TRUNCATED]...\n[EXTRACTED IMPORTANT SECTIONS]:\n" + '\n'.join(important_lines)
 
         if "--- EXCEL FEES DATA ---" in page_text or "--- EXCEL SYLLABUS DATA ---" in page_text:
             web_part = page_text
@@ -4217,9 +4249,9 @@ CRITICAL RULES:
 
             allowed_web_len = max(0, LLM_TEXT_BUDGET - len(excel_part))
             # Put excel_part at the very beginning of the page_text to ensure the LLM reads it first and it isn't lost in the middle/end
-            page_text_limited = excel_part + "\n" + web_part[:allowed_web_len]
+            page_text_limited = excel_part + "\n" + _smart_truncate(web_part, allowed_web_len)
         else:
-            page_text_limited = page_text[:LLM_TEXT_BUDGET]
+            page_text_limited = _smart_truncate(page_text, LLM_TEXT_BUDGET)
             
         anna_univ_rule = ""
         uni_name_lower = str(course.get('uni', '')).lower()
@@ -5055,7 +5087,7 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
             let isCoursera = window.location.hostname.includes('coursera.org');
             if (isCoursera) {
                 document.querySelectorAll('button, a').forEach(b => {
-                    if ((b.innerText || '').toLowerCase().includes('enroll')) {
+                    if ((b.textContent || '').toLowerCase().includes('enroll')) {
                         try { b.click(); } catch(e) {}
                     }
                 });
@@ -5134,18 +5166,52 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
             if url: parts.append(f"=== PAGE URL: {url} ===")
         except: pass
         js_body_text = """
-            // Prefer innerText as it respects CSS layout and visible content reliably,
-            // while ignoring user-select: none which breaks getSelection().toString()
-            let text = document.body.innerText || "";
-            if (text.length < 100) {
-                window.getSelection().removeAllRanges();
-                let range = document.createRange();
-                range.selectNode(document.body);
-                window.getSelection().addRange(range);
-                text = window.getSelection().toString();
-                window.getSelection().removeAllRanges();
+            function getCleanText(root) {
+                let ignoreTags = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'SVG', 'FOOTER', 'HEADER', 'NAV', 'ASIDE', 'PATH', 'FORM', 'IFRAME', 'DIALOG', 'OPTION', 'VIDEO', 'AUDIO', 'CANVAS', 'MAP', 'OBJECT', 'EMBED', 'SELECT', 'TEXTAREA', 'INPUT', 'BUTTON']);
+                let skipClasses = ['footer', 'navbar', 'site-nav', 'cookie-banner', 'cookie-notice', 'sidebar-menu', 'widget', 'social-share', 'promo-banner'];
+                let textOut = [];
+                function walk(node) {
+                    if (node.nodeType === Node.TEXT_NODE) {
+                        let t = node.nodeValue.replace(/\\s+/g, ' ').trim();
+                        if (t) textOut.push(t);
+                        return;
+                    }
+                    if (node.nodeType === Node.ELEMENT_NODE) {
+                        let tag = node.tagName.toUpperCase();
+                        if (ignoreTags.has(tag)) return;
+                        let c = (node.className || "").toString().toLowerCase();
+                        let id = (node.id || "").toString().toLowerCase();
+                        if (node.style && (node.style.display === 'none' || node.style.visibility === 'hidden')) return;
+                        if (skipClasses.some(term => c.includes(term) || id.includes(term))) return;
+                        
+                        let prefix = "";
+                        if (tag === 'H1') prefix = "\\n\\n#";
+                        else if (tag === 'H2') prefix = "\\n\\n##";
+                        else if (tag === 'H3') prefix = "\\n\\n###";
+                        else if (tag === 'H4' || tag === 'H5' || tag === 'H6') prefix = "\\n\\n####";
+                        else if (tag === 'LI') prefix = "\\n-";
+                        else if (tag === 'TR') prefix = "\\n";
+                        else if (tag === 'P' || tag === 'DIV' || tag === 'SECTION' || tag === 'ARTICLE' || tag === 'BR') prefix = "\\n";
+                        else if (tag === 'TD' || tag === 'TH') prefix = "|";
+                        
+                        if (prefix) textOut.push(prefix);
+                        for (let i = 0; i < node.childNodes.length; i++) walk(node.childNodes[i]);
+                        
+                        let suffix = "";
+                        if (tag === 'P' || tag === 'DIV' || tag === 'SECTION' || tag === 'ARTICLE' || tag === 'TR' || tag.startsWith('H')) suffix = "\\n";
+                        if (suffix) textOut.push(suffix);
+                    }
+                }
+                walk(root);
+                let finalStr = textOut.join(' ');
+                finalStr = finalStr.replace(/[ \\t]*\\n[ \\t]*/g, '\\n');
+                finalStr = finalStr.replace(/[ \\t]*\\|[ \\t]*/g, ' | ');
+                finalStr = finalStr.replace(/\\n{3,}/g, '\\n\\n');
+                return finalStr.trim();
             }
-            return text || document.body.textContent;
+            let text = getCleanText(document.body);
+            if (text.length < 100) text = document.body.innerText || document.body.textContent || "";
+            return text.substring(0, 150000);
         """
         try:
             body = driver.execute_script(js_body_text)
@@ -5176,7 +5242,7 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
             for (let iframe of iframes) {
                 try {
                     let iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-                    if (iframeDoc && iframeDoc.body) out.push(iframeDoc.body.innerText);
+                    if (iframeDoc && iframeDoc.body) out.push(iframeDoc.body.textContent);
                 } catch(e) {} // cross-origin will throw
             }
             
@@ -5200,7 +5266,7 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
             function extractShadow(node) {
                 let text = "";
                 if (node.shadowRoot) {
-                    text += node.shadowRoot.innerText + "\\n";
+                    text += node.shadowRoot.textContent + "\\n";
                     node.shadowRoot.querySelectorAll('*').forEach(child => {
                         text += extractShadow(child);
                     });
@@ -5242,7 +5308,8 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
                 }
             }
             
-            return out.join('\n');
+            let result = out.join('\n');
+            return result.substring(0, 50000);
         """
         try:
             deep_content = driver.execute_script(js_deep)
@@ -5322,7 +5389,7 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
             const closeWords = ['accept', 'agree', 'allow all', 'continue', 'close', 'got it'];
             
             for (let b of buttons) {
-                if (b.innerText && closeWords.some(w => b.innerText.toLowerCase().trim() === w)) {
+                if (b.textContent && closeWords.some(w => b.textContent.toLowerCase().trim() === w)) {
                     if (b.tagName.toLowerCase() === 'button' && (b.type === 'submit' || !b.hasAttribute('type'))) {
                         b.type = 'button';
                     }
@@ -5369,7 +5436,7 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
                 var elements = document.querySelectorAll('button, div[role="tab"], div.accordion, span.toggle, summary, [aria-expanded="false"], a[href="#"], a[data-toggle]');
                 for(var i=0; i<elements.length; i++) {
                     var el = elements[i];
-                    var text = (el.innerText || el.textContent || '').toLowerCase().trim();
+                    var text = (el.textContent || el.textContent || '').toLowerCase().trim();
                     if(text.includes('international') || text.includes('tuition') || text.includes('fee') || 
                        text.includes('cost') || text.includes('price') || text.includes('pricing') ||
                        text.includes('duration') || text.includes('syllabus') || text.includes('module') ||
@@ -5719,7 +5786,7 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
                     print(f"    -> [NIELIT Visual Agent] Could not locate visually. Falling back to JS text search...")
                     script = f'''
                     let els = Array.from(document.querySelectorAll('*'));
-                    let target = els.find(e => e.innerText && e.innerText.toLowerCase().trim() === '{target_category.lower()}' && e.offsetParent !== null);
+                    let target = els.find(e => e.textContent && e.textContent.toLowerCase().trim() === '{target_category.lower()}' && e.offsetParent !== null);
                     if (target) {{ target.click(); return true; }} return false;
                     '''
                     driver.execute_script(script)
@@ -5742,12 +5809,12 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
                         let cards = document.querySelectorAll('.course-card, .card, [class*="course"], [class*="Card"]');
                         let out = [];
                         if (cards.length > 0) {
-                            cards.forEach(c => { if(c.innerText && c.innerText.length > 20) out.push(c.innerText); });
+                            cards.forEach(c => { if(c.textContent && c.textContent.length > 20) out.push(c.textContent); });
                         }
                         // Fallback: get the main content area text
                         if (out.length === 0) {
                             let main = document.querySelector('main, .main-content, #content, .container') || document.body;
-                            out.push(main.innerText);
+                            out.push(main.textContent);
                         }
                         return out.join('\\n---CARD---\\n');
                     """
@@ -5756,11 +5823,11 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
                         all_text += dom_text + "\n"
                     else:
                         # Fallback to full body text
-                        all_text += (driver.execute_script("return document.body ? document.body.innerText : '';") or "") + "\n"
+                        all_text += (driver.execute_script("return document.body ? document.body.textContent : '';") or "") + "\n"
                 except Exception as e:
                     print(f"    -> [NIELIT] DOM extraction failed for page {page}: {e}")
                     try:
-                        all_text += (driver.execute_script("return document.body ? document.body.innerText : '';") or "") + "\n"
+                        all_text += (driver.execute_script("return document.body ? document.body.textContent : '';") or "") + "\n"
                     except: pass
                 
                 # OCR extraction for images/corner texts as requested
@@ -5813,7 +5880,7 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
                         print(f"    -> [NIELIT] Attempting to navigate to page {next_page_num}...")
                         script = f'''
                         let els = Array.from(document.querySelectorAll('a, button, li, span'));
-                        let target = els.find(e => e.innerText && e.innerText.trim() === "{next_page_num}" && e.offsetParent !== null && (e.className.includes('page') || e.closest('.pagination') !== null));
+                        let target = els.find(e => e.textContent && e.textContent.trim() === "{next_page_num}" && e.offsetParent !== null && (e.className.includes('page') || e.closest('.pagination') !== null));
                         if (target) {{
                             target.scrollIntoView({{block: 'center'}});
                             target.click();
@@ -6165,14 +6232,14 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
             document.querySelectorAll('.llm-vision-box').forEach(e => e.remove());
 
             elements.forEach(el => {
-                if (!el.innerText || el.innerText.trim().length < 2) return;
+                if (!el.textContent || el.textContent.trim().length < 2) return;
                 
                 // Exclude elements inside sidebars, headers, popups to strictly stay on the main content
                 let parent = el.closest('nav, header, aside, .sidebar, .popup, .modal, .offcanvas, .floating, .navbar, #header, #sidebar, [role="dialog"], [role="navigation"]');
                 if (parent) return;
                 
                 // Exclude login/apply/admission links to prevent navigating to student portals
-                let txt = el.innerText.trim().toLowerCase();
+                let txt = el.textContent.trim().toLowerCase();
                 let bad_words = [
                     'login', 'sign in', 'apply', 'admission', 'register', 'enroll now',
                     'home', 'about us', 'contact', 'faculty', 'alumni', 'careers',
@@ -6192,7 +6259,7 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
                     let id = counter++;
                     window.__llm_elements[id] = el;
                     mapping[id] = {
-                        text: el.innerText.trim().substring(0, 50),
+                        text: el.textContent.trim().substring(0, 50),
                         x: rect.left + rect.width / 2,
                         y: rect.top + rect.height / 2
                     };
@@ -6209,7 +6276,7 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
                     box.style.pointerEvents = 'none';
                     
                     let label = document.createElement('span');
-                    label.innerText = id;
+                    label.textContent = id;
                     label.style.position = 'absolute';
                     label.style.top = '-15px';
                     label.style.left = '0px';
@@ -6281,7 +6348,7 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
         """Return True if the current page looks like a bot/WAF challenge."""
         try:
             page_src = (driver.page_source or "").lower()
-            body_text = (driver.execute_script("return document.body ? document.body.innerText : ''") or "").lower()
+            body_text = (driver.execute_script("return document.body ? document.body.textContent : ''") or "").lower()
             combined = page_src + " " + body_text
             return any(marker in combined for marker in self._BOT_CHALLENGE_MARKERS)
         except Exception:
@@ -6320,7 +6387,7 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
             # ── Smart settle wait (accuracy-neutral) ──
             # The fixed time.sleep() after each scroll/hover/click/back was a
             # render-settle guess. Replace it with a WebDriverWait that polls
-            # document.readyState=='complete' (and, for clicks, a body innerText
+            # document.readyState=='complete' (and, for clicks, a body textContent
             # length change) so we return as soon as the page has actually
             # settled. Capped at the original sleep value with a small floor for
             # render-sensitive actions, so worst case == today's sleep and best
@@ -6341,7 +6408,7 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
                     WebDriverWait(driver, max(0.1, cap - floor)).until(
                         lambda d: d.execute_script("return document.readyState") == "complete"
                         and (not expect_text_change
-                             or len(d.execute_script("return document.body ? document.body.innerText : ''") or "") != baseline_len)
+                             or len(d.execute_script("return document.body ? document.body.textContent : ''") or "") != baseline_len)
                     )
                 except Exception:
                     pass  # timeout == worst case == today's full sleep
@@ -6544,7 +6611,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             # Move cursor and click
                             driver.execute_script(f"if(window.moveBeautifulCursor) window.moveBeautifulCursor({x}, {y});")
                             time.sleep(0.5)
-                            _click_baseline = len(driver.execute_script("return document.body ? document.body.innerText : ''") or "")
+                            _click_baseline = len(driver.execute_script("return document.body ? document.body.textContent : ''") or "")
                             driver.execute_script(f"var el = window.__llm_elements[{eid}]; if(el){{ el.scrollIntoView({{behavior: 'smooth', block: 'center'}}); setTimeout(() => {{ el.click(); }}, 300); }}")
                             _settle_wait(2.0, floor=0.4, expect_text_change=True, baseline_len=_click_baseline)
 
@@ -6560,7 +6627,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 break
 
                             # Grab new text
-                            new_text = driver.execute_script("return document.body ? document.body.innerText : '';")
+                            new_text = driver.execute_script("return document.body ? document.body.textContent : '';")
                             if new_text and len(new_text) > 100:
                                 extra_parts.append(new_text)
 
@@ -6746,6 +6813,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             self.git_pusher = self.BackgroundGitPusher()
         url_cache = {}
         import random
+        import time
+        WORKFLOW_START_TIME = time.time()
         from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
         import queue
         import threading
@@ -6806,7 +6875,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         if env_browsers and env_browsers.isdigit():
             NUM_BROWSERS = int(env_browsers)
         else:
-            NUM_BROWSERS = 4 if is_ci else 6
+            NUM_BROWSERS = 3
         if NUM_BROWSERS <= 0: return
         
         import subprocess
@@ -6831,15 +6900,22 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         except Exception as e:
             pass
 
-        print(f"    -> Synchronously updating ChromeDriver to prevent thread collisions...")
+        print(f"    -> Synchronously resolving and downloading ChromeDriver...")
+        resolved_driver_path = None
         try:
-            _t_opts = uc.ChromeOptions()
-            # Removed --headless to bypass captchas, using Xvfb instead
-            _t_opts.set_capability("unhandledPromptBehavior", "dismiss")
-            _t_drv = uc.Chrome(options=_t_opts, version_main=get_chrome_main_version())
+            from selenium import webdriver
+            from selenium.webdriver.chrome.options import Options as StdOptions
+            std_opts = StdOptions()
+            std_opts.add_argument("--headless=new")
+            std_opts.add_argument("--disable-gpu")
+            std_opts.add_argument("--no-sandbox")
+            std_opts.add_argument("--disable-dev-shm-usage")
+            _t_drv = webdriver.Chrome(options=std_opts)
+            resolved_driver_path = _t_drv.service.path
             _t_drv.quit()
+            print(f"    -> Downloaded matching chromedriver to: {resolved_driver_path}")
         except Exception as e:
-            print(f"    -> Warning during pre-initialization: {e}")
+            print(f"    -> Warning during driver resolution: {e}")
             
         print(f"    -> Initializing {NUM_BROWSERS} parallel Chrome browsers simultaneously...")
         browser_pool = queue.Queue()
@@ -6848,6 +6924,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         
         def init_browser_parallel(b_idx):
             import os
+            import shutil
+            import sys
             options = uc.ChromeOptions()
             options.page_load_strategy = 'eager'
             options.set_capability("unhandledPromptBehavior", "dismiss")
@@ -6891,7 +6969,16 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             
             try:
                 with browser_init_lock:
-                    driver = uc.Chrome(options=options, user_data_dir=fresh_profile, version_main=get_chrome_main_version(), user_multi_procs=True)
+                    if resolved_driver_path:
+                        local_driver_path = os.path.join(fresh_profile, "chromedriver")
+                        if sys.platform.startswith("win"): local_driver_path += ".exe"
+                        try: shutil.copy2(resolved_driver_path, local_driver_path)
+                        except Exception: pass # May already exist from previous retry
+                        
+                        # NO user_multi_procs since we have our own isolated binary!
+                        driver = uc.Chrome(options=options, user_data_dir=fresh_profile, driver_executable_path=local_driver_path)
+                    else:
+                        driver = uc.Chrome(options=options, user_data_dir=fresh_profile, version_main=get_chrome_main_version(), user_multi_procs=True)
                 try:
                     driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {"latitude": 28.6139, "longitude": 77.2090, "accuracy": 100})
                 except: pass
@@ -6915,7 +7002,15 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         except Exception: pass
                     os.makedirs(fresh_profile2, exist_ok=True)
                     with browser_init_lock:
-                        driver = uc.Chrome(options=options2, user_data_dir=fresh_profile2, version_main=get_chrome_main_version(), user_multi_procs=True)
+                        if resolved_driver_path:
+                            local_driver_path2 = os.path.join(fresh_profile2, "chromedriver")
+                            if sys.platform.startswith("win"): local_driver_path2 += ".exe"
+                            try: shutil.copy2(resolved_driver_path, local_driver_path2)
+                            except Exception: pass
+                            
+                            driver = uc.Chrome(options=options2, user_data_dir=fresh_profile2, driver_executable_path=local_driver_path2, version_main=get_chrome_main_version())
+                        else:
+                            driver = uc.Chrome(options=options2, user_data_dir=fresh_profile2, version_main=get_chrome_main_version(), user_multi_procs=True)
                     try:
                         driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {"latitude": 28.6139, "longitude": 77.2090, "accuracy": 100})
                     except: pass
@@ -7022,7 +7117,14 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
 
         def process_course(item):
             import numpy as np
+            import time
             i, course = item
+            
+            # 5.5 Hour Graceful Shutdown Failsafe
+            if is_ci and (time.time() - WORKFLOW_START_TIME > 19800):
+                print(f"    -> [!] 5.5 Hour Failsafe Triggered! Skipping course '{course.get('name', '')[:30]}...' to allow graceful shutdown and save progress.")
+                return
+                
             course['processed_this_run'] = True
             worker_id, driver, usage_count = browser_pool.get()
             usage_count += 1
@@ -7186,7 +7288,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     except Exception:
                         pass
                     try:
-                        initial_body = driver.execute_script("return document.body ? document.body.innerText.substring(0, 2000) : '';") or ""
+                        initial_body = driver.execute_script("return document.body ? document.body.textContent.substring(0, 2000) : '';") or ""
                     except Exception:
                         pass
                     initial_error_text = f"{initial_title}\n{initial_body}".lower()
@@ -7259,7 +7361,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         last_len = -1
                         stable_count = 0
                         for _ in range(10): # max 10s wait for dynamic content
-                            current_len = len(driver.execute_script("return document.body ? document.body.innerText : '';"))
+                            current_len = len(driver.execute_script("return document.body ? document.body.textContent : '';"))
                             if current_len > 0 and current_len == last_len:
                                 stable_count += 1
                                 if stable_count >= 2:
@@ -7426,8 +7528,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     let btns = Array.from(document.querySelectorAll('button, a, [role="button"]') || []);
                                     async function run() {
                                         for (let b of btns) {
-                                            if (b.innerText) {
-                                                let t = b.innerText.toLowerCase();
+                                            if (b.textContent) {
+                                                let t = b.textContent.toLowerCase();
                                                 if (t.includes('enroll for free') || t.includes('enroll now') || (t.includes('enroll') && b.tagName === 'BUTTON')) {
                                                     if (window.moveBeautifulCursorToElement) window.moveBeautifulCursorToElement(b);
                                                     await new Promise(r => setTimeout(r, 400));
@@ -7448,7 +7550,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     try:
                                         js_extract_modal = """
                                             let modal = document.querySelector('[role="dialog"], .ReactModalPortal, .rc-MetagenModal, .css-1xy8ceb, div[data-e2e="course-enroll-modal"], div[aria-modal="true"]');
-                                            return modal ? modal.innerText : '';
+                                            return modal ? modal.textContent : '';
                                         """
                                         modal_text = driver.execute_script(js_extract_modal)
                                         if modal_text and len(modal_text) > 10:
@@ -7477,10 +7579,17 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         # SECONDARY: Extract table data specifically (fee tables, duration tables)
                         js_tables = """
                             let out = ['=== TABLE PAGE TITLE: ' + document.title + ' ===\\n'];
+                            let tChars = 0;
                             document.querySelectorAll('table').forEach(t => {
+                                if (tChars > 150000) return;
                                 t.querySelectorAll('tr').forEach(r => {
+                                    if (tChars > 150000) return;
                                     let cells = Array.from(r.querySelectorAll('td, th')).map(c => c.textContent.trim());
-                                    if (cells.length > 0) out.push(cells.join(' | '));
+                                    if (cells.length > 0) {
+                                        let row = cells.join(' | ');
+                                        out.push(row);
+                                        tChars += row.length;
+                                    }
                                 });
                                 out.push('');
                             });
@@ -7558,8 +7667,10 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     document.body.appendChild(cursor);
 
                                     let tabs = document.querySelectorAll('*');
-                                    for (let tab of tabs) {
-                                        let txt = (tab.innerText || tab.textContent || '').toLowerCase().trim();
+                                    let limit = Math.min(tabs.length, 2000);
+                                    for (let i = 0; i < limit; i++) {
+                                        let tab = tabs[i];
+                                        let txt = (tab.textContent || '').toLowerCase().trim();
                                         if (txt === 'summary' || txt.includes('course outline') || txt.includes('course layout') || txt.includes('course certificate') || txt === 'books and references') {
                                             try { 
                                                 tab.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -7601,8 +7712,10 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 let callback = arguments[arguments.length - 1];
                                 async function run_coursera() {
                                     let buttons = document.querySelectorAll('button, a');
-                                    for (let b of buttons) {
-                                        let txt = (b.innerText || b.textContent || '').toLowerCase().trim();
+                                    let limit = Math.min(buttons.length, 1000);
+                                    for (let i = 0; i < limit; i++) {
+                                        let b = buttons[i];
+                                        let txt = (b.textContent || '').toLowerCase().trim();
                                         if (txt.includes('enroll for free') || txt === 'enroll' || txt.includes('enroll now')) {
                                             try { b.click(); await new Promise(r => setTimeout(r, 2000)); } catch(e) {}
                                             break;
@@ -7632,8 +7745,9 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 async function run_tabs() {{
                                     // Try all <li> tab items and <a> links that might reveal course fees
                                     let all_tabs = document.querySelectorAll('li, a[href="#"], a[data-toggle], [role="tab"], .nav-item, .tab-item, .program-tab');
+                                    let limit = Math.min(all_tabs.length, 1000);
                                     for (let tab of all_tabs) {{
-                                        let txt = (tab.innerText || tab.textContent || '').toLowerCase().trim();
+                                        let txt = (tab.textContent || '').toLowerCase().trim();
                                         if (txt.includes('fee') || txt.includes('cost') || txt.includes('program') || 
                                             txt.includes('tuition') || txt.includes('diploma') || txt.includes('cyber') ||
                                             txt.includes('security') || txt.includes('admission') || txt.includes('overview') ||
@@ -7649,7 +7763,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     for (let s of selects) {{
                                         let options = Array.from(s.options);
                                         for (let opt of options) {{
-                                            let optTxt = (opt.innerText || opt.text || '').toLowerCase();
+                                            let optTxt = (opt.textContent || opt.text || '').toLowerCase();
                                             if (optTxt.includes('fee') || optTxt.includes('tuition') || optTxt.includes('cost') ||
                                                 optTxt.includes('diploma') || optTxt.includes('cyber') || optTxt.includes('security') ||
                                                 optTxt.includes('program') || optTxt.includes('syllabus') || optTxt.includes('curriculum') ||
@@ -7688,8 +7802,10 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 let callback = arguments[arguments.length - 1];
                                 async function run_intl() {
                                     let targets = document.querySelectorAll('button, a, div, span, label, li');
-                                    for (let t of targets) {
-                                        let txt = (t.innerText || '').toLowerCase();
+                                    let limit = Math.min(targets.length, 1000);
+                                    for (let i = 0; i < limit; i++) {
+                                        let t = targets[i];
+                                        let txt = (t.textContent || '').toLowerCase();
                                         if(txt.includes('international student') || txt.includes("i'm an international student") || txt === 'international' || txt === 'overseas') {
                                             try { t.click(); await new Promise(r => setTimeout(r, 500)); } catch(e){}
                                         }
@@ -7697,7 +7813,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     let selects = document.querySelectorAll('select');
                                     for (let s of selects) {
                                         let options = Array.from(s.options);
-                                        let india_opt = options.find(o => o.innerText.toLowerCase().includes('india'));
+                                        let india_opt = options.find(o => (o.textContent || '').toLowerCase().includes('india'));
                                         if(india_opt) {
                                             try {
                                                 s.value = india_opt.value;
@@ -7722,6 +7838,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         try:
                             js_accordions = f"""
                                 let callback = arguments[arguments.length - 1];
+                                let _aborted = false;
+                                let _abortTimer = setTimeout(() => {{ _aborted = true; callback(-1); }}, 20000);
                                 let buttons = document.querySelectorAll('button, select, div[role="tab"], span[role="tab"], a[data-toggle], a[data-bs-toggle], summary, details, .accordion-button, .accordion-header, [aria-expanded], [class*="dropdown"], [class*="collapse"], [class*="toggle"], [class*="accordion"]');
                                 let keywords = {accordion_keywords};
                                 let clicked = 0;
@@ -7733,12 +7851,14 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                         el.removeAttribute('data-accordion');
                                     }});
                                     
-                                    for (let b of buttons) {{
+                                    let limit = Math.min(buttons.length, 1000);
+                                    for (let i = 0; i < limit; i++) {{
+                                        let b = buttons[i];
                                         // SKIP elements inside top navigation, header, or navbar
                                         let navParent = b.closest('nav, header, .navbar, .main-nav, .top-nav, .site-header, .header-menu, .mega-menu, .main-menu, .primary-menu, #main-nav, #header');
                                         if (navParent) continue;
                                         
-                                        let txt = (b.innerText || '').toLowerCase().trim();
+                                        let txt = (b.textContent || '').toLowerCase().trim();
                                         if (txt.length < 2 || txt.length > 160) continue;
                                         if (txt.includes('login') || txt.includes('sign in') || txt.includes('apply now')) continue;
                                         
@@ -7747,6 +7867,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                         let isAccordionToggle = b.matches('summary, details, .accordion-button, .accordion-header, [aria-expanded], [data-toggle], [data-bs-toggle], [class*="collapse"], [class*="accordion"]');
                                         if (!(isKeyword || isAccordionToggle)) continue;
                                         
+                                        if (_aborted) break;
                                         if (clicked >= 30) {{
                                             console.log("Max accordion clicks (30) reached. Stopping to prevent memory leak.");
                                             break;
@@ -7766,11 +7887,11 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                             let targetId = b.getAttribute('aria-controls') || b.getAttribute('data-bs-target') || b.getAttribute('data-target') || b.getAttribute('href');
                                             if (targetId && targetId.startsWith('#')) {{
                                                 let targetEl = document.getElementById(targetId.substring(1)) || document.querySelector(targetId);
-                                                if (targetEl && targetEl.innerText) extractedContent.push(targetEl.innerText);
-                                            }} else if (b.nextElementSibling && b.nextElementSibling.innerText) {{
-                                                extractedContent.push(b.nextElementSibling.innerText);
-                                            }} else if (b.parentElement && b.parentElement.innerText) {{
-                                                extractedContent.push(b.parentElement.innerText);
+                                                if (targetEl && targetEl.textContent) extractedContent.push(targetEl.textContent);
+                                            }} else if (b.nextElementSibling && b.nextElementSibling.textContent) {{
+                                                extractedContent.push(b.nextElementSibling.textContent);
+                                            }} else if (b.parentElement && b.parentElement.textContent) {{
+                                                extractedContent.push(b.parentElement.textContent);
                                             }}
                                         }} catch(e) {{}}
                                     }}
@@ -7782,7 +7903,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                         document.body.appendChild(marker);
                                     }}
                                     
-                                    callback(clicked);
+                                    clearTimeout(_abortTimer);
+                                    if (!_aborted) callback(clicked);
                                 }}
                                 run();
                             """
@@ -7794,61 +7916,68 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                     time.sleep(1.5)
                                 # FIX: Re-extract page text because hidden tabs were just opened!
                                 print(f"      -> Re-extracting text after opening tabs...")
-                                
-                                # Attempt to auto-fill any contact forms/download modals that popped up
-                                js_fill_forms = """
-                                    let inputs = document.querySelectorAll('input, textarea');
-                                    for (let i of inputs) {
-                                        let t = (i.name + ' ' + i.id + ' ' + i.placeholder).toLowerCase();
-                                        if (t.includes('name') && !t.includes('univ')) { i.value = 'raju rastogi'; }
-                                        else if (t.includes('phone') || t.includes('mobile')) { i.value = '+919569540918'; }
-                                        else if (t.includes('email')) { i.value = 'tbot21998@gmail.com'; }
-                                        i.dispatchEvent(new Event('input', { bubbles: true }));
-                                        i.dispatchEvent(new Event('change', { bubbles: true }));
-                                    }
-                                    // Try simple math captchas (e.g. 5 + 3 = ?)
-                                    let labels = document.querySelectorAll('label, span, div');
-                                    for (let l of labels) {
-                                        let txt = l.innerText.toLowerCase();
-                                        if (txt.includes('+') && txt.includes('=')) {
-                                            let parts = txt.match(/(\\d+)\\s*\\+\\s*(\\d+)/);
-                                            if (parts) {
-                                                let sum = parseInt(parts[1]) + parseInt(parts[2]);
-                                                let cap_input = l.parentElement.querySelector('input');
-                                                if (cap_input) {
-                                                    cap_input.value = sum;
-                                                    cap_input.dispatchEvent(new Event('input', { bubbles: true }));
-                                                }
+                                # (Removed js_fill_forms logic which was blindly querying all divs/spans and clicking submit buttons, 
+                                # causing page reloads and catastrophic event listener storms)
+
+                                # Lightweight re-extraction: just grab the DOM text without
+                                # re-scrolling, re-clicking accordions, or re-running image OCR
+                                # (all of that was already done above).
+                                _js_light_extract = """
+                                    function getCleanText(root) {
+                                        let ignoreTags = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'SVG', 'FOOTER', 'HEADER', 'NAV', 'ASIDE', 'PATH', 'FORM', 'IFRAME', 'DIALOG', 'OPTION', 'VIDEO', 'AUDIO', 'CANVAS', 'MAP', 'OBJECT', 'EMBED', 'SELECT', 'TEXTAREA', 'INPUT', 'BUTTON']);
+                                        let skipClasses = ['footer', 'navbar', 'site-nav', 'cookie-banner', 'cookie-notice', 'sidebar-menu', 'widget', 'social-share', 'promo-banner'];
+                                        let textOut = [];
+                                        function walk(node) {
+                                            if (node.nodeType === Node.TEXT_NODE) {
+                                                let t = node.nodeValue.replace(/\\s+/g, ' ').trim();
+                                                if (t) textOut.push(t);
+                                                return;
+                                            }
+                                            if (node.nodeType === Node.ELEMENT_NODE) {
+                                                let tag = node.tagName.toUpperCase();
+                                                if (ignoreTags.has(tag)) return;
+                                                let c = (node.className || "").toString().toLowerCase();
+                                                let id = (node.id || "").toString().toLowerCase();
+                                                if (node.style && (node.style.display === 'none' || node.style.visibility === 'hidden')) return;
+                                                if (skipClasses.some(term => c.includes(term) || id.includes(term))) return;
+                                                
+                                                let prefix = "";
+                                                if (tag === 'H1') prefix = "\\n\\n#";
+                                                else if (tag === 'H2') prefix = "\\n\\n##";
+                                                else if (tag === 'H3') prefix = "\\n\\n###";
+                                                else if (tag === 'H4' || tag === 'H5' || tag === 'H6') prefix = "\\n\\n####";
+                                                else if (tag === 'LI') prefix = "\\n-";
+                                                else if (tag === 'TR') prefix = "\\n";
+                                                else if (tag === 'P' || tag === 'DIV' || tag === 'SECTION' || tag === 'ARTICLE' || tag === 'BR') prefix = "\\n";
+                                                else if (tag === 'TD' || tag === 'TH') prefix = "|";
+                                                
+                                                if (prefix) textOut.push(prefix);
+                                                for (let i = 0; i < node.childNodes.length; i++) walk(node.childNodes[i]);
+                                                
+                                                let suffix = "";
+                                                if (tag === 'P' || tag === 'DIV' || tag === 'SECTION' || tag === 'ARTICLE' || tag === 'TR' || tag.startsWith('H')) suffix = "\\n";
+                                                if (suffix) textOut.push(suffix);
                                             }
                                         }
+                                        walk(root);
+                                        let finalStr = textOut.join(' ');
+                                        finalStr = finalStr.replace(/[ \\t]*\\n[ \\t]*/g, '\\n');
+                                        finalStr = finalStr.replace(/[ \\t]*\\|[ \\t]*/g, ' | ');
+                                        finalStr = finalStr.replace(/\\n{3,}/g, '\\n\\n');
+                                        return finalStr.trim();
                                     }
-                                    let submit_btns = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
-                                    for (let b of submit_btns) {
-                                        let bt = (b.innerText || b.value || '').toLowerCase();
-                                        if (bt.includes('download') || bt.includes('submit') || bt.includes('get details') || bt.includes('get fee')) {
-                                            try { b.click(); } catch(e) {}
-                                        }
-                                    }
+                                    let text = getCleanText(document.body);
+                                    if (text.length < 100) text = document.body.innerText || document.body.textContent || "";
+                                    return text.substring(0, 150000);
                                 """
-                                # Replace hardcoded values with env variables
-                                form_name = os.environ.get("FORM_NAME", "raju rastogi")
-                                form_phone = os.environ.get("FORM_PHONE", "+919569540918")
-                                form_email = os.environ.get("FORM_EMAIL", os.environ.get("COURSERA_EMAIL", "tbot21998@gmail.com"))
-                                
-                                js_fill_forms = js_fill_forms.replace("raju rastogi", form_name)
-                                js_fill_forms = js_fill_forms.replace("+919569540918", form_phone)
-                                js_fill_forms = js_fill_forms.replace("tbot21998@gmail.com", form_email)
-                                
                                 try:
-                                    if not is_upes:
-                                        driver.execute_script(js_fill_forms)
-                                        time.sleep(2)  # Wait for form submission or new text to load
-                                except Exception as e:
-                                    pass
-
-                                post_text = self._extract_page_text(driver)
+                                    driver.set_script_timeout(10)
+                                    post_text = driver.execute_script(_js_light_extract)
+                                except Exception:
+                                    post_text = ""
                                 if post_text:
-                                    page_text += "\n\n--- POST-TAB EXPANSION TEXT ---\n" + post_text
+                                    # REPLACE page_text instead of appending to prevent 100% duplication
+                                    page_text = post_text
                                 
                                 if "405 not allowed" in page_text.lower() or "method not allowed" in page_text.lower() or "405 error" in page_text.lower():
                                     print("      -> [!] 405 Error detected after JS injection! Clearing cookies and reloading page without JS injection...")
@@ -7953,7 +8082,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 let keywords = {js_keywords};
                                 let origin = window.location.origin;
                                 for (let a of links) {{
-                                    let txt = (a.innerText || '').toLowerCase();
+                                    let txt = (a.textContent || '').toLowerCase();
                                     let href = a.href || '';
                                     if (!href.startsWith('http')) continue;
                                     let href_lower = href.toLowerCase();

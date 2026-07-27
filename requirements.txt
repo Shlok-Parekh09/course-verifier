@@ -27,3 +27,4 @@ psutil
 deep-translator
 spacy
 google-generativeai
+gradio_client
