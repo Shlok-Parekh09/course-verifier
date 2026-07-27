@@ -179,6 +179,7 @@ jobs:
           PDF_NAME: autonomous_verified_report
           DISPLAY: ":99"
           CI: true
+          VERIFIER_NUM_BROWSERS: "3"
           VERIFIER_NO_FORCE_EXIT: true
           MISTRAL_API_KEYS: ${{ github.event.inputs.llm_backend == 'api' && secrets.MISTRAL_API_KEYS || '' }}
           GEMINI_API_KEYS: ${{ github.event.inputs.llm_backend == 'api' && secrets.GEMINI_API_KEYS || '' }}

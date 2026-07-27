@@ -6648,6 +6648,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                 for i, page in enumerate(doc):
                     text = page.get_text()
                     combined_text += f"\n--- Page {i+1} ---\n{text}\n"
+                try: doc.close()
+                except: pass
             except Exception as e:
                 print(f"    [!] Error reading ndu.pdf: {e}")
                 
@@ -7661,7 +7663,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 run_tabs();
                             """
                             try:
-                                driver.set_script_timeout(20)
+                                driver.set_script_timeout(60)
                                 driver.execute_async_script(js_all_tabs)
                                 time.sleep(1.5)
                                 extra_text = self._extract_page_text(driver)
@@ -9695,6 +9697,17 @@ if __name__ == "__main__":
     elif os.environ.get('CI') == 'true':
         manual_end = os.environ.get('END_PAGE', "")
     else:
+        # Prompt for LLM Provider before running locally
+        provider_choice = input("\n[?] Do you want to use Local Ollama (O) or Cloud API (A)? [O/A]: ").strip().lower()
+        if provider_choice == 'o':
+            os.environ['LLM_BACKEND'] = 'ollama'
+            print("[*] Set LLM Provider to Local Ollama.")
+            if not os.environ.get("OLLAMA_API_URL"):
+                os.environ["OLLAMA_API_URL"] = "http://localhost:11434"
+        else:
+            os.environ['LLM_BACKEND'] = 'api'
+            print("[*] Set LLM Provider to Cloud API.")
+
         manual_end = input(f"\n[?] Up to which page number ({min_page}-{max_page}) do you want to run web verification? (Press Enter for all remaining): ").strip()
         
     if specific_index is None and manual_end.isdigit():
