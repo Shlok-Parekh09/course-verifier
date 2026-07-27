@@ -5202,15 +5202,9 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
                         if (suffix) textOut.push(suffix);
                     }
                 }
-                walk(root);
-                let finalStr = textOut.join(' ');
-                finalStr = finalStr.replace(/[ \\t]*\\n[ \\t]*/g, '\\n');
-                finalStr = finalStr.replace(/[ \\t]*\\|[ \\t]*/g, ' | ');
-                finalStr = finalStr.replace(/\\n{3,}/g, '\\n\\n');
-                return finalStr.trim();
-            }
-            let text = getCleanText(document.body);
-            if (text.length < 100) text = document.body.innerText || document.body.textContent || "";
+                walk(document.body);
+                let text = textOut.join(' ');
+                if (text.length < 100) text = document.body.textContent || "";
             return text.substring(0, 150000);
         """
         try:
