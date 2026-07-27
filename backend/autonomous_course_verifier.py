@@ -7967,12 +7967,26 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                         return finalStr.trim();
                                     }
                                     let text = getCleanText(document.body);
-                                    if (text.length < 100) text = document.body.innerText || document.body.textContent || "";
-                                    return text.substring(0, 150000);
+                                    if (text.length < 100) text = document.body.textContent || "";
+                                    let result = text.substring(0, 150000);
+                                    if (typeof arguments[arguments.length - 1] === 'function') {
+                                        arguments[arguments.length - 1](result);
+                                    }
+                                    return result;
                                 """
                                 try:
-                                    driver.set_script_timeout(10)
-                                    post_text = driver.execute_script(_js_light_extract)
+                                    driver.set_script_timeout(15)
+                                    post_text = driver.execute_async_script(f"""
+                                        let callback = arguments[arguments.length - 1];
+                                        let finished = false;
+                                        setTimeout(() => {{ if(!finished) callback(""); }}, 14000);
+                                        try {{
+                                            {_js_light_extract}
+                                            finished = true;
+                                        }} catch(e) {{
+                                            if(!finished) callback("");
+                                        }}
+                                    """)
                                 except Exception:
                                     post_text = ""
                                 if post_text:
