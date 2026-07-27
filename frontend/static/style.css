@@ -959,8 +959,7 @@ body.light-mode .badge-open     { color: var(--text-2); border-color: var(--bord
 
 .modal-close:hover { border-color: var(--red); color: var(--red); }
 
-<<<<<<< HEAD
-=======
+
 /* Suggestion popup (duplicate courses) */
 .suggest-overlay {
     display: none;
@@ -1059,7 +1058,6 @@ body.light-mode .badge-open     { color: var(--text-2); border-color: var(--bord
 }
 .suggest-dismiss:hover { border-color: var(--text-2); color: var(--text-1); }
 
->>>>>>> be254b7 (Remove index.html template file from frontend/templates directory)
 .modal-del {
     padding: 6px 14px;
     border-radius: 8px;
