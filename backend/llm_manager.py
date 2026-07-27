@@ -131,9 +131,8 @@ class LLMManagerAPI:
             # Build the ordered provider list for this specific call.
             # Each provider entry is (name, keys_list, rate_interval, call_fn)
             provider_pool = []
-            if self.hf_urls:
+            if self.backend_mode == "ollama" and self.hf_urls:
                 # Use ALL URLs for text to maximize concurrency and achieve API-like speeds
-                # Placed OUTSIDE the strict isolation block so it runs during local_ollama mode
                 provider_pool.append(("Local Ollama (HF)", self.hf_urls, 1.0, "local_ollama"))
 
             # STRICT ISOLATION: Do not add API keys if the user specifically requested Local Ollama
@@ -255,24 +254,24 @@ class LLMManagerAPI:
         max_m = len(self.mistral_keys)
         max_keys = max(max_g, max_m)
         
-        if self.ollama_api_url:
-            print(f"      -> [LLM Manager] Trying Ollama Vision ({self.ollama_vision_model})...")
-            res = self._call_ollama_vision(prompt, base64_image, system)
-            if res: return res
-            print("      -> [LLM Manager] Ollama Vision failed. Failing over to API keys...")
-            
-        if self.hf_urls:
-            print(f"      -> [LLM Manager] Trying Local Ollama Vision (Qwen) via Dedicated HF Space...")
-            for v_url in reversed(self.hf_urls):
-                res = self._call_local_ollama(v_url, prompt, system, "text", 0.0, is_vision=True, base64_image=base64_image)
+        if self.backend_mode == "ollama" or provider == "ollama":
+            if self.ollama_api_url:
+                print(f"      -> [LLM Manager] Trying Ollama Vision ({self.ollama_vision_model})...")
+                res = self._call_ollama_vision(prompt, base64_image, system)
                 if res: return res
-            print("      -> [LLM Manager] Local Ollama Vision failed. Failing over...")
-            
-        # STRICT ISOLATION: Do not proceed to APIs if Local Ollama was requested
-        if self.backend_mode == "ollama":
+                print("      -> [LLM Manager] Ollama Vision failed. Failing over to HF Spaces...")
+                
+            if self.hf_urls:
+                print(f"      -> [LLM Manager] Trying Local Ollama Vision (Qwen) via Dedicated HF Space...")
+                for v_url in reversed(self.hf_urls):
+                    res = self._call_local_ollama(v_url, prompt, system, "text", 0.0, is_vision=True, base64_image=base64_image)
+                    if res: return res
+                print("      -> [LLM Manager] Local Ollama Vision failed.")
+                
             print("      -> [LLM Manager] Local Ollama Vision exhausted (APIs disabled). Returning None.")
             return None
         
+        # We are in API mode.
         if max_keys == 0:
             print("      -> [LLM Manager] CRITICAL ERROR: No API keys for Vision!")
             return None
@@ -323,12 +322,23 @@ class LLMManagerAPI:
                     self._hf_clients[clean_url] = Client(clean_url)
                 client = self._hf_clients[clean_url]
             
-            result = client.predict(
-                model_name=model,
-                messages_json=json.dumps(messages),
-                image_base64=base64_image if base64_image else "",
-                api_name="/predict"
-            )
+            try:
+                result = client.predict(
+                    model,
+                    json.dumps(messages),
+                    base64_image if base64_image else "",
+                    api_name="/chat"
+                )
+            except Exception as inner_e:
+                if "Cannot find a function" in str(inner_e):
+                    result = client.predict(
+                        model,
+                        json.dumps(messages),
+                        base64_image if base64_image else "",
+                        api_name="/predict"
+                    )
+                else:
+                    raise inner_e
             return str(result).strip()
         except ImportError:
             print("      -> [LLM Manager] CRITICAL ERROR: gradio_client is not installed! Run `uv pip install gradio_client`")
