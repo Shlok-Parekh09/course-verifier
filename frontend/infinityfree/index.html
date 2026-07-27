@@ -357,6 +357,8 @@
                                 <option value="all">All Course Types</option>
                             </select>
                             <button class="btn-reset" id="sf-reset">↻ Reset</button>
+                            <div style="flex-grow: 1;"></div>
+                            <span id="last-updated-label" style="font-size: 0.85rem; color: var(--text-muted); align-self: center; white-space: nowrap;"></span>
                         </div>
 
                         <!-- Table -->
@@ -372,6 +374,7 @@
                                         <th class="sortable" data-sort="domain">Domain ↕</th>
                                         <th class="sortable" data-sort="courseType">Course Type ↕</th>
                                         <th class="sortable" data-sort="mode">Mode ↕</th>
+                                        <th class="sortable" data-sort="solved_ts">Solved At &#8597; </th>
                                         <th class="sortable" data-sort="status">Status ↕</th>
                                     </tr>
                                 </thead>

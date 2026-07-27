@@ -1275,17 +1275,16 @@ body.light-mode .badge-open     { color: var(--text-2); border-color: var(--bord
 
 .modal-close:hover { border-color: var(--red); color: var(--red); transform: rotate(90deg); }
 
-/* ================================================================
-   BATCH 8 — MODAL, TOAST & OVERLAYS
-   ================================================================ */
 
-/* Modal scale-in animation */
-.modal-overlay.open {
-    display: flex;
-    animation: fadeIn 0.2s ease;
-}
-.modal-overlay.open .modal-box {
-    animation: scaleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+/* Suggestion popup (duplicate courses) */
+.suggest-overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.72);
+    z-index: 210;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(5px);
 }
 
 /* Modal header accent colors by domain */

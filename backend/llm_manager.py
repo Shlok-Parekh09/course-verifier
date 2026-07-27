@@ -48,8 +48,8 @@ class LLMManagerAPI:
         elif raw_ollama_url.endswith("/api"):
             raw_ollama_url = raw_ollama_url[:-4]
         self.ollama_api_url = raw_ollama_url
-        self.ollama_model   = os.environ.get("OLLAMA_MODEL", "llama3.3")
-        self.ollama_vision_model = os.environ.get("OLLAMA_VISION_MODEL", "gemma4:31b-cloud")
+        self.ollama_model   = os.environ.get("OLLAMA_MODEL", "mistral-large-3:675b-cloud")
+        self.ollama_vision_model = os.environ.get("OLLAMA_VISION_MODEL", "qwen3.5:cloud")
 
         # Track last call time per provider to enforce rate limits
         # Track last call time per key to enforce rate limits individually
@@ -146,6 +146,13 @@ class LLMManagerAPI:
             return None
 
         # FALLBACK SEQUENTIAL LOGIC (If worker_id is not provided)
+        # Provider: OLLAMA
+        if provider in ["auto", "ollama"] and self.ollama_api_url:
+            print(f"      -> [LLM Manager] Trying Ollama ({self.ollama_model})...")
+            result = self._call_ollama(prompt, system, format, temperature, url=self.ollama_api_url, model=self.ollama_model, timeout=timeout)
+            if result: return result
+            print(f"      -> [LLM Manager] Ollama failed. Failing over...")
+
         # Provider 0: MISTRAL
         if provider in ["auto", "mistral"]:
             for idx, key in enumerate(self.mistral_keys):
@@ -197,6 +204,12 @@ class LLMManagerAPI:
         max_g = len(self.gemini_keys)
         max_m = len(self.mistral_keys)
         max_keys = max(max_g, max_m)
+        
+        if self.ollama_api_url:
+            print(f"      -> [LLM Manager] Trying Ollama Vision ({self.ollama_vision_model})...")
+            res = self._call_ollama_vision(prompt, base64_image, system)
+            if res: return res
+            print("      -> [LLM Manager] Ollama Vision failed. Failing over to API keys...")
         
         if max_keys == 0:
             print("      -> [LLM Manager] CRITICAL ERROR: No API keys for Vision!")

@@ -188,6 +188,7 @@ async function fetchAllCourses() {
         throw new Error(`API error ${res.status}: ${err}`);
     }
     const data = await res.json();
+    
     let docs = [];
     let pending = [];
     
@@ -211,6 +212,17 @@ async function fetchAllCourses() {
                     ...val
                 }));
                 pending = pending.concat(mapped);
+            }
+
+            let maxTs = 0;
+            pending.forEach(s => {
+                const ts = (s.update && s.update.solved_ts) ? s.update.solved_ts : (s.ts || 0);
+                if (ts > maxTs) maxTs = ts;
+            });
+            if (maxTs > 0) {
+                const dateObj = new Date(maxTs);
+                const el = document.getElementById('last-updated-label');
+                if (el) el.textContent = 'Last Updated: ' + dateObj.toLocaleString();
             }
         }
     } catch (e) {
@@ -891,6 +903,11 @@ function renderSolvedTab() {
         else if (c.status === 'Error') statBadge = `<span class="badge-status status-err">Error</span>`;
         else statBadge = `<span class="badge-status">${c.status || '—'}</span>`;
         
+        let solvedAtStr = '-';
+        if (c.solved_ts) {
+            solvedAtStr = new Date(c.solved_ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        }
+
         tr.innerHTML = `
             <td style="color:var(--text-dim); font-size:0.8rem;">${c.id}</td>
             <td style="color:var(--text-dim);font-size:0.8rem;white-space:nowrap;">${c.pdf_page ? 'Pg ' + c.pdf_page : '-'}</td>
@@ -900,6 +917,7 @@ function renderSolvedTab() {
             <td><span class="badge-domain">${domLabel}</span></td>
             <td><span style="font-size:0.78rem; color:var(--text-muted);">${escHtml(c.domain || 'Uncategorised')}</span></td>
             <td>${escHtml(c.mode || '—')}</td>
+            <td><span style="color:var(--text-muted); font-size:0.85rem;">${solvedAtStr}</span></td>
             <td>${statBadge}</td>
         `;
         tbody.appendChild(tr);
@@ -1598,5 +1616,6 @@ function applyLocalSolves(docs) {
 
 // No more polling — localStorage is the single source of truth for solves.
 // pollSolves() and setInterval() removed entirely.
+
 
 
