@@ -4197,11 +4197,11 @@ CRITICAL RULES:
         # Default to a 120000-char cap to utilize 128k context windows for API providers
         # without blowing up laptop memory.
         try:
-            LLM_TEXT_BUDGET = int(os.environ.get('VERIFIER_LLM_TEXT_BUDGET', '120000'))
+            LLM_TEXT_BUDGET = int(os.environ.get('VERIFIER_LLM_TEXT_BUDGET', '45000'))
         except ValueError:
-            LLM_TEXT_BUDGET = 120000
+            LLM_TEXT_BUDGET = 45000
         if LLM_TEXT_BUDGET <= 0:
-            LLM_TEXT_BUDGET = 120000
+            LLM_TEXT_BUDGET = 45000
 
         def _smart_truncate(text, limit):
             if len(text) <= limit: return text
@@ -4252,6 +4252,9 @@ CRITICAL RULES:
             page_text_limited = excel_part + "\n" + _smart_truncate(web_part, allowed_web_len)
         else:
             page_text_limited = _smart_truncate(page_text, LLM_TEXT_BUDGET)
+            
+        if len(page_text_limited) > LLM_TEXT_BUDGET:
+            page_text_limited = page_text_limited[:LLM_TEXT_BUDGET] + "\n...[HARD TRUNCATED]..."
             
         anna_univ_rule = ""
         uni_name_lower = str(course.get('uni', '')).lower()
@@ -6250,6 +6253,7 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
 
                 let rect = el.getBoundingClientRect();
                 if (rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.top <= window.innerHeight) {
+                    if (counter > 150) return;
                     let id = counter++;
                     window.__llm_elements[id] = el;
                     mapping[id] = {
