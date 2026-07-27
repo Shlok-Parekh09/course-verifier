@@ -25,36 +25,10 @@ let firstDataFetch = true;
 let courseFilter = { search: '', country: 'all', domain: 'all', qs: 'any', nirf: 'any', courseType: 'all' };
 
 // ── edX All Courses filter state ────────────────────────────────────
-const COURSES_PAGE_SIZE = 12;
-const favoriteCourses = new Set(JSON.parse(localStorage.getItem('cv_favorites') || '[]'));
 let edxFilterState = {
     typePill: 'all',   // course type from #course-type-pills
-    domainChip: 'all', // domain category from #domain-chips-scroll
-    levelPill: 'all',  // skill level from #skill-level-pills
-    country: 'all',    // country filter (e.g. from globe/metrics)
-    search: '',
-    sort: 'relevance',
-    view: 'grid',
-    page: 1
+    domainChip: 'all'  // domain category from #domain-chips-scroll
 };
-
-function getSkillLevel(course) {
-    // Infer skill level from course type and domain when no explicit field exists.
-    const type = normalizeDomain(course.domain);
-    const domain = getDomainCategory(course.id);
-    const beginnerTypes = ['Free', 'Free to Audit', 'Certificate'];
-    const advancedTypes = ["Bachelor's Degree", "Master's Degree"];
-    if (beginnerTypes.includes(type)) return 'Beginner';
-    if (advancedTypes.includes(type)) return 'Advanced';
-    if (domain === 'Foundational') return 'Beginner';
-    if (domain === 'Data & Application' || domain === 'Legal & Ethical') return 'Intermediate';
-    return 'Intermediate';
-}
-
-function matchLevelPill(course, level) {
-    if (level === 'all') return true;
-    return getSkillLevel(course) === level;
-}
 
 // ── Domain category by course idx (ID number) ───────────────────
 const DOMAIN_RANGES = [
@@ -79,84 +53,6 @@ function getDomainCategory(idxRaw) {
 }
 
 const ALL_DOMAIN_LABELS = DOMAIN_RANGES.map(r => r.label);
-
-// ════════════════════════════════════════════════════════════════
-//  CYBERSECURITY DOMAIN KNOWLEDGE DATA
-// ════════════════════════════════════════════════════════════════
-const CYBER_DOMAINS_DATA = [
-    {
-        id: 'foundational',
-        title: 'Foundational',
-        icon: '🧱',
-        color: '#14b8a6',
-        summary: 'Core concepts every cybersecurity learner needs — from threat basics to risk frameworks and governance.',
-        subDomains: ['Cybersecurity Basics', 'Risk Management', 'Threat Landscape', 'Security Frameworks', 'Security Governance'],
-        skills: ['Risk Assessment', 'Policy Writing', 'NIST/ISO 27001', 'Security Awareness', 'Asset Management'],
-        roles: ['Security Analyst', 'GRC Analyst', 'IT Auditor', 'Risk Manager'],
-        courseTypes: ['Certificate', 'Free to Audit', "Bachelor's Degree"],
-        filterDomain: 'Foundational'
-    },
-    {
-        id: 'network',
-        title: 'Network Infrastructure',
-        icon: '🌐',
-        color: '#6366f1',
-        summary: 'Protect the arteries of digital infrastructure — firewalls, IDS/IPS, cloud networks, and zero-trust architecture.',
-        subDomains: ['Network Security', 'Firewalls & VPN', 'IDS/IPS', 'Cloud Security', 'Zero Trust Architecture'],
-        skills: ['Packet Analysis', 'Firewall Rules', 'SDN Security', 'VPC Design', 'Network Segmentation'],
-        roles: ['Network Security Engineer', 'Cloud Security Architect', 'SOC Analyst', 'Infrastructure Engineer'],
-        courseTypes: ['Certificate', 'Diploma', "Master's Degree"],
-        filterDomain: 'Network Infrastructure'
-    },
-    {
-        id: 'endpoint',
-        title: 'System & Endpoint',
-        icon: '💻',
-        color: '#06b6d4',
-        summary: 'Harden endpoints, operating systems, and mobile devices against malware, misconfiguration, and lateral movement.',
-        subDomains: ['Endpoint Security', 'OS Hardening', 'Mobile Security', 'Patch Management', 'Malware Defense'],
-        skills: ['EDR/XDR', 'OS Internals', 'Threat Hunting', 'Vulnerability Management', 'Incident Triage'],
-        roles: ['Endpoint Security Engineer', 'SOC Analyst', 'Threat Hunter', 'System Administrator'],
-        courseTypes: ['Certificate', 'Diploma', "Post Graduate Diploma"],
-        filterDomain: 'System & Endpoint'
-    },
-    {
-        id: 'forensics',
-        title: 'Cyber Forensics',
-        icon: '🔍',
-        color: '#8b5cf6',
-        summary: 'Investigate breaches, recover digital evidence, and reconstruct attacks using forensic tools and incident-response playbooks.',
-        subDomains: ['Digital Forensics', 'Incident Response', 'Reverse Engineering', 'eDiscovery', 'Threat Intelligence'],
-        skills: ['Disk Imaging', 'Memory Forensics', 'Kill Chain Analysis', 'Chain of Custody', 'IOC Triage'],
-        roles: ['Digital Forensics Specialist', 'Incident Responder', 'Malware Analyst', 'Threat Intel Analyst'],
-        courseTypes: ['Certificate', "Post Graduate Certificate", "Master's Degree"],
-        filterDomain: 'Cyber Forensics'
-    },
-    {
-        id: 'data',
-        title: 'Data & Application',
-        icon: '🗄️',
-        color: '#f43f5e',
-        summary: 'Secure code, databases, cryptography, and data privacy to protect the applications and information that power organizations.',
-        subDomains: ['Application Security', 'Data Privacy', 'Cryptography', 'Database Security', 'DevSecOps'],
-        skills: ['Secure Coding', 'OWASP Top 10', 'Encryption', 'Privacy by Design', 'CI/CD Security'],
-        roles: ['Application Security Engineer', 'Data Privacy Officer', 'DevSecOps Engineer', 'Cryptographer'],
-        courseTypes: ['Certificate', "Post Graduate Diploma", "Master's Degree"],
-        filterDomain: 'Data & Application'
-    },
-    {
-        id: 'legal',
-        title: 'Legal & Ethical',
-        icon: '⚖️',
-        color: '#f59e0b',
-        summary: 'Navigate cyber law, ethics, compliance, and reporting obligations across jurisdictions and industries.',
-        subDomains: ['Cyber Law', 'Ethics & Professionalism', 'Regulatory Compliance', 'Incident Reporting', 'Digital Rights'],
-        skills: ['Legal Research', 'Compliance Mapping', 'Incident Disclosure', 'Ethical Hacking Ethics', 'GDPR/CCPA'],
-        roles: ['Cybersecurity Lawyer', 'Compliance Manager', 'Ethics Officer', 'Policy Advisor'],
-        courseTypes: ['Certificate', 'Diploma', 'Free to Audit'],
-        filterDomain: 'Legal & Ethical'
-    }
-];
 
 // ── Academic-domain normalizer ──────────────────────────────────
 const _CANON_DOMAIN_FRAGMENTS = [
@@ -186,7 +82,7 @@ function normalizeDomain(raw) {
     return 'Other';
 }
 
-let barChart, mapChart, lineChart;
+let barChart, mapChart, lineChart, quantityBarChartInstance;
 let barMode = 'domain'; // 'domain' | 'country'
 
 // ── Country flag emoji helper ─────────────────────────────────────
@@ -219,17 +115,13 @@ function initTheme() {
         if (label) label.textContent = 'Light';
     }
     if (toggle) {
-        const doToggle = () => {
+        toggle.addEventListener('click', () => {
             document.body.classList.toggle('light-mode');
             const isLight = document.body.classList.contains('light-mode');
             localStorage.setItem('cvTheme', isLight ? 'light' : 'dark');
             if (label) label.textContent = isLight ? 'Light' : 'Dark';
             updateChartThemeColors();
             applyGlobeTheme(isLight ? 'light' : 'dark');
-        };
-        toggle.addEventListener('click', doToggle);
-        toggle.addEventListener('keydown', e => {
-            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); doToggle(); }
         });
     }
 
@@ -238,60 +130,29 @@ function initTheme() {
 }
 
 function updateChartThemeColors() {
-    if (window.__analyticsCountries) {
-        renderChartCountries('chart-countries', window.__analyticsCountries);
-    }
-    if (window.__analyticsTypes) {
-        renderChartSpecializations('chart-specializations', window.__analyticsTypes);
-    }
-    if (window.__analyticsPricing) {
-        renderChartPricing('chart-pricing', window.__analyticsPricing);
+    const isLight = document.body.classList.contains('light-mode');
+    const tickColor = isLight ? 'rgba(13, 19, 33, 0.7)' : 'rgba(255,255,255,0.7)';
+    if (quantityBarChartInstance) {
+        quantityBarChartInstance.options.plugins.legend.labels.color = tickColor;
+        quantityBarChartInstance.options.scales.x.ticks.color = tickColor;
+        quantityBarChartInstance.update();
     }
 }
 
 // ================================================================
 //  TABS
 // ================================================================
-function ensureAnalyticsTabPlacement() {
-    // Defensive: if a cached/corrupted HTML file nested the Analytics tab
-    // inside another tab (e.g. tab-courses with display:none), move it out
-    // so it becomes a direct child of .page and can actually paint.
-    const tab = document.getElementById('tab-analytics');
-    const page = document.querySelector('.page');
-    if (!tab || !page) return;
-    const parent = tab.parentElement;
-    if (parent && parent !== page) {
-        console.warn('[Analytics] tab was nested inside', parent.id || parent.className, '— moving to .page');
-        page.appendChild(tab);
-    }
-}
-
-async function switchTab(targetId) {
-    document.querySelectorAll('.tab-content').forEach(t => {
-        t.classList.remove('active', 'tab-enter');
-    });
+function switchTab(targetId) {
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('#nav-tabs a').forEach(a => a.classList.remove('active'));
     const content = document.getElementById(targetId);
-    if (content) {
-        content.classList.add('active', 'tab-enter');
-        setTimeout(() => content.classList.remove('tab-enter'), 350);
-    }
+    if (content) content.classList.add('active');
     const link = document.querySelector(`#nav-tabs a[data-target="${targetId}"]`);
     if (link) link.classList.add('active');
     if (targetId === 'tab-courses') loadAllCourses();
     if (targetId === 'tab-analytics') {
-        ensureAnalyticsTabPlacement();
-        renderAnalyticsTab();
-    }
-    if (targetId !== 'tab-dashboard') hideGlobeTooltip();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-}
-
-function hideGlobeTooltip() {
-    const tooltipEl = document.getElementById('cobe-tooltip');
-    if (tooltipEl) {
-        tooltipEl.classList.remove('visible');
-        tooltipEl.style.display = 'none';
+        if (allCoursesData.length === 0) loadAllCourses(true);
+        renderAnalytics({});
     }
 }
 
@@ -302,8 +163,6 @@ function initTabs() {
             switchTab(a.getAttribute('data-target'));
         });
     });
-    // Run once on load to fix any malformed DOM before the user clicks Analytics.
-    ensureAnalyticsTabPlacement();
 }
 
 // ================================================================
@@ -311,7 +170,6 @@ function initTabs() {
 // ================================================================
 let globeInstance = null;   // { isCobe, pointOfView(), controls() }
 let selectedCountry = null;
-let hoverCountry = null;      // shared across globe init/update/highlight
 let cobeMarkers = [];
 
 const COUNTRY_COORDS = {
@@ -374,18 +232,18 @@ function hexToRgb01(hex) {
 
 const GLOBE_THEMES = {
     dark: {
-        base: '#111827',      
-        bg: '#0b0f19',        
-        halo: '#6366f1',      
-        marker: '#d8b4fe',    
-        arc: '#22d3ee'        
+        base: '#111827',      // slate-900 sphere base (visible but still dark)
+        bg: '#0b0f19',        // canvas background
+        halo: '#6366f1',      // brighter indigo atmosphere
+        marker: '#d8b4fe',    // brighter violet markers
+        arc: '#22d3ee'        // neon cyan arcs
     },
     light: {
-        base: '#e2e8f0',      
-        bg: '#f8fafc',        
-        halo: '#4f46e5',      
-        marker: '#7e22ce',    
-        arc: '#0891b2'        
+        base: '#e2e8f0',      // slate-200 sphere base (clear against light bg)
+        bg: '#f8fafc',        // bright off-white canvas
+        halo: '#4f46e5',      // deeper indigo bloom
+        marker: '#7e22ce',    // deep purple markers for contrast on light sphere
+        arc: '#0891b2'        // darker cyan arcs for contrast on light sphere
     }
 };
 
@@ -401,7 +259,7 @@ function applyGlobeTheme(theme) {
     const arc = hexToRgb01(t.arc);
 
     if (cobeGlobe) {
-        
+        // Re-generate dense N×N hub arcs with the current theme color
         const denseArcs = generateDenseArcData().map(a => ({
             from: [a.startLat, a.startLng],
             to: [a.endLat, a.endLng],
@@ -413,8 +271,8 @@ function applyGlobeTheme(theme) {
             glowColor: glow,
             markerColor: marker,
             arcColor: arc,
-            arcWidth: 0.8,  
-            arcHeight: 0.28, 
+            arcWidth: 0.8,   // visible precision lines
+            arcHeight: 0.28, // gentle orbital curve
             markers: cobeMarkers,
             arcs: denseArcs
         });
@@ -433,35 +291,14 @@ function initGlobe() {
         return;
     }
     initCobeGlobe(container);
-
-    globeInstance.pointOfView({
-        lat: 20.5937,
-        lng: 78.9629,
-        altitude: 2.1 
-    }, 0);
-
-    const controls = globeInstance.controls();
-    controls.enableZoom = false;
-    controls.minDistance = 250;
-    controls.maxDistance = 250;
 }
 
+// COBE render state
 let cobeGlobe = null;
-let cobeState = { phi: -2.949, theta: 0.359, scale: 1.024 };
+let cobeState = { phi: 0, theta: 0.3, scale: 0.85 };
 let cobeAutoRotate = true;
 let cobeIsDragging = false;
 let cobeAnimationId = null;
-let cobeMinScale = 0.78;
-let cobeMaxScale = 1.08;
-let cobeZoomMinDistance = 200;
-let cobeZoomMaxDistance = 380;
-
-function syncGlobeScaleBounds() {
-    const base = 215;
-    cobeMaxScale = Math.min(1.08, base / cobeZoomMinDistance);
-    cobeMinScale = Math.max(0.78, base / cobeZoomMaxDistance);
-}
-syncGlobeScaleBounds();
 
 function initCobeGlobe(container) {
     container.innerHTML = '';
@@ -3092,11 +2929,32 @@ function initNavbarKeyboardNav() {
     });
 }
 
-function updateNavbarAria() {
-    document.querySelectorAll('#nav-tabs a').forEach(a => {
-        const active = a.classList.contains('active');
-        a.setAttribute('aria-current', active ? 'page' : 'false');
-    });
+async function fetchData() {
+    if (!globalData) document.body.dataset.loading = 'true';
+    try {
+        const res = await fetch(COURSES_JSON + '?v=' + Date.now());
+        const data = await res.json();
+        
+        const lastMod = res.headers.get('Last-Modified');
+        if (lastMod) {
+            const dateObj = new Date(lastMod);
+            const el = document.getElementById('last-updated-label');
+            if (el) el.textContent = 'Last Updated: ' + dateObj.toLocaleString();
+        }
+
+        allCoursesData = (Array.isArray(data) ? data : data.courses || []).sort((a, b) => parseInt(a.id || '9') - parseInt(b.id || '9'));
+
+        const stats = computeStats(allCoursesData);
+        const countryCounts = computeCountryCounts(allCoursesData);
+        const domainCounts = computeDomainCounts(allCoursesData);
+        globalData = { status: 'success', documents: allCoursesData, stats, country_counts: countryCounts, domain_counts: domainCounts };
+
+        const animate = firstDataFetch;
+        firstDataFetch = false;
+        _applyData(globalData, animate);
+    } catch (e) {
+        console.error('Data fetch error:', e);
+    }
 }
 
 function initGlobeControls() {
@@ -3556,4 +3414,18 @@ function initBatch9And10() {
     initDomainExplorer();
 }
 
-initBatch9And10();
+// ================================================================
+//  INIT
+// ================================================================
+// app.js is loaded with `defer`, so the DOM is already ready here.
+initTheme();
+initTabs();
+initGlobe();
+initCharts();
+initFilters();
+initModal();
+initAnalyticsSubTabs();
+initEdxControls();
+
+fetchData().then(() => renderAnalytics({}));
+
