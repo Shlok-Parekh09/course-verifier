@@ -51,12 +51,14 @@ jobs:
         run: python3 --version
       
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          enable-cache: false
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Install PyMuPDF & gdown
         run: |
+          uv cache clean || true
           uv venv --clear .venv
           uv pip install PyMuPDF gdown
 
@@ -133,19 +135,27 @@ jobs:
           wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
           sudo apt-get install -y ./google-chrome-stable_current_amd64.deb
 
-      - name: Verify System Dependencies
+      - name: Verify & Clean System Dependencies
         run: |
-          pkill -9 chrome 2>/dev/null || true
+          echo "Aggressively cleaning lingering processes to free memory..."
+          pkill -9 -f chrome || true
+          pkill -9 -f chromedriver || true
+          pkill -9 -f Xvfb || true
+          pkill -9 -f "autonomous_course_verifier" || true
           google-chrome --version || echo "::warning::Google Chrome not found! Make sure to install it."
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          enable-cache: false
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Install Python Dependencies
         run: |
-          uv venv --clear .venv
+          echo "Removing old .venv completely to clear memory footprint..."
+          rm -rf .venv
+          uv cache clean || true
+          uv venv .venv
           uv pip install -r requirements.txt python-dotenv gdown
 
       - name: Download Main PDF

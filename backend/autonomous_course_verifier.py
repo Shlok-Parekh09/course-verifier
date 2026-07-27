@@ -8,9 +8,13 @@ def get_chrome_main_version():
             match = re.search(r'version\s+REG_SZ\s+(\d+)\.', out)
             if match: return int(match.group(1))
         else:
-            out = subprocess.check_output(['google-chrome', '--version']).decode()
-            match = re.search(r'Chrome (\d+)\.', out)
-            if match: return int(match.group(1))
+            for bin_name in ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser']:
+                try:
+                    out = subprocess.check_output([bin_name, '--version']).decode()
+                    match = re.search(r'(?:Chrome|Chromium) (\d+)\.', out)
+                    if match: return int(match.group(1))
+                except:
+                    continue
     except: pass
     return 149  # Fallback to 149 to avoid undetected_chromedriver v150 bug
 
@@ -6880,7 +6884,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
             os.makedirs(fresh_profile, exist_ok=True)
             
             try:
-                driver = uc.Chrome(options=options, user_data_dir=fresh_profile, version_main=get_chrome_main_version(), user_multi_procs=True)
+                with browser_init_lock:
+                    driver = uc.Chrome(options=options, user_data_dir=fresh_profile, version_main=get_chrome_main_version(), user_multi_procs=True)
                 try:
                     driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {"latitude": 28.6139, "longitude": 77.2090, "accuracy": 100})
                 except: pass
@@ -6903,7 +6908,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         try: shutil.rmtree(fresh_profile2)
                         except Exception: pass
                     os.makedirs(fresh_profile2, exist_ok=True)
-                    driver = uc.Chrome(options=options2, user_data_dir=fresh_profile2, version_main=get_chrome_main_version(), user_multi_procs=True)
+                    with browser_init_lock:
+                        driver = uc.Chrome(options=options2, user_data_dir=fresh_profile2, version_main=get_chrome_main_version(), user_multi_procs=True)
                     try:
                         driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {"latitude": 28.6139, "longitude": 77.2090, "accuracy": 100})
                     except: pass
@@ -9134,7 +9140,8 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         except Exception:
             pass
 
-        # Cleanup browsers
+        # Cleanup browsers synchronously so os._exit doesn't kill the threads
+        cleanup_threads = []
         while not browser_pool.empty():
             try:
                 worker_id, d, usage_count = browser_pool.get_nowait()
@@ -9146,9 +9153,15 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     except: pass
                     try: drv.quit()
                     except: pass
-                threading.Thread(target=kill_drv, args=(d,), daemon=True).start()
+                t = threading.Thread(target=kill_drv, args=(d,))
+                t.start()
+                cleanup_threads.append(t)
             except:
                 pass
+        
+        # Wait for all drivers to close before returning
+        for t in cleanup_threads:
+            t.join()
 
         # ── Unload Ollama models from VRAM immediately ──
         print("\n[*] Unloading AI models from VRAM...")
@@ -9771,7 +9784,6 @@ if __name__ == "__main__":
         shutil.copy("autonomous_verified_data.json", "master_dashboard_results.json")
         print("\n[*] Saved permanent dashboard results to master_dashboard_results.json")
     
-    # Prevent undetected_chromedriver from spamming WinError 6 during Python teardown
     import os
     if os.environ.get('CI') != 'true':
         os._exit(0)
