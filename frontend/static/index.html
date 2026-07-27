@@ -7,7 +7,7 @@
     <meta name="description" content="Global cybersecurity course catalog by Khushboo Singh">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=29">
+    <link rel="stylesheet" href="style.css?v=76">
 
     <!-- COBE globe is imported as an ES module from the local build -->
     <script type="module" src="cobe-import.js?v=1"></script>
@@ -18,43 +18,84 @@
 </head>
 <body>
 
+<a href="#main-content" class="skip-link">Skip to main content</a>
+
+<!-- Scroll progress indicator -->
+<div class="scroll-progress" id="scroll-progress" aria-hidden="true"></div>
+
 <!-- ══════════════ TOP NAVBAR ══════════════ -->
-<nav class="navbar">
-    <a class="navbar-logo" href="#">
+<nav class="navbar" aria-label="Main navigation">
+    <a class="navbar-logo" href="#" aria-label="CourseVerify home">
         <div class="logo-icon">⬡</div>
         CourseVerify
     </a>
 
     <div class="navbar-tabs" id="nav-tabs">
-        <a href="#" data-target="tab-dashboard" class="active">Dashboard</a>
+        <a href="#" data-target="tab-dashboard" class="active" aria-current="page">Dashboard</a>
         <a href="#" data-target="tab-analytics">Analytics</a>
         <a href="#" data-target="tab-courses">All Courses</a>
+    </div>
 
+    <div class="navbar-search" id="navbar-search">
+        <svg class="navbar-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="11" cy="11" r="8"></circle>
+            <path d="m21 21-4.35-4.35"></path>
+        </svg>
+        <input type="search" id="global-search-input" placeholder="Search courses, universities, countries…" aria-label="Global search" autocomplete="off">
+        <kbd class="navbar-search-kbd">Ctrl K</kbd>
+        <div class="global-search-results" id="global-search-results" aria-live="polite"></div>
     </div>
 
     <div class="navbar-right">
         <span class="theme-label" id="last-updated-label" style="margin-right: 15px; font-size: 0.8rem; color: var(--text-3);"></span>
         <span class="theme-label" id="theme-label">Dark</span>
-        <div class="theme-toggle" id="theme-toggle" title="Toggle dark/light mode"></div>
+        <div class="theme-toggle" id="theme-toggle" role="button" tabindex="0" aria-label="Toggle dark/light mode" title="Toggle dark/light mode"></div>
+        <button class="mobile-menu-btn" id="mobile-menu-btn" aria-label="Open navigation menu" aria-expanded="false" aria-controls="mobile-nav-drawer">
+            ☰
+        </button>
     </div>
 </nav>
 
+<!-- Mobile navigation drawer -->
+<div class="mobile-nav-drawer" id="mobile-nav-drawer" aria-hidden="true">
+    <a href="#" data-target="tab-dashboard" class="active">Dashboard</a>
+    <a href="#" data-target="tab-analytics">Analytics</a>
+    <a href="#" data-target="tab-courses">All Courses</a>
+</div>
+
 <!-- ══════════════ PAGE SHELL ══════════════ -->
-<div class="page">
+<div class="page" id="main-content">
 
     <!-- ══════════ DASHBOARD TAB ══════════ -->
     <div id="tab-dashboard" class="tab-content active">
+
+        <!-- Dashboard welcome banner -->
+        <div class="dash-welcome-banner" id="dash-welcome-banner">
+            <div class="dash-welcome-content">
+                <div class="dash-welcome-text">
+                    <strong>👋 Welcome to CourseVerify</strong>
+                    A global catalog of 3,700+ cybersecurity courses. Spin the globe, click any country, or pick a sidebar card to filter courses. Then go to <strong>All Courses</strong> to search, sort, and save favorites.
+                </div>
+                <div class="dash-welcome-actions">
+                    <button class="dash-welcome-tour" id="dash-welcome-tour">🎓 Start quick tour</button>
+                    <button class="dash-welcome-close" id="dash-welcome-close" aria-label="Dismiss welcome message">✕</button>
+                </div>
+            </div>
+        </div>
+
         <div class="dash-layout">
 
             <!-- ═══ LEFT SIDEBAR ═══ -->
             <div class="dash-left">
 
                 <!-- Total Courses Card -->
-                <div class="glass-card metric-card dash-total-card">
+                <div class="glass-card metric-card dash-total-card clickable" data-filter-all="true" role="button" tabindex="0" title="Browse all courses">
                     <div class="metric-card-title">Total Courses</div>
                     <div class="metric-value" id="total-count">0</div>
                     <div class="dash-total-delta" id="total-delta">Catalog total</div>
                 </div>
+
+                <div class="dash-helper-hint">💡 Click any card below to filter the catalog.</div>
 
                 <div class="glass-card metric-card">
                     <div class="metric-card-title">Premium Institutions</div>
@@ -81,16 +122,16 @@
                 <div class="glass-card metric-card">
                     <div class="metric-card-title">Access Types</div>
                     <div class="metric-list">
-                        <div class="metric-row">
-                            <div class="metric-label">Free</div>
+                        <div class="metric-row access-row clickable" data-filter-type="Free" role="button" tabindex="0" title="Show free courses">
+                            <div class="metric-label"><span class="access-icon">🆓</span> Free</div>
                             <div class="metric-value" id="dash-free-count">0</div>
                         </div>
-                        <div class="metric-row">
-                            <div class="metric-label">Free to Audit</div>
+                        <div class="metric-row access-row clickable" data-filter-type="Free to Audit" role="button" tabindex="0" title="Show free-to-audit courses">
+                            <div class="metric-label"><span class="access-icon">🔓</span> Free to Audit</div>
                             <div class="metric-value" id="dash-fta-count">0</div>
                         </div>
-                        <div class="metric-row">
-                            <div class="metric-label">High Value Low Cost</div>
+                        <div class="metric-row access-row clickable" data-filter-type="High Value Low Cost" role="button" tabindex="0" title="Show high value low cost courses">
+                            <div class="metric-label"><span class="access-icon">💎</span> High Value Low Cost</div>
                             <div class="metric-value" id="dash-hvlc-count">0</div>
                         </div>
                     </div>
@@ -103,6 +144,8 @@
                 <div class="globe-glow"></div>
                 <div class="dash-globe-wrap" id="globe-container">
                     <!-- COBE 3D globe renders here -->
+                    <button class="globe-fullscreen-btn" id="globe-fullscreen-btn" aria-label="Toggle full-screen globe">⛶</button>
+                    <button class="globe-reset-btn" id="globe-reset-btn" aria-label="Reset globe view">⌖</button>
                 </div>
 
                 <!-- Floating Country Course Panel -->
@@ -113,7 +156,7 @@
                             <span id="country-detail-name">Country</span>
                             <span class="country-detail-count" id="country-detail-count">0</span>
                         </div>
-                        <button id="clear-filter" class="country-detail-close" title="Clear selection">✕</button>
+                        <button id="clear-filter" class="country-detail-close" title="Clear selection" aria-label="Clear country selection">✕</button>
                     </div>
                     <div class="country-detail-sub">Click any country on the globe to filter courses</div>
 
@@ -145,12 +188,14 @@
                     </div>
 
                     <div class="tbl-wrap" style="max-height:220px;">
-                        <table class="data-table">
+                        <table class="data-table country-courses-table" id="country-courses-table">
+                            <caption class="vh">Courses offered in the selected country</caption>
                             <thead><tr>
-                                <th>Course Name</th>
-                                <th>University</th>
-                                <th>QS</th>
-                                <th>NIRF</th>
+                                <th class="freeze-col" scope="col"># / Course Name</th>
+                                <th scope="col">University</th>
+                                <th scope="col" class="col-center">QS Rank</th>
+                                <th scope="col" class="col-center">NIRF Rank</th>
+                                <th scope="col" class="col-actions"><span class="vh">Actions</span></th>
                             </tr></thead>
                             <tbody id="course-details-body"></tbody>
                         </table>
@@ -160,8 +205,8 @@
 
             <!-- ═══ RIGHT SIDEBAR ═══ -->
             <div class="dash-right">
-                <div class="glass-card metric-card dash-quantity-card">
-                    <div class="metric-card-title">India</div>
+                <div class="glass-card metric-card dash-quantity-card india-card clickable" data-filter-country="India" role="button" tabindex="0" title="Show courses from India">
+                    <div class="metric-card-title"><span class="india-flag-badge">🇮🇳</span> India</div>
                     <div class="metric-value" id="india-stat-count" style="color:var(--teal);">0</div>
                     <div class="dash-total-delta" id="india-stat-pct">0% of catalog</div>
                 </div>
@@ -173,300 +218,408 @@
                             <div class="dash-quantity-sub">Top countries outside India</div>
                         </div>
                     </div>
-                    <div class="dash-quantity-bars">
-                        <canvas id="quantityBarChart"></canvas>
+                    <div class="dash-quantity-bars" id="quantity-bars">
+                        <!-- Populated by JS -->
                     </div>
                 </div>
             </div>
 
         </div>
-    </div>
 
-    <!-- ══════════ ALL COURSES TAB ══════════ -->
-    <div id="tab-courses" class="tab-content">
-        <div class="edx-container">
-            <h2 class="edx-title">Trending Courses</h2>
-            <p class="edx-subtitle">Explore executive education, degrees, and professional certificates from top universities.</p>
-
-            <!-- Two-row pill filter bars -->
-            <div class="trending-filter-container">
-                <!-- Course Types Row -->
-                <div class="filter-row">
-                    <div class="filter-row-label">Category</div>
-                    <div class="pill-group course-types-pills" id="course-type-pills">
-                    <button class="type-pill active" data-type="all">All</button>
-                    <button class="type-pill" data-type="Bachelor's Degree">Bachelor's Degree</button>
-                    <button class="type-pill" data-type="Master's Degree">Master's Degree</button>
-                    <button class="type-pill" data-type="Post Graduate Diploma">Post Graduate Diploma</button>
-                    <button class="type-pill" data-type="Post Graduate Certificate">Post Graduate Certificate</button>
-                    <button class="type-pill" data-type="Diploma">Diploma</button>
-                    <button class="type-pill" data-type="Certificate">Certificate</button>
-                    <button class="type-pill" data-type="Free">Free</button>
-                    <button class="type-pill" data-type="Free to Audit">Free to Audit</button>
-                    <button class="type-pill" data-type="High Value Low Cost">High Value Low Cost</button>
-                </div>
-
-                <!-- Domains Carousel Row -->
-                <div class="filter-row">
-                    <div class="filter-row-label">Topic</div>
-                    <div class="domain-chips-wrapper">
-                        <button class="chip-scroll-btn left" onclick="scrollDomains(-220)">‹</button>
-                        <div class="domain-chips-scroll" id="domain-chips-scroll">
-                        <button class="domain-chip active" data-domain="all">Featured</button>
-                        <button class="domain-chip" data-domain="Foundational">Foundational</button>
-                        <button class="domain-chip" data-domain="Network Infrastructure">Network Infrastructure</button>
-                        <button class="domain-chip" data-domain="System & Endpoint">System & Endpoint</button>
-                        <button class="domain-chip" data-domain="Cyber Forensics">Cyber Forensics</button>
-                        <button class="domain-chip" data-domain="Data & Application">Data & Application</button>
-                        <button class="domain-chip" data-domain="Legal & Ethical">Legal & Ethical</button>
-                        <button class="domain-chip" data-domain="Free">Free</button>
-                        <button class="domain-chip" data-domain="Free to Audit">Free to Audit</button>
-                        <button class="domain-chip" data-domain="High Value Low Cost">High Value Low Cost</button>
-                        </div>
-                        <button class="chip-scroll-btn right" onclick="scrollDomains(220)">›</button>
-                    </div>
+        <!-- ══════════ DOMAIN KNOWLEDGE FEED ══════════ -->
+        <section class="domain-info-section" id="domain-info-section">
+            <div class="domain-info-hdr">
+                <div>
+                    <div class="domain-info-title">🛡️ Cybersecurity Domain Explorer</div>
+                    <div class="domain-info-sub">Explore the specializations that shape the catalog — and jump straight to matching courses.</div>
                 </div>
             </div>
-
-            <!-- Filter status / result count -->
-            <div class="edx-meta-bar">
-                <span class="edx-result-count" id="edx-result-count">0 courses</span>
-                <button class="edx-reset-btn" id="edx-reset-filters">Reset filters</button>
+            <div class="domain-cards-grid" id="domain-cards-grid">
+                <!-- Cards rendered by app.js when scrolled into view -->
             </div>
+        </section>
 
-            <!-- Cards Grid -->
-            <div class="edx-cards-row" id="edx-cards-row">
-                <!-- Cards dynamically injected via app.js -->
-            </div>
-        </div>
-    </div>
+    </div><!-- /tab-dashboard -->
 
     <!-- ══════════ ANALYTICS TAB ══════════ -->
     <div id="tab-analytics" class="tab-content">
         <div class="analytics-wrap">
 
             <!-- Analytics Page Header -->
-            <div class="analytics-page-hdr">
+            <div class="analytics-page-hdr" style="padding-bottom: 24px; border-bottom: 1px solid var(--border);">
                 <div class="analytics-page-title">
                     <div class="analytics-icon">📊</div>
                     <div>
                         <h2>Course Analytics</h2>
-                        <p>Deep-dive into every dimension of the global portfolio</p>
-                    </div>
-                </div>
-                <nav class="analytics-subnav" id="analytics-subnav">
-                    <button class="asubtab active" data-atab="atab-overview">📋 Overview</button>
-                    <button class="asubtab" data-atab="atab-geography">🌍 Geography</button>
-                    <button class="asubtab" data-atab="atab-domains">🔬 Specializations</button>
-                </nav>
-            </div>
-
-            <!-- Analytics KPI Cards (always visible) -->
-            <div class="analytics-kpi-row">
-                <div class="a-stat-card a-blue" title="Click to see breakdown" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-overview]').click()">
-                    <div class="a-stat-icon">📚</div>
-                    <div class="a-stat-body">
-                        <div class="a-stat-val" id="an-total">—</div>
-                        <div class="a-stat-label">Total Unique Courses</div>
-                        <div class="a-stat-sub" id="an-variants-sub">— delivery variants</div>
-                    </div>
-                </div>
-                <div class="a-stat-card a-green" title="Click to filter" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-geography]').click()">
-                    <div class="a-stat-icon">🇮🇳</div>
-                    <div class="a-stat-body">
-                        <div class="a-stat-val" id="an-indian">—</div>
-                        <div class="a-stat-label">Indian Programs</div>
-                        <div class="a-stat-sub" id="an-indian-pct">—% of total catalog</div>
-                    </div>
-                </div>
-                <div class="a-stat-card a-purple" title="Click to see international breakdown" style="cursor:pointer" onclick="document.querySelector('.asubtab[data-atab=atab-geography]').click()">
-                    <div class="a-stat-icon">🌐</div>
-                    <div class="a-stat-body">
-                        <div class="a-stat-val" id="an-intl">—</div>
-                        <div class="a-stat-label">International Programs</div>
-                        <div class="a-stat-sub" id="an-countries-count">— countries represented</div>
+                        <p>Real-time data insights into the global portfolio</p>
+                        <div class="analytics-meta">
+                            <span id="an-meta-date">Updated just now</span>
+                            <span id="an-meta-scope">3,727 courses · 45 countries</span>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <!-- ── OVERVIEW sub-tab ── -->
-            <div id="atab-overview" class="atab-content active">
+            <!-- Analytics Toolbar -->
+            <div class="analytics-toolbar" id="analytics-toolbar" style="display: none;">
+                <div class="analytics-search">
+                    <input type="text" id="an-country-search" placeholder="Search countries…" aria-label="Search countries">
+                </div>
+                <div class="analytics-actions">
+                    <button id="an-sort-btn" title="Sort countries">⇅ Sort</button>
+                    <button id="an-refresh-btn" title="Refresh data">↻ Refresh</button>
+                </div>
+            </div>
 
-                <!-- Auto-computed Insight Cards -->
-                <div class="insight-cards-row" id="insight-cards-row"></div>
+            <!-- Loading / error state -->
+            <div id="analytics-state" class="analytics-state">Loading analytics…</div>
 
-                <div class="an-overview-grid">
+            <!-- Analytics Content -->
+            <div id="analytics-content" style="display: none;">
 
-                    <!-- Doughnut: Academic Credential Mix -->
-                    <div class="an-card an-card-lg">
-                        <div class="an-card-hdr">
-                            <div>
-                                <div class="an-card-title">Academic Credential Mix</div>
-                                <div class="an-card-sub">Categorization by degree & certification level — click a segment</div>
-                            </div>
-                            <div class="an-badge indigo">Credential Levels</div>
-                        </div>
-                        <div class="an-donut-wrap">
-                            <div class="an-chart-zone" style="height:300px; position:relative;">
-                                <canvas id="an-credential-chart"></canvas>
-                            </div>
-                            <div id="an-credential-legend" class="an-legend-grid"></div>
+                <!-- Analytics KPI Cards -->
+                <div class="analytics-kpi-row" style="margin-top: 24px;">
+                    <div class="a-stat-card a-blue">
+                        <div class="a-stat-icon">📚</div>
+                        <div class="a-stat-body">
+                            <div class="a-stat-val" id="an-total">—</div>
+                            <div class="a-stat-label">Total Unique Courses</div>
                         </div>
                     </div>
+                    <div class="a-stat-card a-green">
+                        <div class="a-stat-icon">🇮🇳</div>
+                        <div class="a-stat-body">
+                            <div class="a-stat-val" id="an-indian">—</div>
+                            <div class="a-stat-label">Indian Programs</div>
+                        </div>
+                    </div>
+                    <div class="a-stat-card a-purple">
+                        <div class="a-stat-icon">🌐</div>
+                        <div class="a-stat-body">
+                            <div class="a-stat-val" id="an-intl">—</div>
+                            <div class="a-stat-label">International Programs</div>
+                        </div>
+                    </div>
+                    <div class="a-stat-card a-amber">
+                        <div class="a-stat-icon">🏛️</div>
+                        <div class="a-stat-body">
+                            <div class="a-stat-val" id="an-countries">—</div>
+                            <div class="a-stat-label">Countries Represented</div>
+                        </div>
+                    </div>
+                </div>
 
-                    <!-- India vs International Split -->
+                <!-- Simple CSS-based Dashboard Grid -->
+                <div class="an-overview-grid" style="margin-top: 24px;">
+                    <!-- Top Countries -->
                     <div class="an-card">
                         <div class="an-card-hdr">
-                            <div>
-                                <div class="an-card-title">🇮🇳 India vs 🌐 World</div>
-                                <div class="an-card-sub">Portfolio split by origin</div>
-                            </div>
+                            <div class="an-card-title">Top Geographies</div>
                         </div>
-                        <div id="an-split-visual" class="an-split-block"></div>
-                        <div id="an-top-countries" class="an-hub-list" style="margin-top:16px;"></div>
-                        <button class="an-cta-btn" onclick="document.querySelector('.asubtab[data-atab=atab-geography]').click()">
-                            View Full Geographic Report →
-                        </button>
+                        <div class="chart-wrapper" style="position: relative; height: 300px; width: 100%;">
+                            <canvas id="chart-countries"></canvas>
+                        </div>
                     </div>
 
-                    <!-- Full-width Pricing Bar Chart -->
+                    <!-- Top Domains -->
+                    <div class="an-card">
+                        <div class="an-card-hdr">
+                            <div class="an-card-title">Top Specializations</div>
+                        </div>
+                        <div class="chart-wrapper" style="position: relative; height: 300px; width: 100%; display: flex; justify-content: center;">
+                            <canvas id="chart-specializations"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Pricing Breakdown -->
                     <div class="an-card an-full-width">
                         <div class="an-card-hdr">
-                            <div>
-                                <div class="an-card-title">Cost-Access Intelligence</div>
-                                <div class="an-card-sub">Subsidized and free learning path availability — click bars to drill down</div>
-                            </div>
-                            <div class="an-badge rose">Pricing Segments</div>
+                            <div class="an-card-title">Pricing & Access</div>
                         </div>
-                        <div class="an-chart-zone" style="height:280px; position:relative;">
-                            <canvas id="an-pricing-chart"></canvas>
+                        <div class="chart-wrapper" style="position: relative; height: 300px; width: 100%; display: flex; justify-content: center;">
+                            <canvas id="chart-pricing"></canvas>
                         </div>
                     </div>
 
+                    <!-- Country breakdown table -->
+                    <div class="an-card an-full-width">
+                        <div class="an-card-hdr">
+                            <div class="an-card-title">All Countries</div>
+                        </div>
+                        <div class="tbl-wrap" style="max-height:55vh;">
+                            <table class="data-table analytics-country-table" id="analytics-country-table">
+                                <caption class="vh">Country breakdown by number of courses and share of total</caption>
+                                <thead>
+                                    <tr>
+                                        <th style="width:56px;" scope="col" class="sortable sort-desc" data-sort="rank">Rank</th>
+                                        <th scope="col" class="sortable sort-asc" data-sort="name">Country</th>
+                                        <th scope="col" style="text-align:center;" class="sortable sort-desc" data-sort="count">Courses</th>
+                                        <th scope="col" style="text-align:right;" class="sortable sort-desc" data-sort="share">Share</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="an-all-countries-tbody">
+                                    <!-- Populated by JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
-            </div>
 
-            <!-- ── GEOGRAPHY sub-tab ── -->
-            <div id="atab-geography" class="atab-content">
-                <div class="an-section-hdr">
+
+            </div><!-- /analytics-content -->
+
+            <!-- ══════════ DOMAIN KNOWLEDGE FEED (Analytics only) ══════════ -->
+            <section class="domain-info-section" id="analytics-domain-section">
+                <div class="domain-info-hdr">
                     <div>
-                        <div class="an-section-title">Geographic Footprint</div>
-                        <div class="an-section-sub">Click any row to see its courses · sorted by volume</div>
-                    </div>
-                    <div class="an-search-wrap">
-                        <span class="an-search-icon">🔍</span>
-                        <input type="text" id="an-country-search" placeholder="Search country…" class="an-search-input">
+                        <div class="domain-info-title">🛡️ Cybersecurity Domain Explorer</div>
+                        <div class="domain-info-sub">Explore the specializations that shape the catalog — and jump straight to matching courses.</div>
                     </div>
                 </div>
-
-                <div class="an-card an-full-width" style="padding:0; overflow:hidden;">
-                    <div class="tbl-wrap" style="max-height:55vh;">
-                        <table class="data-table an-geo-table">
-                            <thead><tr>
-                                <th style="width:56px;">Rank</th>
-                                <th>Country</th>
-                                <th style="text-align:center;">Courses</th>
-                                <th style="text-align:right;">Share</th>
-                                <th style="width:120px;">Distribution</th>
-                            </tr></thead>
-                            <tbody id="an-country-tbody"></tbody>
-                        </table>
-                    </div>
+                <div class="domain-cards-grid" id="analytics-domain-cards-grid">
+                    <!-- Cards rendered by app.js when scrolled into view -->
                 </div>
-
-                <!-- Drill-down panel for geography -->
-                <div id="geo-drilldown" class="drilldown-panel" style="display:none;">
-                    <div class="drilldown-hdr">
-                        <div id="geo-drilldown-title" class="drilldown-title"></div>
-                        <button class="drilldown-close" onclick="closeDrilldown('geo-drilldown')">✕ Close</button>
-                    </div>
-                    <div class="tbl-wrap" style="max-height:40vh;">
-                        <table class="data-table">
-                            <thead><tr><th>#</th><th>Course Name</th><th>University</th><th>Domain</th></tr></thead>
-                            <tbody id="geo-drilldown-tbody"></tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ── SPECIALIZATIONS sub-tab ── -->
-            <div id="atab-domains" class="atab-content">
-                <div class="an-section-hdr" style="margin-bottom:20px;">
-                    <div>
-                        <div class="an-section-title">Domain Intelligence</div>
-                        <div class="an-section-sub">Click any row or bar to drill into courses of that specialization</div>
-                    </div>
-                </div>
-
-                <!-- Domain bar chart -->
-                <div class="an-card an-full-width">
-                    <div class="an-card-hdr">
-                        <div class="an-card-title">📊 Domain Saturation · click bars to explore</div>
-                        <div class="an-badge slate">Unique Offerings</div>
-                    </div>
-                    <div class="an-chart-zone" style="height:340px; position:relative;">
-                        <canvas id="an-domain-chart"></canvas>
-                    </div>
-                </div>
-
-                <!-- Domain table -->
-                <div class="an-card an-full-width" style="padding:0; overflow:hidden;">
-                    <div class="tbl-wrap" style="max-height:45vh;">
-                        <table class="data-table an-domain-table">
-                            <thead><tr>
-                                <th>Specialization</th>
-                                <th style="text-align:center;">Total</th>
-                                <th style="text-align:center;">🇮🇳 Indian</th>
-                                <th style="text-align:center;">🌐 Intl</th>
-                                <th style="width:100px;">Mix</th>
-                            </tr></thead>
-                            <tbody id="an-domain-tbody"></tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <!-- Drill-down panel for domains -->
-                <div id="dom-drilldown" class="drilldown-panel" style="display:none;">
-                    <div class="drilldown-hdr">
-                        <div id="dom-drilldown-title" class="drilldown-title"></div>
-                        <button class="drilldown-close" onclick="closeDrilldown('dom-drilldown')">✕ Close</button>
-                    </div>
-                    <div class="tbl-wrap" style="max-height:40vh;">
-                        <table class="data-table">
-                            <thead><tr><th>#</th><th>Course Name</th><th>University</th><th>Country</th></tr></thead>
-                            <tbody id="dom-drilldown-tbody"></tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-
+            </section>
 
         </div>
     </div><!-- /tab-analytics -->
 
+    <!-- ══════════ ALL COURSES TAB ══════════ -->
+    <div id="tab-courses" class="tab-content">
+        <div class="edx-container">
+            <div class="courses-hero">
+                <div class="courses-hero-content">
+                    <h2 class="edx-title">Trending Courses</h2>
+                    <p class="edx-subtitle">Explore executive education, degrees, and professional certificates from top universities.</p>
+                </div>
+            </div>
 
-<!-- ══════════════ COURSE DETAIL MODAL ══════════════ -->
-<div id="course-modal" class="modal-overlay">
-    <div class="modal-box">
-        <div class="modal-hdr">
-            <h3 id="modal-course-title">Course Details</h3>
-            <button id="close-modal" class="modal-close">✕</button>
+            <!-- Unified filter panel -->
+            <div class="trending-filter-container" id="trending-filter-container">
+                <!-- Category + Skill in one compact row group -->
+                <div class="filter-row filter-row-inline">
+                    <div class="filter-group">
+                        <div class="filter-row-label">Category</div>
+                        <div class="pill-group course-types-pills" id="course-type-pills">
+                            <button class="type-pill active" data-type="all">All <span class="filter-count">0</span></button>
+                            <button class="type-pill" data-type="Bachelor's Degree">Bachelor's <span class="filter-count">0</span></button>
+                            <button class="type-pill" data-type="Master's Degree">Master's <span class="filter-count">0</span></button>
+                            <button class="type-pill" data-type="Post Graduate Diploma">PG Diploma <span class="filter-count">0</span></button>
+                            <button class="type-pill" data-type="Post Graduate Certificate">PG Cert <span class="filter-count">0</span></button>
+                            <button class="type-pill" data-type="Diploma">Diploma <span class="filter-count">0</span></button>
+                            <button class="type-pill" data-type="Certificate">Certificate <span class="filter-count">0</span></button>
+                            <button class="type-pill" data-type="Free">Free <span class="filter-count">0</span></button>
+                            <button class="type-pill" data-type="Free to Audit">Audit <span class="filter-count">0</span></button>
+                            <button class="type-pill" data-type="High Value Low Cost">Value <span class="filter-count">0</span></button>
+                        </div>
+                    </div>
+
+                    <div class="filter-group filter-group-skill">
+                        <div class="filter-row-label">Level</div>
+                        <div class="pill-group skill-level-pills" id="skill-level-pills">
+                            <button class="type-pill active" data-level="all">All <span class="filter-count">0</span></button>
+                            <button class="type-pill" data-level="Beginner">🌱 Beginner <span class="filter-count">0</span></button>
+                            <button class="type-pill" data-level="Intermediate">🚀 Intermediate <span class="filter-count">0</span></button>
+                            <button class="type-pill" data-level="Advanced">🔥 Advanced <span class="filter-count">0</span></button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Domains Carousel Row -->
+                <div class="filter-row filter-row-domain">
+                    <div class="filter-row-label">Topic</div>
+                    <div class="domain-chips-wrapper">
+                        <button class="chip-scroll-btn left" onclick="scrollDomains(-220)" aria-label="Scroll topics left">‹</button>
+                        <div class="domain-chips-scroll" id="domain-chips-scroll">
+                            <button class="domain-chip active" data-domain="all">Featured <span class="filter-count">0</span></button>
+                            <button class="domain-chip" data-domain="Foundational">Foundational <span class="filter-count">0</span></button>
+                            <button class="domain-chip" data-domain="Network Infrastructure">Networks <span class="filter-count">0</span></button>
+                            <button class="domain-chip" data-domain="System & Endpoint">Systems <span class="filter-count">0</span></button>
+                            <button class="domain-chip" data-domain="Cyber Forensics">Forensics <span class="filter-count">0</span></button>
+                            <button class="domain-chip" data-domain="Data & Application">Data & App <span class="filter-count">0</span></button>
+                            <button class="domain-chip" data-domain="Legal & Ethical">Legal <span class="filter-count">0</span></button>
+                            <button class="domain-chip" data-domain="Free">Free <span class="filter-count">0</span></button>
+                            <button class="domain-chip" data-domain="Free to Audit">Audit <span class="filter-count">0</span></button>
+                            <button class="domain-chip" data-domain="High Value Low Cost">Value <span class="filter-count">0</span></button>
+                        </div>
+                        <button class="chip-scroll-btn right" onclick="scrollDomains(220)" aria-label="Scroll topics right">›</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Search, sort, view toggle, and clear-all -->
+            <div class="courses-toolbar" id="courses-toolbar">
+                <div class="courses-search">
+                    <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <path d="m21 21-4.35-4.35"></path>
+                    </svg>
+                    <input type="search" id="course-search" placeholder="Search courses, universities, countries…" aria-label="Search courses" autocomplete="off">
+                    <kbd class="search-kbd" id="search-kbd">Ctrl K</kbd>
+                </div>
+                <div class="courses-sort">
+                    <label for="course-sort" class="vh">Sort by</label>
+                    <select id="course-sort" aria-label="Sort courses">
+                        <option value="relevance">Relevance</option>
+                        <option value="name">Name A–Z</option>
+                        <option value="nameDesc">Name Z–A</option>
+                        <option value="country">Country A–Z</option>
+                        <option value="qs">QS Ranked first</option>
+                    </select>
+                </div>
+                <div class="courses-view-toggle" role="group" aria-label="View layout">
+                    <button id="view-grid" class="view-btn active" aria-label="Grid view" title="Grid view">⊞</button>
+                    <button id="view-list" class="view-btn" aria-label="List view" title="List view">☰</button>
+                </div>
+                <button class="edx-reset-btn" id="edx-reset-filters">Clear filters</button>
+            </div>
+
+            <!-- Active filter chips -->
+            <div class="active-filters" id="active-filters" aria-live="polite"></div>
+
+            <!-- Filter status / result count -->
+            <div class="edx-meta-bar">
+                <span class="edx-result-count" id="edx-result-count">0 courses</span>
+                <span class="shortcut-hint">Press <kbd>1</kbd>–<kbd>9</kbd> for topics, <kbd>Esc</kbd> to clear</span>
+            </div>
+
+            <!-- Cards Grid -->
+            <div class="edx-cards-row" id="edx-cards-row">
+                <!-- Cards dynamically injected via app.js -->
+            </div>
+
+            <!-- Pagination / load more -->
+            <div class="courses-pagination" id="courses-pagination"></div>
         </div>
-        <div id="modal-body" style="padding:20px 24px;">
-            <!-- Populated by JS -->
+        <button class="back-to-top" id="back-to-top" aria-label="Back to top" title="Back to top">↑</button>
+    </div><!-- /tab-courses -->
+
+</div><!-- /page -->
+
+
+<!-- ══════════════ ONBOARDING QUIZ MODAL ══════════════ -->
+<div id="onboarding-modal" class="modal-overlay onboarding-overlay" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+    <div class="modal-box onboarding-box">
+        <div class="modal-hdr onboarding-hdr">
+            <div>
+                <h3 id="onboarding-title">🎓 Welcome to CourseVerify</h3>
+                <p class="onboarding-sub">Answer 2 quick questions and we'll tailor the catalog for you.</p>
+            </div>
+            <button id="onboarding-close" class="modal-close" aria-label="Close onboarding">✕</button>
+        </div>
+        <div id="onboarding-body" class="onboarding-body">
+            <!-- Step 1 -->
+            <div class="onboarding-step active" data-step="1">
+                <div class="onboarding-question">What best describes your current cybersecurity experience?</div>
+                <div class="onboarding-options">
+                    <button class="onboarding-option" data-level="Beginner" data-answer="beginner">🌱 Just starting — I want fundamentals</button>
+                    <button class="onboarding-option" data-level="Intermediate" data-answer="intermediate">🚀 I know the basics and want to specialize</button>
+                    <button class="onboarding-option" data-level="Advanced" data-answer="advanced">🔥 I'm experienced and want advanced certs/degrees</button>
+                </div>
+            </div>
+
+            <!-- Step 2 -->
+            <div class="onboarding-step" data-step="2">
+                <div class="onboarding-question">Which area interests you most right now?</div>
+                <div class="onboarding-options onboarding-grid">
+                    <button class="onboarding-option" data-domain="Foundational" data-answer="foundational">🧱 Foundations & Risk</button>
+                    <button class="onboarding-option" data-domain="Network Infrastructure" data-answer="network">🌐 Networks & Cloud</button>
+                    <button class="onboarding-option" data-domain="System & Endpoint" data-answer="endpoint">💻 Endpoints & OS</button>
+                    <button class="onboarding-option" data-domain="Cyber Forensics" data-answer="forensics">🔍 Forensics & IR</button>
+                    <button class="onboarding-option" data-domain="Data & Application" data-answer="data">🗄️ AppSec & Data Privacy</button>
+                    <button class="onboarding-option" data-domain="Legal & Ethical" data-answer="legal">⚖️ Cyber Law & Compliance</button>
+                </div>
+            </div>
+
+            <!-- Result -->
+            <div class="onboarding-step" data-step="3">
+                <div class="onboarding-result" id="onboarding-result">
+                    <div class="onboarding-result-icon">🎯</div>
+                    <div class="onboarding-result-title">Recommended path ready</div>
+                    <p id="onboarding-result-text"></p>
+                    <button class="modal-btn primary onboarding-cta" id="onboarding-cta">Explore recommended courses</button>
+                    <button class="onboarding-skip" id="onboarding-skip">Skip and browse everything</button>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer onboarding-footer">
+            <div class="onboarding-dots">
+                <span class="dot active" data-step="1"></span>
+                <span class="dot" data-step="2"></span>
+                <span class="dot" data-step="3"></span>
+            </div>
+            <div class="onboarding-actions">
+                <button class="modal-btn secondary" id="onboarding-back" disabled>Back</button>
+                <button class="modal-btn primary" id="onboarding-next">Next</button>
+            </div>
         </div>
     </div>
 </div>
 
+<!-- ══════════════ QUICK VIEW MODAL ══════════════ -->
+<div id="quick-view-modal" class="modal-overlay quick-view-overlay" role="dialog" aria-modal="true" aria-labelledby="quick-view-title">
+    <div class="modal-box quick-view-box" role="document">
+        <div class="modal-hdr">
+            <h3 id="quick-view-title">Quick View</h3>
+            <button id="quick-view-close" class="modal-close" aria-label="Close quick view">✕</button>
+        </div>
+        <div id="quick-view-body" class="quick-view-body">
+            <!-- Populated by JS -->
+        </div>
+        <div class="modal-footer">
+            <button id="quick-view-saved" class="modal-btn secondary">♡ Save</button>
+            <a id="quick-view-visit" class="modal-btn secondary" href="#" target="_blank" rel="noopener">↗ Visit website</a>
+            <button id="quick-view-details" class="modal-btn primary">View full details →</button>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════ COURSE DETAIL MODAL ══════════════ -->
+<div id="course-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-course-title">
+    <div class="modal-box" role="document">
+        <div class="modal-hdr" id="modal-hdr">
+            <h3 id="modal-course-title">Course Details</h3>
+            <button id="close-modal" class="modal-close" aria-label="Close course details">✕</button>
+        </div>
+        <div id="modal-body" style="padding:20px 24px;">
+            <!-- Populated by JS -->
+        </div>
+        <div class="modal-footer">
+            <button id="modal-secondary" class="modal-btn secondary">Close</button>
+            <a id="modal-primary" class="modal-btn primary" href="#" target="_blank" rel="noopener">↗ Visit course website</a>
+        </div>
+    </div>
+</div>
+
+<!-- Suggestion / duplicate overlay -->
+<div id="suggest-overlay" class="suggest-overlay" role="dialog" aria-modal="true" aria-labelledby="suggest-title">
+    <div class="suggest-box">
+        <div class="suggest-hdr">
+            <h3 id="suggest-title">Possible duplicates</h3>
+            <button id="suggest-close" class="modal-close" aria-label="Close suggestions">✕</button>
+        </div>
+        <div id="suggest-body"></div>
+    </div>
+</div>
+
 <!-- Toast notification -->
-<div id="toast" class="toast">
+<div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true">
     <div class="toast-icon" id="toast-icon">✓</div>
     <div class="toast-body">
         <div class="toast-title" id="toast-title">Saved</div>
         <div class="toast-msg" id="toast-msg">Updated.</div>
     </div>
+    <div class="toast-progress" id="toast-progress"></div>
 </div>
 
-<script src="app.js?v=44" defer></script>
+<!-- Global loading curtain -->
+<div id="loading-curtain" class="loading-curtain" aria-hidden="true">
+    <div class="loading-curtain-inner">
+        <div class="spinner" aria-hidden="true"></div>
+        <p id="loading-curtain-msg">Loading courses…</p>
+    </div>
+</div>
+
+<script src="app.js?v=80" defer></script>
 </body>
 </html>
