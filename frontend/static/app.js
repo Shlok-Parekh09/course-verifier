@@ -1,2162 +1,3 @@
-<<<<<<< HEAD
-/* ================================================================
-   COURSE VERIFIER  ·  APP.JS  v6
-   ================================================================ */
-
-'use strict';
-
-// Production API is the hosted Vercel deployment; locally the Flask app
-// serves the API on the same origin, so no base URL is needed.
-// Detect local robustly: the Flask dev server binds 0.0.0.0:5000, so accessing
-// it via 0.0.0.0, a LAN IP, or the machine name must still count as local —
-// otherwise the frontend silently pulls stale data from the Vercel deploy.
-const _h = window.location.hostname;
-const isLocalEnv =
-    _h === 'localhost' || _h === '127.0.0.1' || _h === '0.0.0.0' ||
-    _h.endsWith('.local') ||
-    /^(10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(_h) || // private/LAN IPv4
-    window.location.port === '5000';
-let API_BASE_URL = isLocalEnv ? '' : 'https://course-verifier.vercel.app';
-if (API_BASE_URL.endsWith('/')) {
-    API_BASE_URL = API_BASE_URL.slice(0, -1);
-}
-
-// ── State ────────────────────────────────────────────────────────
-let globalData = null;
-let currentFilter = { type: null, value: null };   // Dashboard bar-chart filter (filtered table panel)
-let countryDataList = [];
-let allCoursesData = [];
-let recentData = [];
-let currentPage = 1;
-let currentRecentPage = 1;
-const PAGE_SIZE = 100;
-const RECENT_PAGE_SIZE = 30;
-let lastDataHash = '';
-// Change-detection hashes for poll-driven renders. Mirrors the lastDataHash
-// pattern in updateRecentVerifications: skip the expensive re-render when the
-// underlying payload is byte-identical to the previous poll.
-let lastStatsHash = '';
-let lastCountryHash = '';
-let lastBarHash = '';
-let firstDataFetch = true;
-
-// ── Tab filter state (real, client-side, never fabricated) ───────
-let verificationFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', attr: 'all', courseType: 'all' };
-let courseFilter       = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', qs: 'any', nirf: 'any', courseType: 'all' };
-
-// ── Domain category by course idx (ID number) ───────────────────
-// These ranges are fixed per the curriculum structure.
-const DOMAIN_RANGES = [
-    { label: 'Free',                  min: 1,    max: 25   },
-    { label: 'Free to Audit',         min: 26,   max: 48   },
-    { label: 'High Value Low Cost',   min: 49,   max: 100  },
-    { label: 'Foundational',          min: 101,  max: 601  },
-    { label: 'Network Infrastructure',min: 602,  max: 1585 },
-    { label: 'System & Endpoint',     min: 1586, max: 1890 },
-    { label: 'Cyber Forensics',       min: 1891, max: 2634 },
-    { label: 'Data & Application',    min: 2635, max: 2965 },
-    { label: 'Legal & Ethical',       min: 2966, max: 3727 },
-];
-
-function getDomainCategory(idxRaw) {
-    const idx = parseInt(idxRaw, 10);
-    if (isNaN(idx)) return 'Uncategorised';
-    for (const r of DOMAIN_RANGES) {
-        if (idx >= r.min && idx <= r.max) return r.label;
-    }
-    return 'Uncategorised';
-}
-
-const ALL_DOMAIN_LABELS = DOMAIN_RANGES.map(r => r.label);
-
-// ── Academic-domain normalizer (mirrors backend normalize_domain) ──────
-// The raw `domain` field arrives as a mix of Title Case ("Bachelors") and
-// UPPERCASE ("BACHELORS DEGREE"); these are the same degree. Collapse them to
-// one canonical label so the Dashboard breakdown, the analytics credential
-// chart, and the filtered-table drill-down all agree.
-const _CANON_DOMAIN_FRAGMENTS = [
-    ['post graduate diploma', "Post Graduate Diploma"],
-    ['post grad diploma',     "Post Graduate Diploma"],
-    ['graduate diploma',      "Post Graduate Diploma"],
-    ['post graduate certificate', "Post Graduate Certificate"],
-    ['post grad certificate', "Post Graduate Certificate"],
-    ['post grad cert',        "Post Graduate Certificate"],
-    ['bachelor',              "Bachelor's Degree"],
-    ['master',                "Master's Degree"],
-    ['pg',                    "Master's Degree"],
-    ['diploma',               "Diploma"],
-    ['certificate',           "Certificate"],
-    ['cert',                  "Certificate"],
-    ['free to audit',         "Free to Audit"],
-    ['high value low cost',   "High Value Low Cost"],
-    ['free',                  "Free"],
-];
-function normalizeDomain(raw) {
-    if (!raw) return 'Other';
-    const k = String(raw).toLowerCase().replace('gradiuate', 'graduate').trim();
-    if (!k || ['unknown', 'unknown domain', 'none', 'null'].includes(k)) return 'Other';
-    for (const [frag, label] of _CANON_DOMAIN_FRAGMENTS) {
-        if (k.includes(frag)) return label;
-    }
-    return 'Other';
-}
-
-const ATTR_TO_MATCH = {
-    Cost: 'cost_match', Duration: 'duration_match', Mode: 'mode_match',
-    Language: 'lang_match', Country: 'country_match', University: 'uni_match', Skills: 'sk_match'
-};
-const SUBTYPE_LABELS = {
-    '404_not_found': '404 Not Found', 'ssl_error': 'SSL Error', 'timeout': 'Timeout',
-    'blocked_by_waf': 'Blocked by WAF', 'dns_fail': 'DNS Fail', 'login_required': 'Login Required',
-    'redirect_loop': 'Redirect Loop', 'server_error': 'Server Error', 'site_down': 'Site Down',
-    'multiple_mismatches': 'Multiple Mismatches', 'cost_mismatch': 'Cost Mismatch',
-    'duration_mismatch': 'Duration Mismatch', 'university_mismatch': 'University Mismatch',
-    'country_mismatch': 'Country Mismatch', 'mode_mismatch': 'Mode Mismatch',
-    'language_mismatch': 'Language Mismatch', 'skills_mismatch': 'Skills Mismatch',
-    'name_mismatch': 'Name Mismatch', 'qs_mismatch': 'QS Ranking Mismatch',
-    'nirf_mismatch': 'NIRF Ranking Mismatch', 'free_box_mismatch': 'Free Box Mismatch',
-    'scholarship_box_mismatch': 'Scholarship Box Mismatch',
-    'course_replaced': 'Replaced', 'wrong_url': 'Wrong URL', 'perfect_match': 'Perfect Match'
-};
-let barChart, mapChart, lineChart, quantityBarChartInstance;
-let barMode = 'domain'; // 'domain' | 'country'
-
-// ── Country flag emoji helper ─────────────────────────────────────
-const FLAG_MAP = {
-    'India': '🇮🇳', 'United States': '🇺🇸', 'Australia': '🇦🇺',
-    'United Kingdom': '🇬🇧', 'Canada': '🇨🇦', 'Germany': '🇩🇪',
-    'France': '🇫🇷', 'Singapore': '🇸🇬', 'South Africa': '🇿🇦',
-    'New Zealand': '🇳🇿', 'UAE': '🇦🇪', 'China': '🇨🇳',
-    'Japan': '🇯🇵', 'Netherlands': '🇳🇱', 'Switzerland': '🇨🇭',
-    'Brazil': '🇧🇷', 'Italy': '🇮🇹', 'Spain': '🇪🇸',
-    'Ireland': '🇮🇪', 'Sweden': '🇸🇪', 'Denmark': '🇩🇰',
-};
-function getFlag(name) {
-    if (!name) return '🌐';
-    for (const [key, flag] of Object.entries(FLAG_MAP)) {
-        if (name.toLowerCase().includes(key.toLowerCase()) || key.toLowerCase().includes(name.toLowerCase())) return flag;
-    }
-    return '🌐';
-}
-
-// ================================================================
-//  THEME
-// ================================================================
-function initTheme() {
-    const toggle = document.getElementById('theme-toggle');
-    const label = document.getElementById('theme-label');
-    const saved = localStorage.getItem('cvTheme') || 'dark';
-    if (saved === 'light') {
-        document.body.classList.add('light-mode');
-        if (label) label.textContent = 'Light';
-    }
-    if (toggle) {
-        toggle.addEventListener('click', () => {
-            document.body.classList.toggle('light-mode');
-            const isLight = document.body.classList.contains('light-mode');
-            localStorage.setItem('cvTheme', isLight ? 'light' : 'dark');
-            if (label) label.textContent = isLight ? 'Light' : 'Dark';
-        });
-    }
-
-    // Dashboard KPI cards drill through to the Verification tab with a
-    // real filter applied (no more loose single-field flag).
-    document.getElementById('kpi-card-discrepancies')?.addEventListener('click', () =>
-        jumpToVerification({ status: 'Discrepancy' }));
-    document.getElementById('kpi-card-website-issues')?.addEventListener('click', () =>
-        jumpToVerification({ status: 'Error', category: 'website_issue' }));
-}
-
-// ================================================================
-//  TABS
-// ================================================================
-function switchTab(targetId) {
-    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('#nav-tabs a').forEach(a => a.classList.remove('active'));
-    const content = document.getElementById(targetId);
-    if (content) content.classList.add('active');
-    const link = document.querySelector(`#nav-tabs a[data-target="${targetId}"]`);
-    if (link) link.classList.add('active');
-    if (targetId === 'tab-courses') loadAllCourses();
-    // Re-fetch analytics every time the tab is opened so data is always fresh.
-    // Also ensure allCoursesData is loaded for drilldown accuracy.
-    if (targetId === 'tab-analytics') {
-        if (allCoursesData.length === 0) loadAllCourses(true);
-        fetchAnalytics();
-    }
-}
-
-function initTabs() {
-    document.querySelectorAll('#nav-tabs a').forEach(a => {
-        a.addEventListener('click', e => {
-            e.preventDefault();
-            switchTab(a.getAttribute('data-target'));
-        });
-    });
-}
-
-// ================================================================
-//  3D ROTATING GLOBE (Three.js with Textures)
-// ================================================================
-let globeScene, globeCamera, globeRenderer, globeMesh, globePoints;
-let globeAnimId = null;
-let globeMouseDown = false, globeLastMouse = {x:0, y:0}, globeRotSpeed = {x:0, y:0.002};
-
-function initGlobe() {
-    const container = document.getElementById('globe-container');
-    if (!container || typeof THREE === 'undefined') return;
-
-    // Create canvas dynamically
-    const canvas = document.createElement('canvas');
-    canvas.id = 'globe-canvas';
-    container.appendChild(canvas);
-
-    const w = container.clientWidth || 600;
-    const h = container.clientHeight || 500;
-
-    globeScene = new THREE.Scene();
-    globeCamera = new THREE.PerspectiveCamera(45, w / h, 0.1, 1000);
-    globeCamera.position.z = 2.8;
-
-    globeRenderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-    globeRenderer.setSize(w, h);
-    globeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    globeRenderer.setClearColor(0x000000, 0);
-
-    // Load Textures
-    const textureLoader = new THREE.TextureLoader();
-    const earthMap = textureLoader.load('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg');
-    const bumpMap = textureLoader.load('https://unpkg.com/three-globe/example/img/earth-topology.png');
-
-    // Earth sphere
-    const geo = new THREE.SphereGeometry(1, 64, 64);
-    const earthMat = new THREE.MeshPhongMaterial({
-        map: earthMap,
-        bumpMap: bumpMap,
-        bumpScale: 0.015,
-        color: 0xffffff,
-        specular: 0x223344,
-        shininess: 15
-    });
-    globeMesh = new THREE.Mesh(geo, earthMat);
-    globeScene.add(globeMesh);
-
-    // No atmosphere glow per reference image
-
-    // Lights
-    const ambLight = new THREE.AmbientLight(0xffffff, 0.4);
-    globeScene.add(ambLight);
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
-    dirLight.position.set(5, 3, 5);
-    globeScene.add(dirLight);
-
-    // Country dots group
-    globePoints = new THREE.Group();
-    globeScene.add(globePoints);
-
-    // Mouse interaction
-    canvas.addEventListener('mousedown', e => {
-        globeMouseDown = true;
-        globeLastMouse = { x: e.clientX, y: e.clientY };
-    });
-    window.addEventListener('mouseup', () => { globeMouseDown = false; });
-    window.addEventListener('mousemove', e => {
-        if (!globeMouseDown) return;
-        const dx = e.clientX - globeLastMouse.x;
-        const dy = e.clientY - globeLastMouse.y;
-        globeRotSpeed.y = dx * 0.003;
-        globeRotSpeed.x = dy * 0.003;
-        globeLastMouse = { x: e.clientX, y: e.clientY };
-    });
-
-    // Resize
-    const ro = new ResizeObserver(() => {
-        const nw = container.clientWidth;
-        const nh = container.clientHeight;
-        if (nw > 0 && nh > 0) {
-            globeCamera.aspect = nw / nh;
-            globeCamera.updateProjectionMatrix();
-            globeRenderer.setSize(nw, nh);
-        }
-    });
-    ro.observe(container);
-
-    // Animate
-    function animateGlobe() {
-        globeAnimId = requestAnimationFrame(animateGlobe);
-        if (!globeMouseDown) {
-            globeRotSpeed.y += (0.001 - globeRotSpeed.y) * 0.05;
-            globeRotSpeed.x *= 0.95;
-        }
-        globeMesh.rotation.y += globeRotSpeed.y;
-        globeMesh.rotation.x += globeRotSpeed.x;
-        globePoints.rotation.y = globeMesh.rotation.y;
-        globePoints.rotation.x = globeMesh.rotation.x;
-        
-        globeRenderer.render(globeScene, globeCamera);
-    }
-    animateGlobe();
-}
-
-// Add glowing dots to the globe for countries with courses
-const COUNTRY_COORDS = {
-    'India': [20.5937, 78.9629], 'United States': [37.0902, -95.7129], 'United States of America': [37.0902, -95.7129],
-    'United Kingdom': [55.3781, -3.4360], 'Australia': [-25.2744, 133.7751], 'Canada': [56.1304, -106.3468],
-    'Germany': [51.1657, 10.4515], 'France': [46.2276, 2.2137], 'Singapore': [1.3521, 103.8198],
-    'South Africa': [-30.5595, 22.9375], 'New Zealand': [-40.9006, 174.886], 'UAE': [23.4241, 53.8478],
-    'United Arab Emirates': [23.4241, 53.8478], 'China': [35.8617, 104.1954], 'Japan': [36.2048, 138.2529],
-    'Netherlands': [52.1326, 5.2913], 'Switzerland': [46.8182, 8.2275], 'Brazil': [-14.235, -51.9253],
-    'Italy': [41.8719, 12.5674], 'Spain': [40.4637, -3.7492], 'Ireland': [53.1424, -7.6921],
-    'Sweden': [60.1282, 18.6435], 'Denmark': [56.2639, 9.5018], 'South Korea': [35.9078, 127.7669],
-    'Malaysia': [4.2105, 101.9758], 'Hong Kong': [22.3193, 114.1694], 'Saudi Arabia': [23.8859, 45.0792],
-    'Luxembourg': [49.8153, 6.1296], 'Russia': [61.524, 105.3188], 'Mexico': [23.6345, -102.5528],
-    'Israel': [31.0461, 34.8516], 'Turkey': [38.9637, 35.2433], 'Thailand': [15.87, 100.9925],
-    'Indonesia': [-0.7893, 113.9213], 'Philippines': [12.8797, 121.774], 'Colombia': [4.5709, -74.2973],
-    'Chile': [-35.6751, -71.543], 'Nigeria': [9.082, 8.6753], 'Kenya': [-0.0236, 37.9062],
-    'Egypt': [26.8206, 30.8025], 'Pakistan': [30.3753, 69.3451], 'Bangladesh': [23.685, 90.3563],
-    'Sri Lanka': [7.8731, 80.7718], 'Nepal': [28.3949, 84.124], 'Taiwan': [23.6978, 120.9605],
-    'Finland': [61.9241, 25.7482], 'Norway': [60.472, 8.4689], 'Poland': [51.9194, 19.1451],
-    'Austria': [47.5162, 14.5501], 'Belgium': [50.5039, 4.4699], 'Portugal': [39.3999, -8.2245],
-    'Greece': [39.0742, 21.8243], 'Czech Republic': [49.8175, 15.473]
-};
-
-function latLonToVec3(lat, lon, r) {
-    const phi = (90 - lat) * (Math.PI / 180);
-    const theta = (lon + 180) * (Math.PI / 180);
-    return new THREE.Vector3(
-        -r * Math.sin(phi) * Math.cos(theta),
-        r * Math.cos(phi),
-        r * Math.sin(phi) * Math.sin(theta)
-    );
-}
-
-function updateGlobeDots(countryCounts) {
-    if (!globePoints || typeof THREE === 'undefined') return;
-    // Clear existing dots just in case
-    while (globePoints.children.length > 0) globePoints.remove(globePoints.children[0]);
-    // The user requested NO dots on the globe, so we don't add any back.
-}
-
-// ================================================================
-//  DASHBOARD EXTRAS (IIT/IIIT/NIT, Free/FTA/HVLC, Top 3 Countries)
-// ================================================================
-function updateDashboardExtras(data) {
-    if (!data) return;
-    const docs = data.recent || data.documents || [];
-    const total = docs.length || data.stats?.total || 1;
-    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-
-    // IIT / IIIT / NIT counts
-    let iitCount = 0, iiitCount = 0, nitCount = 0;
-    const seen = { iit: new Set(), iiit: new Set(), nit: new Set() };
-    docs.forEach(c => {
-        const uni = (c.university || '').toUpperCase();
-        const name = (c.name || '').toLowerCase();
-        const key = name;
-        if (/\bIIIT\b/.test(uni) || /\bIIIT\b/.test(c.university || '')) {
-            if (!seen.iiit.has(key)) { iiitCount++; seen.iiit.add(key); }
-        } else if (/\bIIT\b/.test(uni) && !/\bIIIT\b/.test(uni) && !/\bNIT\b/.test(uni)) {
-            if (!seen.iit.has(key)) { iitCount++; seen.iit.add(key); }
-        }
-        if (/\bNIT\b/.test(uni)) {
-            if (!seen.nit.has(key)) { nitCount++; seen.nit.add(key); }
-        }
-    });
-    set('dash-iit-count', iitCount.toLocaleString());
-    set('dash-iiit-count', iiitCount.toLocaleString());
-    set('dash-nit-count', nitCount.toLocaleString());
-
-    // Free / FTA / HVLC counts
-    const domainCounts = data.domain_counts || {};
-    const freeCount = domainCounts['Free'] || 0;
-    const ftaCount = domainCounts['Free to Audit'] || 0;
-    const hvlcCount = domainCounts['High Value Low Cost'] || 0;
-    set('dash-free-count', freeCount.toLocaleString());
-    set('dash-fta-count', ftaCount.toLocaleString());
-    set('dash-hvlc-count', hvlcCount.toLocaleString());
-    set('dash-free-pct', Math.round(freeCount / total * 100) + '%');
-    set('dash-fta-pct', Math.round(ftaCount / total * 100) + '%');
-    set('dash-hvlc-pct', Math.round(hvlcCount / total * 100) + '%');
-
-    // Top 5 countries
-    const countryCounts = data.country_counts || {};
-    const topCountries = Object.entries(countryCounts)
-        .filter(([k]) => isValidCountry(k))
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 5);
-        
-    const qCtx = document.getElementById('quantityBarChart');
-    if (qCtx && topCountries.length) {
-        if (quantityBarChartInstance) {
-            quantityBarChartInstance.destroy();
-        }
-        
-        const labels = topCountries.map(c => Math.round((c[1] / total) * 100) + '%');
-        const dVals = topCountries.map(c => c[1]);
-        const colors = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ec4899']; // Blue, Green, Purple, Orange, Pink
-
-        quantityBarChartInstance = new Chart(qCtx.getContext('2d'), {
-            type: 'bar',
-            data: {
-                labels: labels,
-                datasets: [{
-                    data: dVals,
-                    backgroundColor: colors,
-                    borderRadius: 4,
-                    barThickness: 16
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        display: true,
-                        position: 'bottom',
-                        labels: {
-                            color: 'rgba(255,255,255,0.7)',
-                            usePointStyle: true,
-                            boxWidth: 8,
-                            font: { size: 10 },
-                            generateLabels: (chart) => {
-                                return chart.data.labels.map((label, i) => ({
-                                    text: topCountries[i][0],
-                                    fillStyle: chart.data.datasets[0].backgroundColor[i],
-                                    hidden: false,
-                                    index: i
-                                }));
-                            }
-                        }
-                    },
-                    tooltip: {
-                        callbacks: {
-                            title: (ctx) => topCountries[ctx[0].dataIndex][0],
-                            label: (ctx) => `${ctx.raw} courses`
-                        }
-                    }
-                },
-                scales: {
-                    x: {
-                        grid: { display: false, drawBorder: false },
-                        ticks: { color: 'rgba(255,255,255,0.7)', font: { size: 10 } }
-                    },
-                    y: {
-                        display: false,
-                        grid: { display: false, drawBorder: false }
-                    }
-                },
-                layout: {
-                    padding: { top: 10, bottom: 0 }
-                }
-            }
-        });
-    }
-
-    // Verification ring
-    const stats = data.stats || {};
-    const verified = stats.verified || 0;
-    const t = stats.total || 1;
-    const pct = Math.round(verified / t * 100);
-    set('dash-verif-pct', pct + '%');
-    const ring = document.getElementById('dash-verif-ring');
-    if (ring) {
-        const circumference = 2 * Math.PI * 52; // r=52
-        ring.style.strokeDashoffset = circumference - (circumference * pct / 100);
-    }
-
-    // Legend sub-values
-    set('dash-verif-sub', verified + ' courses');
-    set('dash-disc-sub', (stats.discrepancies || 0) + ' courses');
-    set('dash-err-sub', (stats.errors || 0) + ' courses');
-    set('dash-unverif-sub', (t - verified - (stats.discrepancies || 0) - (stats.errors || 0)) + ' courses');
-
-    // Update globe dots
-    updateGlobeDots(countryCounts);
-}
-
-// ================================================================
-//  CHARTS INIT
-// ================================================================
-function initCharts() {
-    Chart.defaults.color = '#9499b0';
-    Chart.defaults.borderColor = 'rgba(255,255,255,0.06)';
-    Chart.defaults.font.family = "'Inter', sans-serif";
-
-    // 1. Country Line Chart
-    const lCtx = document.getElementById('countryLineChart')?.getContext('2d');
-    if (lCtx) {
-        lineChart = new Chart(lCtx, {
-            type: 'line',
-            data: {
-                labels: [],
-                datasets: [{
-                    label: 'Courses',
-                    data: [],
-                    borderColor: '#f46a22',
-                    backgroundColor: 'rgba(244,106,34,0.10)',
-                    tension: 0.45,
-                    fill: true,
-                    pointBackgroundColor: '#f46a22',
-                    pointRadius: 4,
-                    pointHoverRadius: 6
-                }]
-            },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: {
-                    y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.04)' } },
-                    x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { maxRotation: 45 } }
-                }
-            }
-        });
-    }
-
-    // 2b. Issue Category Doughnut
-    const iCtx = document.getElementById('issuePieChart')?.getContext('2d');
-    if (iCtx) {
-        window.issueChart = new Chart(iCtx, {
-            type: 'doughnut',
-            data: {
-                labels: ['Website Issues', 'Course Issues', 'Verified'],
-                datasets: [{
-                    data: [0, 0, 0],
-                    backgroundColor: ['#f16b6b', '#f5a623', '#1dda9f'],
-                    borderWidth: 0,
-                    hoverOffset: 8
-                }]
-            },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                cutout: '72%',
-                plugins: {
-                    legend: {
-                        position: 'bottom',
-                        labels: { usePointStyle: true, padding: 18, font: { size: 11 } }
-                    }
-                }
-            }
-        });
-    }
-
-    // 3. Horizontal Bar Chart
-    const bCtx = document.getElementById('coursesBarChart')?.getContext('2d');
-    if (bCtx) {
-        barChart = new Chart(bCtx, {
-            type: 'bar',
-            data: { labels: [], datasets: [{ label: 'Courses', data: [], backgroundColor: 'rgba(244,106,34,0.75)', hoverBackgroundColor: '#f46a22', borderRadius: 5 }] },
-            options: {
-                indexAxis: 'y',
-                responsive: true, maintainAspectRatio: false,
-                scales: {
-                    x: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: 'rgba(255,255,255,0.04)' } },
-                    y: { ticks: { autoSkip: false }, grid: { display: false } }
-                },
-                plugins: { legend: { display: false } },
-                onClick: (_, els) => {
-                    if (els.length) {
-                        applyFilter(barMode, barChart.data.labels[els[0].index]);
-                    }
-                }
-            }
-        });
-    }
-
-    // 4. Choropleth Map
-    const mCtx = document.getElementById('countryMapChart')?.getContext('2d');
-    if (mCtx) {
-        fetch('https://unpkg.com/world-atlas/countries-110m.json').then(r => r.json()).then(topo => {
-            let countries = ChartGeo.topojson.feature(topo, topo.objects.countries).features;
-            countries = countries.filter(d => d.properties.name !== 'Antarctica');
-            mapChart = new Chart(mCtx, {
-                type: 'choropleth',
-                data: {
-                    labels: countries.map(d => d.properties.name),
-                    datasets: [{
-                        label: 'Courses',
-                        data: countries.map(d => ({ feature: d, value: 0 })),
-                        // Visible borders so all country outlines show even at 0 courses
-                        borderColor: 'rgba(148,163,184,0.35)',
-                        borderWidth: 1.2
-                    }]
-                },
-                options: {
-                    responsive: true, maintainAspectRatio: false,
-                    showOutline: false, showGraticule: false,
-                    layout: { padding: 0 },
-                    plugins: {
-                        legend: { display: false },
-                        tooltip: {
-                            callbacks: {
-                                label: ctx => {
-                                    const name = ctx.raw?.feature?.properties?.name || ctx.label || 'Unknown';
-                                    const count = ctx.raw?.feature?._realCount ?? 0;
-                                    return `${name}: ${Math.round(count)} courses`;
-                                }
-                            }
-                        }
-                    },
-                    scales: {
-                        projection: { axis: 'x', projection: 'equirectangular' },
-                        color: {
-                            axis: 'x',
-                            // v = 0..1 (chart-geo normalises our compressed values)
-                            // v=0  → dark slate (country is visible but has no courses)
-                            // v>0  → sky-blue (few) to deep indigo (many)
-                            interpolate: (v) => {
-                                if (v <= 0) {
-                                    // Dark slate — country outline is visible, fill is muted
-                                    return 'rgba(251, 251, 251, 0.7)';
-                                }
-                                // sqrt curve: spreads small values so they get noticeable colour
-                                const t = Math.pow(v, 0.5);
-                                // sky-blue rgb(147,197,253) → deep indigo rgb(67,56,202)
-                                const r = Math.round(147 - t * (147 - 67));
-                                const g = Math.round(197 - t * (197 - 56));
-                                const b = Math.round(253 - t * (253 - 202));
-                                // opacity: 0.45 for fewest courses → 1.0 for most
-                                const a = (0.45 + t * 0.55).toFixed(2);
-                                return `rgba(${r},${g},${b},${a})`;
-                            },
-                            // missing = country not matched at all: same dark slate
-                            missing: 'rgba(254, 2, 2, 0.7)'
-                        }
-                    }
-                }
-            });
-            if (globalData) updateMapChart(globalData.country_counts);
-        }).catch(() => { });
-    }
-
-    // ── Bar pill toggle ──────────────────────────────────────────
-    document.querySelectorAll('#bar-toggle-pills button').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('#bar-toggle-pills button').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            barMode = btn.dataset.val;
-            updateBarChart();
-        });
-    });
-
-    // ── Clear filter ─────────────────────────────────────────────
-    document.getElementById('clear-filter')?.addEventListener('click', () => applyFilter(null, null));
-}
-
-// ================================================================
-//  DATA UPDATES
-// ================================================================
-function updateCards(stats) {
-    // Extra Dashboard KPI cards — all populated from real stats only.
-    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-    
-    set('total-count', stats.total || 0);
-    set('verified-count', stats.verified || 0);
-    set('discrepancy-count', stats.discrepancies || 0);
-    set('website-issue-count', stats.website_issues || 0);
-    
-    set('error-count', stats.errors || 0);
-    set('course-issue-count', stats.course_issues || 0);
-    set('open-issue-count', stats.open_issues || 0);
-
-    // Dynamic trend % labels
-    const t = stats.total || 1;
-    set('kpi-verified-trend', `↑ ${Math.round((stats.verified || 0) / t * 100)}% match rate`);
-    set('kpi-disc-trend', `⚠ ${Math.round((stats.discrepancies || 0) / t * 100)}% flagged`);
-    set('kpi-webissue-trend', `🔗 ${Math.round((stats.website_issues || 0) / t * 100)}% site broken`);
-    set('kpi-err-trend', `✕ ${Math.round((stats.errors || 0) / t * 100)}% failed`);
-    set('kpi-courseissue-trend', `📋 ${Math.round((stats.course_issues || 0) / t * 100)}% mismatch`);
-    set('kpi-openissue-trend', stats.open_issues ? `${stats.open_issues} open` : '✓ none open');
-    set('kpi-total-trend', `— ${t} records`);
-
-    // Sticky KPI strips on the Verification & All Courses tabs share the same
-    // four real numbers so the headline parameters are always visible.
-    renderKpiStrip('vf', stats);
-    renderKpiStrip('cf', stats);
-}
-
-function renderKpiStrip(prefix, stats) {
-    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-    set(prefix + '-total', stats ? (stats.total ?? '—') : '—');
-    set(prefix + '-verified', stats ? (stats.verified ?? '—') : '—');
-    set(prefix + '-disc', stats ? (stats.discrepancies ?? '—') : '—');
-    set(prefix + '-web', stats ? (stats.website_issues ?? '—') : '—');
-}
-
-function updateIssuePieChart(stats, animate = true) {
-    if (!window.issueChart) return;
-    window.issueChart.data.datasets[0].data = [
-        stats.website_issues || 0, stats.course_issues || 0, stats.verified || 0
-    ];
-    if (animate) window.issueChart.update(); else window.issueChart.update('none');
-}
-
-function updateBarChart(animate = true) {
-    if (!barChart || !globalData) return;
-    const src = barMode === 'domain' ? globalData.domain_counts : globalData.country_counts;
-    let entries = Object.entries(src || {}).sort((a, b) => b[1] - a[1]);
-    if (barMode === 'country') entries = entries.slice(0, 12);
-    barChart.data.labels = entries.map(e => e[0]);
-    barChart.data.datasets[0].data = entries.map(e => e[1]);
-    if (animate) barChart.update(); else barChart.update('none');
-}
-
-// ── Shared country name validator ───────────────────────────────
-function isValidCountry(k) {
-    if (!k) return false;
-    const s = String(k).trim().toLowerCase();
-    return s !== '' &&
-        s !== 'undefined' &&
-        s !== 'unknown' &&
-        s !== 'null' &&
-        !s.startsWith('not found');
-}
-
-function updateLineChart(countryCounts, animate = true) {
-    if (!lineChart) return;
-    const sorted = Object.entries(countryCounts || {})
-        .filter(([k]) => isValidCountry(k))
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 20);
-    countryDataList = sorted;
-    lineChart.data.labels = sorted.map(x => x[0]);
-    lineChart.data.datasets[0].data = sorted.map(x => x[1]);
-    if (animate) lineChart.update(); else lineChart.update('none');
-}
-
-function updateMapChart(countryCounts, animate = true) {
-    if (!mapChart || !mapChart.data?.datasets?.[0]?.data?.length) return;
-
-    // First pass: collect raw counts and store on feature for tooltip
-    mapChart.data.datasets[0].data.forEach(d => {
-        const name = d.feature.properties.name;
-        let val = 0;
-        for (const [c, cnt] of Object.entries(countryCounts || {})) {
-            if (c.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(c.toLowerCase())) {
-                val += cnt;
-            }
-        }
-        // Store the real count on the feature so the tooltip can read it
-        d.feature._realCount = val;
-        d.value = val;
-    });
-
-    // Second pass: sqrt-compress values so dominant countries (e.g. India)
-    // don't bleach out all others on the choropleth color scale.
-    const vals = mapChart.data.datasets[0].data.map(d => d.value).filter(v => v > 0);
-    const commit = () => { if (animate) mapChart.update(); else mapChart.update('none'); };
-    if (vals.length === 0) { commit(); return; }
-    const maxSqrt = Math.sqrt(Math.max(...vals));
-    mapChart.data.datasets[0].data.forEach(d => {
-        // Compressed display value, real count preserved in d.feature._realCount
-        d.value = d.value > 0 ? (Math.sqrt(d.value) / maxSqrt) * 100 : 0;
-    });
-
-    commit();
-}
-
-function updateCountryLeaderboard(countryCounts, containerId = 'country-list') {
-    const el = document.getElementById(containerId);
-    if (!el) return;
-    const entries = Object.entries(countryCounts || {})
-        .filter(([k]) => isValidCountry(k))
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 15);
-    const max = entries[0]?.[1] || 1;
-    el.innerHTML = entries.map(([name, cnt]) => `
-        <div class="country-row" onclick="applyFilter('country','${name.replace(/'/g, "\\'")}')">
-            <span class="c-flag">${getFlag(name)}</span>
-            <span class="c-name">${name}</span>
-            <div class="c-bar-wrap"><div class="c-bar" style="width:${Math.round(cnt / max * 100)}%"></div></div>
-            <span class="c-count">${cnt}</span>
-        </div>
-    `).join('');
-}
-
-// ================================================================
-//  DASHBOARD BAR-CHART FILTER (filtered detail panel)
-// ================================================================
-function applyFilter(type, value) {
-    currentFilter = { type, value };
-    const badge = document.getElementById('active-filter-badge');
-    const panel = document.getElementById('course-details-panel');
-    if (value && type) {
-        if (badge) badge.textContent = `${type}: ${value}`;
-        renderFilteredTable(type, value);
-        if (panel) panel.style.display = 'flex';
-    } else {
-        if (badge) badge.textContent = '';
-        if (panel) panel.style.display = 'none';
-    }
-}
-
-function renderFilteredTable(type, value) {
-    const tbody = document.getElementById('course-details-body');
-    if (!tbody || !globalData?.recent) return;
-    const filtered = globalData.recent.filter(c =>
-        type === 'domain' ? normalizeDomain(c.domain) === value :
-            type === 'country' ? c.country === value : true
-    );
-    tbody.innerHTML = filtered.length === 0
-        ? '<tr><td colspan="5" class="empty-state">No courses found</td></tr>'
-        : filtered.map(c => `
-            <tr onclick="showCourseModal('${c.id || ''}', '${escJs(c.name)}', '${escJs(c.university || '')}')">
-                <td class="course-name-cell" title="${escHtml(c.name)}"><strong>${escHtml(c.name)}</strong></td>
-                <td>${escHtml(c.university || '—')}</td>
-                <td>${escHtml(c.country || '—')}</td>
-                <td>${c.has_qs_badge ? '<span class="badge badge-verified">Yes</span>' : '<span class="badge badge-error">No</span>'}</td>
-                <td>${c.has_nirf_badge ? '<span class="badge badge-verified">Yes</span>' : '<span class="badge badge-error">No</span>'}</td>
-            </tr>`).join('');
-}
-
-// ================================================================
-//  TAB FILTERS  (real, client-side, no dummy data)
-// ================================================================
-function populateSelect(selectId, values) {
-    const sel = document.getElementById(selectId);
-    if (!sel) return;
-    const current = sel.value;
-    const first = sel.querySelector('option');            // keep the "All …" option
-    sel.innerHTML = '';
-    if (first) sel.appendChild(first);
-    [...values].filter(Boolean).sort().forEach(v => {
-        const o = document.createElement('option');
-        o.value = v; o.textContent = v;
-        sel.appendChild(o);
-    });
-    sel.value = [...sel.options].some(o => o.value === current) ? current : (first ? first.value : 'all');
-}
-
-function populateSubtypeSelect(selectId) {
-    const sel = document.getElementById(selectId);
-    if (!sel) return;
-    const wsc = globalData?.website_sub_counts || {};
-    const csc = globalData?.course_sub_counts || {};
-    const keys = [...new Set([...Object.keys(wsc), ...Object.keys(csc)])].filter(k => k);
-    const current = sel.value;
-    sel.innerHTML = '<option value="all">All Sub-Types</option>';
-    if (keys.length === 0) { sel.hidden = true; sel.value = 'all'; return; }
-    sel.hidden = false;
-    keys.sort().forEach(k => {
-        const o = document.createElement('option');
-        o.value = k; o.textContent = SUBTYPE_LABELS[k] || k.replace(/_/g, ' ');
-        sel.appendChild(o);
-    });
-    sel.value = [...sel.options].some(o => o.value === current) ? current : 'all';
-}
-
-function refreshFilterOptions() {
-    // Countries: dynamic from data
-    const vCountries = new Set();
-    recentData.forEach(c => { if (c.country) vCountries.add(c.country); });
-    populateSelect('vf-country', vCountries);
-
-    const cCountries = new Set();
-    allCoursesData.forEach(c => { if (c.country) cCountries.add(c.country); });
-    populateSelect('cf-country', cCountries);
-
-    // Domain: always the 9 fixed idx-based categories
-    populateSelect('vf-domain', ALL_DOMAIN_LABELS);
-    populateSelect('cf-domain', ALL_DOMAIN_LABELS);
-
-    populateSubtypeSelect('vf-subtype');
-    populateSubtypeSelect('cf-subtype');
-}
-
-function getFilteredVerificationData() {
-    const f = verificationFilter;
-    const q = f.search.trim().toLowerCase();
-    return recentData.filter(c => {
-        if (f.status !== 'all' && c.status !== f.status) return false;
-        if (f.category !== 'all' && c.issue_category !== f.category) return false;
-        if (f.subtype !== 'all' && (c.issue_sub_type || '') !== f.subtype) return false;
-        if (f.country !== 'all' && c.country !== f.country) return false;
-        // Domain filter uses idx-based category
-        if (f.domain !== 'all' && getDomainCategory(c.id) !== f.domain) return false;
-        // Course type filter (Bachelors, Masters, Diploma, etc.)
-        if (f.courseType !== 'all' && normalizeDomain(c.domain) !== f.courseType) return false;
-        if (f.attr !== 'all') {
-            // Check both basic attributes and QS/NIRF from pdf_table
-            if (ATTR_TO_MATCH[f.attr]) {
-                const key = ATTR_TO_MATCH[f.attr];
-                if (key && c[key] !== false) return false;
-            } else {
-                // QS/NIRF/Free Box — check pdf_table rows
-                const pdfTable = c.pdf_table || [];
-                const attrLower = f.attr.toLowerCase();
-                const hasMismatch = pdfTable.some(r => {
-                    const rowAttr = (r.attribute || '').toLowerCase();
-                    return rowAttr.includes(attrLower.replace(' ranked', '').replace(' box', '')) && r.status === 'FALSE';
-                });
-                if (!hasMismatch) return false;
-            }
-        }
-        if (q && !`${c.name} ${c.university || ''} ${c.country || ''} ${c.status || ''} ${c.disc_reason || ''} ${getDomainCategory(c.id)} ${normalizeDomain(c.domain)}`.toLowerCase().includes(q)) return false;
-        return true;
-    });
-}
-
-function getFilteredCourseData() {
-    const f = courseFilter;
-    const q = f.search.trim().toLowerCase();
-    return allCoursesData.filter(c => {
-        if (f.status !== 'all' && c.status !== f.status) return false;
-        if (f.category !== 'all' && c.issue_category !== f.category) return false;
-        if (f.subtype !== 'all' && (c.issue_sub_type || '') !== f.subtype) return false;
-        if (f.country !== 'all' && c.country !== f.country) return false;
-        // Domain filter uses idx-based category
-        if (f.domain !== 'all' && getDomainCategory(c.id) !== f.domain) return false;
-        // Course type filter (Bachelors, Masters, Diploma, etc.)
-        if (f.courseType !== 'all' && normalizeDomain(c.domain) !== f.courseType) return false;
-        if (f.qs === 'yes' && !c.has_qs_badge) return false;
-        if (f.qs === 'no' && c.has_qs_badge) return false;
-        if (f.nirf === 'yes' && !c.has_nirf_badge) return false;
-        if (f.nirf === 'no' && c.has_nirf_badge) return false;
-        if (q && !`${c.name} ${c.university || ''} ${c.country || ''} ${c.domain || ''} ${c.status || ''} ${c.disc_reason || ''} ${getDomainCategory(c.id)} ${normalizeDomain(c.domain)}`.toLowerCase().includes(q)) return false;
-        return true;
-    });
-}
-
-function syncVerificationFilters() {
-    const f = verificationFilter;
-    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
-    set('vf-search', f.search); set('vf-course-type', f.courseType); set('vf-status', f.status); set('vf-category', f.category);
-    set('vf-subtype', f.subtype); set('vf-country', f.country); set('vf-domain', f.domain); set('vf-attr', f.attr);
-}
-
-function syncCourseFilters() {
-    const f = courseFilter;
-    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
-    set('cf-search', f.search); set('cf-course-type', f.courseType); set('cf-status', f.status); set('cf-category', f.category);
-    set('cf-subtype', f.subtype); set('cf-country', f.country); set('cf-domain', f.domain);
-    set('cf-qs', f.qs); set('cf-nirf', f.nirf);
-}
-
-function applyVerificationFilter() { currentRecentPage = 1; renderRecentPage(); }
-function applyCourseFilter() { currentPage = 1; renderCoursesPage(); }
-
-function jumpToVerification(partial) {
-    verificationFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', attr: 'all', courseType: 'all', ...partial };
-    syncVerificationFilters();
-    switchTab('tab-verification');
-    applyVerificationFilter();
-}
-
-function jumpToCourses(partial) {
-    courseFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', qs: 'any', nirf: 'any', courseType: 'all', ...partial };
-    syncCourseFilters();
-    switchTab('tab-courses');
-    applyCourseFilter();
-}
-
-function initFilters() {
-    // Debounce the text search so each keystroke doesn't fully re-render
-    // thousands of rows; selects apply immediately (change event is discrete).
-    const debounce = (fn, ms) => {
-        let t = null;
-        return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
-    };
-    const wire = (id, key, stateObj, applyFn, isText) => {
-        const el = document.getElementById(id);
-        if (!el) return;
-        const apply = isText ? debounce(applyFn, 120) : applyFn;
-        const handler = () => { stateObj[key] = isText ? el.value.trim() : el.value; apply(); };
-        el.addEventListener('input', handler);
-        el.addEventListener('change', handler);
-    };
-    wire('vf-search', 'search', verificationFilter, applyVerificationFilter, true);
-    wire('vf-course-type', 'courseType', verificationFilter, applyVerificationFilter, false);
-    wire('vf-status', 'status', verificationFilter, applyVerificationFilter, false);
-    wire('vf-category', 'category', verificationFilter, applyVerificationFilter, false);
-    wire('vf-subtype', 'subtype', verificationFilter, applyVerificationFilter, false);
-    wire('vf-country', 'country', verificationFilter, applyVerificationFilter, false);
-    wire('vf-domain', 'domain', verificationFilter, applyVerificationFilter, false);
-    wire('vf-attr', 'attr', verificationFilter, applyVerificationFilter, false);
-
-    wire('cf-search', 'search', courseFilter, applyCourseFilter, true);
-    wire('cf-course-type', 'courseType', courseFilter, applyCourseFilter, false);
-    wire('cf-status', 'status', courseFilter, applyCourseFilter, false);
-    wire('cf-category', 'category', courseFilter, applyCourseFilter, false);
-    wire('cf-subtype', 'subtype', courseFilter, applyCourseFilter, false);
-    wire('cf-country', 'country', courseFilter, applyCourseFilter, false);
-    wire('cf-domain', 'domain', courseFilter, applyCourseFilter, false);
-    wire('cf-qs', 'qs', courseFilter, applyCourseFilter, false);
-    wire('cf-nirf', 'nirf', courseFilter, applyCourseFilter, false);
-
-    document.getElementById('vf-reset')?.addEventListener('click', () => {
-        verificationFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', attr: 'all', courseType: 'all' };
-        syncVerificationFilters(); applyVerificationFilter();
-    });
-    document.getElementById('cf-reset')?.addEventListener('click', () => {
-        courseFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', qs: 'any', nirf: 'any', courseType: 'all' };
-        syncCourseFilters(); applyCourseFilter();
-    });
-
-    // Sticky KPI strip cards cross-filter their own tab.
-    document.querySelectorAll('#vf-kpi-strip .kpi-strip-card').forEach(card => {
-        card.addEventListener('click', () => {
-            const partial = {};
-            if (card.dataset.status) partial.status = card.dataset.status;
-            if (card.dataset.category) partial.category = card.dataset.category;
-            verificationFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', attr: 'all', courseType: 'all', ...partial };
-            syncVerificationFilters(); applyVerificationFilter();
-        });
-    });
-    document.querySelectorAll('#cf-kpi-strip .kpi-strip-card').forEach(card => {
-        card.addEventListener('click', () => {
-            const partial = {};
-            if (card.dataset.status) partial.status = card.dataset.status;
-            if (card.dataset.category) partial.category = card.dataset.category;
-            courseFilter = { search: '', status: 'all', category: 'all', subtype: 'all', country: 'all', domain: 'all', qs: 'any', nirf: 'any', courseType: 'all', ...partial };
-            syncCourseFilters(); applyCourseFilter();
-        });
-    });
-}
-
-// ================================================================
-//  RECENT VERIFICATIONS  (Verification tab)
-// ================================================================
-function updateRecentVerifications(recent) {
-    if (!recent) return;
-    // Content hash (not just length) so solve/upload changes re-render even
-    // when the row count is unchanged.
-    const hash = JSON.stringify(recent.map(c => `${c.id}:${c.status}:${(c.solved_attrs || []).join('.')}`));
-    if (hash === lastDataHash) return;
-    lastDataHash = hash;
-    recentData = [...recent].sort((a, b) => parseInt(a.id || '9') - parseInt(b.id || '9'));
-    refreshFilterOptions();
-    renderRecentPage();
-}
-
-function renderRecentPage() {
-    const tbody = document.getElementById('recent-verifications-body');
-    const info = document.getElementById('recent-page-info');
-    const countEl = document.getElementById('vf-count');
-    if (!tbody) return;
-    const filteredData = getFilteredVerificationData();
-    const totalPages = Math.ceil(filteredData.length / RECENT_PAGE_SIZE) || 1;
-    if (currentRecentPage > totalPages) currentRecentPage = totalPages;
-    const start = (currentRecentPage - 1) * RECENT_PAGE_SIZE;
-    const slice = filteredData.slice(start, start + RECENT_PAGE_SIZE);
-    tbody.innerHTML = slice.length === 0
-        ? '<tr><td colspan="7" class="empty-state">No courses match the current filters.</td></tr>'
-        : slice.map(c => {
-            const issueLabel = c.issue_category ? (c.issue_sub_type || c.issue_category).replace(/_/g, ' ') : c.status;
-            const badgeCls = c.issue_category === 'website_issue' ? 'badge-error' :
-                c.issue_category === 'course_issue' ? 'badge-discrepancy' :
-                    getBadgeClass(c.status);
-            const domainCat = getDomainCategory(c.id);
-            const domClick  = `event.stopPropagation();verificationFilter.domain='${escJs(domainCat)}';syncVerificationFilters();applyVerificationFilter();`;
-            const fullName = escHtml(c.name);
-            return `
-            <tr onclick="showCourseModal('${c.id || ''}','${escJs(c.name)}','${escJs(c.university || '')}')">
-                <td class="col-idx">${c.id || '—'}</td>
-                <td class="course-name-cell" title="${fullName}"><strong>${escHtml(c.name)}</strong></td>
-                <td>${escHtml(c.university || '—')}</td>
-                <td><span class="domain-pill cell-filter" title="Filter by domain" onclick="${domClick}">${escHtml(domainCat)}</span></td>
-                <td><span class="badge ${badgeCls}" title="${escHtml(c.issue_category || '')}">${issueLabel}</span></td>
-                <td style="max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escHtml(c.disc_reason || '')}">${escHtml(c.disc_reason || '—')}</td>
-                <td>${c.pdf_page || '—'}</td>
-            </tr>`;
-        }).join('');
-    if (info) info.textContent = `Page ${currentRecentPage} of ${totalPages} · ${filteredData.length} courses`;
-    if (countEl) countEl.textContent = `Showing ${slice.length} of ${filteredData.length}`;
-}
-
-document.getElementById('recent-prev-page')?.addEventListener('click', () => {
-    if (currentRecentPage > 1) { currentRecentPage--; renderRecentPage(); }
-});
-document.getElementById('recent-next-page')?.addEventListener('click', () => {
-    const max = Math.ceil(getFilteredVerificationData().length / RECENT_PAGE_SIZE);
-    if (currentRecentPage < max) { currentRecentPage++; renderRecentPage(); }
-});
-
-// ================================================================
-//  ALL COURSES
-// ================================================================
-async function loadAllCourses(force = false) {
-    const tbody = document.getElementById('all-courses-body');
-    if (allCoursesData.length > 0 && !force) { renderCoursesPage(); return; }
-    if (tbody && (force || allCoursesData.length === 0)) tbody.innerHTML = '<tr><td colspan="8" class="empty-state">Loading…</td></tr>';
-    try {
-        const res = await fetch(API_BASE_URL + '/api/courses.json');
-        const data = await res.json();
-        allCoursesData = (data.courses || []).sort((a, b) => parseInt(a.id || '9') - parseInt(b.id || '9'));
-        // NOTE: recentData is owned by /api/data.json (fetchData). Do not
-        // overwrite it from courses.json (which has no `recent` field) — that
-        // would wipe the Verification tab's data.
-        refreshFilterOptions();
-        renderCoursesPage();
-    } catch (e) {
-        if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="empty-state" style="color:var(--red);">Error loading courses</td></tr>';
-    }
-}
-
-function renderCoursesPage() {
-    const tbody = document.getElementById('all-courses-body');
-    const info = document.getElementById('page-info');
-    const countEl = document.getElementById('cf-count');
-    if (!tbody) return;
-    const filteredData = getFilteredCourseData();
-    const totalPages = Math.ceil(filteredData.length / PAGE_SIZE) || 1;
-    if (currentPage > totalPages) currentPage = totalPages;
-    const start = (currentPage - 1) * PAGE_SIZE;
-    const slice = filteredData.slice(start, start + PAGE_SIZE);
-    tbody.innerHTML = slice.length === 0
-        ? '<tr><td colspan="8" class="empty-state">No courses match the current filters.</td></tr>'
-        : slice.map(c => {
-            const issueLabel = c.issue_category ? (c.issue_sub_type || c.issue_category).replace(/_/g, ' ') : c.status;
-            const badgeCls = c.issue_category === 'website_issue' ? 'badge-error' :
-                c.issue_category === 'course_issue' ? 'badge-discrepancy' :
-                    getBadgeClass(c.status);
-            const statusClick = `event.stopPropagation();courseFilter.status='${c.status}';syncCourseFilters();applyCourseFilter();`;
-            const domainCat   = getDomainCategory(c.id);
-            const domainClick = `event.stopPropagation();courseFilter.domain='${escJs(domainCat)}';syncCourseFilters();applyCourseFilter();`;
-            return `<tr onclick="showCourseModal('${c.id}')">
-            <td class="col-idx">${c.id}</td>
-            <td style="color:var(--text-3);font-size:0.85rem;white-space:nowrap;">${c.pdf_page ? 'Pg ' + c.pdf_page : '-'}</td>
-            <td class="course-name-cell" title="${escHtml(c.name)}"><strong>${escHtml(c.name)}</strong></td>
-            <td>${escHtml(c.university || '—')}</td>
-            <td>
-                <span class="domain-pill cell-filter" title="Filter by domain category" onclick="${domainClick}">${escHtml(domainCat)}</span>
-                ${c.domain && c.domain !== domainCat ? `<div style="font-size:0.72rem;color:var(--text-3);margin-top:2px;">${escHtml(c.domain)}</div>` : ''}
-            </td>
-            <td>${escHtml(c.country || '—')}</td>
-            <td>${c.has_qs_badge ? '<span class="badge badge-verified">Yes</span>' : '<span class="badge badge-error">No</span>'}</td>
-            <td>${c.has_nirf_badge ? '<span class="badge badge-verified">Yes</span>' : '<span class="badge badge-error">No</span>'}</td>
-            <td><span class="badge ${badgeCls} cell-filter" title="Filter by status" onclick="${statusClick}">${issueLabel}</span></td>
-        </tr>`;
-        }).join('');
-    if (info) info.textContent = `Page ${currentPage} of ${totalPages} · ${filteredData.length} courses`;
-    if (countEl) countEl.textContent = `Showing ${slice.length} of ${filteredData.length}`;
-}
-
-document.getElementById('prev-page')?.addEventListener('click', () => {
-    if (currentPage > 1) { currentPage--; renderCoursesPage(); }
-});
-document.getElementById('next-page')?.addEventListener('click', () => {
-    const max = Math.ceil(getFilteredCourseData().length / PAGE_SIZE);
-    if (currentPage < max) { currentPage++; renderCoursesPage(); }
-});
-
-// ================================================================
-//  MODAL
-// ================================================================
-async function showCourseModal(courseId, fallbackName, fallbackUni) {
-    if (allCoursesData.length === 0) {
-        try {
-            const res = await fetch(API_BASE_URL + '/api/courses.json');
-            const data = await res.json();
-            allCoursesData = data.courses || [];
-            refreshFilterOptions();
-        } catch (e) { return; }
-    }
-    let c = allCoursesData.find(x => String(x.id) === String(courseId));
-    if (!c && fallbackName) c = allCoursesData.find(x => x.name === fallbackName && (x.university || '') === (fallbackUni || ''));
-    if (!c) { alert('Course not found.'); return; }
-
-    document.getElementById('modal-course-title').textContent = c.name;
-
-    // The backend is the single source of truth for issue classification —
-    // no client-side re-heuristic and no fabricated attribute rows. If a
-    // course has no pdf_table, show an honest empty state.
-    const rows = (c.pdf_table && c.pdf_table.length) ? c.pdf_table : [];
-
-    const tbody = document.getElementById('modal-table-body');
-    currentModalCourseId = c.id;
-    const solvedAttrs = Array.isArray(c.solved_attrs) ? c.solved_attrs : [];
-    const falseRows = rows.filter(r => r.status === 'FALSE');
-    const solvedCount = falseRows.filter(r => solvedAttrs.includes(r.attribute)).length;
-    const isWebsiteIssue = c.issue_category === 'website_issue';
-    const isCourseIssue = c.issue_category === 'course_issue';
-    const hasOpenAttrs = falseRows.some(r => !solvedAttrs.includes(r.attribute));
-
-    if (rows.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No PDF verification data for this course.</td></tr>';
-    } else {
-        tbody.innerHTML = rows.map(row => {
-            const isFalse = row.status === 'FALSE';
-            const solved = isFalse && solvedAttrs.includes(row.attribute);
-            const attrJs = JSON.stringify(row.attribute).replace(/"/g, '&quot;');
-            let action = '<span style="color:var(--text-3);font-size:0.75rem;">—</span>';
-            if (isFalse) {
-                action = solved
-                    ? `<button class="solve-tick solved" title="Mark unsolved" onclick="solveCourse(${c.id},${attrJs},true)">✓ Solved</button>`
-                    : `<button class="solve-tick" title="Mark this issue solved" onclick="solveCourse(${c.id},${attrJs},false)">✓ Solve</button>`;
-            }
-            const statusTxt = solved ? 'SOLVED' : row.status;
-            const statusClr = (row.status === 'MATCH' || solved) ? 'var(--green)' : 'var(--red)';
-            return `
-            <tr style="border-bottom:1px solid var(--border);" class="${solved ? 'solved-row' : ''}">
-                <td style="padding:10px 12px;color:var(--text-1);font-weight:600;font-size:0.85rem;">${row.attribute}</td>
-                <td style="padding:10px 12px;color:var(--text-2);font-size:0.85rem;">${escHtml(row.original)}</td>
-                <td style="padding:10px 12px;color:var(--text-2);font-size:0.85rem;">${escHtml(row.verified)}</td>
-                <td style="padding:10px 12px;text-align:center;font-weight:700;font-size:0.8rem;letter-spacing:0.04em;color:${statusClr};">${statusTxt}</td>
-                <td style="padding:6px 10px;text-align:center;">${action}</td>
-            </tr>`;
-        }).join('');
-    }
-
-    // Header solve controls
-    const solveAllBtn = document.getElementById('solve-all-btn');
-    const solveWebBtn = document.getElementById('solve-website-btn');
-    const removeVerifBtn = document.getElementById('remove-from-verification-btn');
-    const progress = document.getElementById('modal-solve-progress');
-    if (solveAllBtn) {
-        solveAllBtn.style.display = (isCourseIssue && hasOpenAttrs) ? '' : 'none';
-        solveAllBtn.textContent = `✓ Solve all (${falseRows.length - solvedCount} open)`;
-        solveAllBtn.onclick = () => solveCourse(c.id, '_all', false);
-    }
-    if (solveWebBtn) {
-        solveWebBtn.style.display = isWebsiteIssue ? '' : 'none';
-        solveWebBtn.onclick = () => solveCourse(c.id, '_website', false);
-    }
-    // "Remove from Verification" — shown ONLY once the course is actually
-    // solved (Verified). Solving itself doesn't remove it; this button does.
-    if (removeVerifBtn) {
-        removeVerifBtn.style.display = (c.status === 'Verified') ? '' : 'none';
-        removeVerifBtn.onclick = () => removeFromVerification(c.id);
-    }
-    if (progress) {
-        if (isCourseIssue && falseRows.length > 0) {
-            progress.style.display = '';
-            progress.textContent = `Solved ${solvedCount}/${falseRows.length}`;
-        } else {
-            progress.style.display = 'none';
-        }
-    }
-    // The Delete button has been permanently removed from both local and hosted environments.
-
-    document.getElementById('course-modal').classList.add('open');
-}
-
-// ── Per-issue solving ─────────────────────────────────────────────
-let currentModalCourseId = null;
-
-async function solveCourse(courseId, attr, unsolve) {
-    if (courseId == null) return;
-
-    // 1. OPTIMISTIC UI UPDATE (Blazing Fast)
-    const c = allCoursesData.find(x => String(x.id) === String(courseId));
-    let originalDataStr = null;
-    if (c) {
-        originalDataStr = JSON.stringify(c); // Backup for rollback
-        c.solved_attrs = c.solved_attrs || [];
-
-        if (attr === '_website') {
-            c.issue_category = unsolve ? 'website_issue' : 'verified';
-            c.status = unsolve ? 'Error' : 'Verified';
-            c.disc_reason = '';
-        } else if (attr === '_all') {
-            const falseRows = (c.pdf_table || []).filter(r => r.status === 'FALSE').map(r => r.attribute);
-            if (unsolve) {
-                c.solved_attrs = c.solved_attrs.filter(a => !falseRows.includes(a));
-            } else {
-                for (const a of falseRows) if (!c.solved_attrs.includes(a)) c.solved_attrs.push(a);
-            }
-            const allFalseCount = falseRows.length;
-            const unsolvedCount = falseRows.filter(a => !c.solved_attrs.includes(a)).length;
-            c.issue_category = unsolvedCount === 0 ? 'verified' : 'course_issue';
-            c.status = unsolvedCount === 0 ? 'Verified' : 'Discrepancy';
-        } else {
-            if (unsolve) {
-                c.solved_attrs = c.solved_attrs.filter(a => a !== attr);
-            } else {
-                if (!c.solved_attrs.includes(attr)) c.solved_attrs.push(attr);
-            }
-            const falseRows = (c.pdf_table || []).filter(r => r.status === 'FALSE').map(r => r.attribute);
-            const unsolvedCount = falseRows.filter(a => !c.solved_attrs.includes(a)).length;
-            c.issue_category = unsolvedCount === 0 ? 'verified' : 'course_issue';
-            c.status = unsolvedCount === 0 ? 'Verified' : 'Discrepancy';
-        }
-        showCourseModal(courseId); // Instant UI refresh
-    }
-
-    // 2. BACKGROUND SYNC TO SERVER
-    try {
-        const res = await fetch(`${API_BASE_URL}/api/course/${courseId}/solve`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ attr, unsolve: !!unsolve })
-        });
-
-        const data = await res.json();
-        if (data.status !== 'success') throw new Error(data.message || 'Solve failed');
-
-        // Refresh stats
-        const upd = data.course || {};
-        if (c) Object.assign(c, {
-            issue_category: upd.issue_category,
-            issue_sub_type: upd.issue_sub_type,
-            status: upd.status,
-            disc_reason: upd.disc_reason,
-            solved_attrs: upd.solved_attrs || []
-        });
-        // Update the course's row in place. It stays visible in the Verification
-        // tab (now marked Verified) until the user clicks "Remove from
-        // Verification" or the next poll syncs it out — a Verified course is
-        // excluded from the server's recent list, so it leaves within 5s anyway.
-        const rc = recentData.find(x => String(x.id) === String(courseId));
-        if (rc) Object.assign(rc, {
-            issue_category: upd.issue_category,
-            issue_sub_type: upd.issue_sub_type,
-            status: upd.status,
-            disc_reason: upd.disc_reason,
-            solved_attrs: upd.solved_attrs || []
-        });
-
-        if (data.stats) {
-            // Every headline number updates the instant a solve is persisted —
-            // the 4 KPI parameters, both sticky strips, and the issue doughnut.
-            updateCards(data.stats);
-            updateIssuePieChart(data.stats);
-        }
-        // Re-apply active filters so both tabs reflect the change immediately.
-        applyVerificationFilter();
-        applyCourseFilter();
-        // Stats already updated from solve response above — no extra
-        // fetchData() needed. The 5s poll handles multi-user sync.
-    } catch (e) {
-        console.error('Solve error:', e);
-        // Rollback on failure
-        if (c && originalDataStr) {
-            Object.assign(c, JSON.parse(originalDataStr));
-            showCourseModal(courseId);
-        }
-        // Re-sync from server so any optimistic removal is undone if the solve
-        // didn't actually persist.
-        fetchData();
-        alert('Network request failed. The API might be sleeping/offline. Please wait a few seconds and try again.');
-    }
-}
-
-// Remove an already-solved (Verified) course from the Verification tab view.
-// The course is already Verified server-side, so it's already excluded from the
-// server's recent list — this just drops it from the client list immediately
-// and closes the modal. (Re-openable from the All Courses tab if ever needed.)
-function removeFromVerification(courseId) {
-    recentData = recentData.filter(x => String(x.id) !== String(courseId));
-    document.getElementById('course-modal').classList.remove('open');
-    applyVerificationFilter();
-}
-
-
-function initModal() {
-    document.getElementById('close-modal')?.addEventListener('click', () =>
-        document.getElementById('course-modal').classList.remove('open'));
-    document.getElementById('course-modal')?.addEventListener('click', e => {
-        if (e.target === document.getElementById('course-modal'))
-            document.getElementById('course-modal').classList.remove('open');
-    });
-}
-
-// ================================================================
-//  SHARED DATA APPLY LOGIC
-// ================================================================
-function _applyData(data, animate) {
-    if (!data || data.status !== 'success') return;
-    globalData = data;
-
-    const statsHash    = JSON.stringify(data.stats);
-    const countryHash  = JSON.stringify(data.country_counts);
-    const barSrc       = barMode === 'domain' ? data.domain_counts : data.country_counts;
-    const barHash      = JSON.stringify(barSrc);
-
-    if (statsHash !== lastStatsHash) {
-        updateCards(data.stats);
-        updateIssuePieChart(data.stats, animate);
-        lastStatsHash = statsHash;
-    }
-    if (barHash !== lastBarHash) {
-        updateBarChart(animate);
-        lastBarHash = barHash;
-    }
-    if (countryHash !== lastCountryHash) {
-        updateLineChart(data.country_counts, animate);
-        updateMapChart(data.country_counts, animate);
-        updateCountryLeaderboard(data.country_counts, 'country-list');
-        lastCountryHash = countryHash;
-    }
-    updateRecentVerifications(data.recent || []);
-    updateDashboardExtras(data);
-    if (currentFilter.type) applyFilter(currentFilter.type, currentFilter.value);
-    document.body.dataset.loading = 'false';
-}
-
-// ================================================================
-//  MAIN DATA FETCH
-// ================================================================
-async function fetchData() {
-    if (!globalData) document.body.dataset.loading = 'true';
-    try {
-        const res  = await fetch(API_BASE_URL + '/api/data.json');
-        const data = await res.json();
-        if (data.status !== 'success') return;
-        const animate = firstDataFetch;
-        firstDataFetch = false;
-        _applyData(data, animate);
-        // Cache for instant next-load on the static Firebase host
-        try { localStorage.setItem('cv_data_cache', JSON.stringify({ts: Date.now(), data})); } catch(_) {}
-    } catch (e) {
-        console.error('Data fetch error:', e);
-    }
-}
-
-// ================================================================
-//  ANALYTICS TAB  —  Full Enriched Implementation
-//  Uses BOTH globalData (/api/data.json) AND analyticsData (/api/analytics.json)
-// ================================================================
-let anCredentialChart = null;
-let anPricingChart = null;
-let anDomainChart = null;
-let anStatusChart = null;
-let analyticsData = null;
-let lastAnalyticsHash = '';
-let geoTableData = [];
-
-const PALETTE = ['#6366f1', '#818cf8', '#f43f5e', '#1dda9f', '#f59e0b', '#06b6d4', '#ec4899', '#8b5cf6'];
-const STATUS_COLORS = { verified: '#1dda9f', discrepancy: '#f59e0b', error: '#f43f5e', unverified: '#6366f1' };
-
-// ── Sub-tab switching ────────────────────────────────────────────
-function initAnalyticsSubTabs() {
-    document.querySelectorAll('.asubtab').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('.asubtab').forEach(b => b.classList.remove('active'));
-            document.querySelectorAll('.atab-content').forEach(c => c.classList.remove('active'));
-            btn.classList.add('active');
-            const t = document.getElementById(btn.dataset.atab);
-            if (t) t.classList.add('active');
-        });
-    });
-    document.getElementById('an-country-search')?.addEventListener('input', e =>
-        renderGeoTable(e.target.value.toLowerCase()));
-}
-
-// ── Drill-down helpers ───────────────────────────────────────────
-function closeDrilldown(id) {
-    const el = document.getElementById(id);
-    if (el) { el.style.animation = 'slideDown 0.2s ease'; setTimeout(() => el.style.display = 'none', 180); }
-}
-
-function openDrilldown(panelId, titleId, tbodyId, title, rows) {
-    const panel = document.getElementById(panelId);
-    const titleEl = document.getElementById(titleId);
-    const tbody = document.getElementById(tbodyId);
-    if (!panel || !titleEl || !tbody) return;
-    titleEl.textContent = title;
-    tbody.innerHTML = rows;
-    panel.style.display = 'block';
-    panel.style.animation = 'slideUp 0.25s ease';
-    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
-
-// ── Status badge helper ──────────────────────────────────────────
-function statusBadge(s) {
-    const cls = getBadgeClass(s || '');
-    return `<span class="badge ${cls}">${escHtml(s || '—')}</span>`;
-}
-
-// ── KPI cards ────────────────────────────────────────────────────
-function populateAnalyticsKPIs(d, globalStats, ccOverride) {
-    const el = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
-
-    // Authoritative total — always from dashboard stats
-    const tot = globalStats?.total || 0;
-
-    // Indian courses: from country_counts passed in or globalData fallback
-    const cc = ccOverride || globalData?.country_counts || {};
-    const indiaCount = Object.entries(cc)
-        .filter(([k]) => k.toLowerCase().includes('india'))
-        .reduce((s, [, v]) => s + (Number(v) || 0), 0);
-    const intlCount = Math.max(0, tot - indiaCount);
-
-    // Pricing
-    const pricingCat = d.pricing_category || {};
-    const freeCount = pricingCat['Free Courses'] || 0;
-    const pricingTotal = Object.values(pricingCat).reduce((s, v) => s + (Number(v) || 0), 0);
-
-    // Country count — from pivot if available, else from country_counts
-    const pivotKeys = Object.keys(d.country_pivot || {}).filter(k => isValidCountry(k));
-    const countryCnt = pivotKeys.length || Object.keys(cc).filter(k => isValidCountry(k)).length;
-
-    // Verification match rate
-    const vs = globalStats || {};
-    const matchRate = vs.total ? ((vs.verified || 0) / vs.total * 100).toFixed(1) : '—';
-
-    el('an-total', tot);
-    el('an-indian', indiaCount);
-    el('an-intl', intlCount);
-    el('an-matchrate', matchRate + (matchRate !== '—' ? '%' : ''));
-    el('an-variants-sub', `${Object.values(d.variant_category || {}).reduce((s, v) => s + (Number(v) || 0), 0)} delivery variants`);
-    el('an-indian-pct', `${tot ? ((indiaCount / tot) * 100).toFixed(1) : '—'}% of total catalog`);
-    el('an-countries-count', `${countryCnt} countries represented`);
-    el('an-verified-sub', `${vs.verified || '—'} courses perfectly verified`);
-    el('an-free', pricingTotal);
-    el('an-free-sub', `${freeCount} fully free certifications`);
-}
-
-
-// ── Auto-insight cards ───────────────────────────────────────────
-function populateInsightCards(d, globalData) {
-    const container = document.getElementById('insight-cards-row');
-    if (!container) return;
-
-    const recent = globalData?.recent || [];
-    const stats = globalData?.stats || {};
-    const countryPivot = d.country_pivot || {};
-    const domainPivot = d.domain_pivot || {};
-
-    // Compute insights
-    const tot = stats.total || 1;
-    const matchPct = ((stats.verified || 0) / tot * 100).toFixed(1);
-    const discPct = ((stats.discrepancies || 0) / tot * 100).toFixed(1);
-
-    const topCountry = Object.entries(countryPivot).filter(([k]) => isValidCountry(k))
-        .sort((a, b) => b[1] - a[1])[0];
-    const topDomain = Object.entries(domainPivot).filter(([k]) => k && k !== 'Total')
-        .sort((a, b) => (b[1].Total || 0) - (a[1].Total || 0))[0];
-
-    // Most problematic country (from recent)
-    const countryIssues = {};
-    recent.forEach(r => {
-        if (isValidCountry(r.country) && (r.status || '').toLowerCase() !== 'verified') {
-            countryIssues[r.country] = (countryIssues[r.country] || 0) + 1;
-        }
-    });
-    const topIssueCountry = Object.entries(countryIssues).sort((a, b) => b[1] - a[1])[0];
-
-    // Top university
-    const uniCounts = {};
-    recent.forEach(r => { if (r.university) uniCounts[r.university] = (uniCounts[r.university] || 0) + 1; });
-    const topUni = Object.entries(uniCounts).sort((a, b) => b[1] - a[1])[0];
-
-    const insights = [
-        { icon: '🏆', color: 'var(--green)', label: 'Match Rate', value: `${matchPct}%`, sub: 'Courses perfectly verified' },
-        { icon: '⚠️', color: 'var(--accent)', label: 'Discrepancy Rate', value: `${discPct}%`, sub: 'Need manual review' },
-        { icon: '🌍', color: 'var(--blue)', label: 'Top Country', value: topCountry ? getFlag(topCountry[0]) + ' ' + topCountry[0] : '—', sub: topCountry ? `${topCountry[1]} courses` : '' },
-        { icon: '🔬', color: 'var(--purple)', label: 'Top Domain', value: topDomain?.[0] || '—', sub: topDomain ? `${topDomain[1].Total || 0} courses` : '' },
-        { icon: '🏛️', color: 'var(--blue)', label: 'Top University', value: topUni?.[0] || '—', sub: topUni ? `${topUni[1]} courses` : '' },
-        { icon: '🚨', color: 'var(--red)', label: 'Most Issues', value: topIssueCountry ? getFlag(topIssueCountry[0]) + ' ' + topIssueCountry[0] : 'None', sub: topIssueCountry ? `${topIssueCountry[1]} flagged` : 'All clean!' },
-    ];
-
-    container.innerHTML = insights.map(ins => `
-        <div class="insight-card" style="border-top:3px solid ${ins.color};">
-            <div class="insight-icon">${ins.icon}</div>
-            <div class="insight-body">
-                <div class="insight-label">${ins.label}</div>
-                <div class="insight-value" style="color:${ins.color};">${ins.value}</div>
-                <div class="insight-sub">${ins.sub}</div>
-            </div>
-        </div>`).join('');
-}
-
-// ── India vs World split bar ─────────────────────────────────────
-function populateSplitVisual(indianPct) {
-    const el = document.getElementById('an-split-visual');
-    if (!el) return;
-    const intlPct = 100 - indianPct;
-    el.innerHTML = `
-        <div style="margin-bottom:8px;display:flex;justify-content:space-between;">
-            <span style="font-size:0.78rem;font-weight:700;color:var(--green);">🇮🇳 India ${indianPct.toFixed(1)}%</span>
-            <span style="font-size:0.78rem;font-weight:700;color:var(--blue);">🌐 International ${intlPct.toFixed(1)}%</span>
-        </div>
-        <div style="height:16px;border-radius:20px;overflow:hidden;display:flex;">
-            <div style="flex:${Math.round(indianPct)};background:var(--green);border-radius:20px 0 0 20px;"></div>
-            <div style="flex:${Math.round(intlPct)};background:var(--blue);border-radius:0 20px 20px 0;"></div>
-        </div>
-        <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-            <div style="background:var(--green-bg);border-radius:10px;padding:12px;text-align:center;">
-                <div style="font-size:1.4rem;font-weight:900;color:var(--green);">${indianPct.toFixed(1)}%</div>
-                <div style="font-size:0.7rem;color:var(--text-3);font-weight:700;text-transform:uppercase;">Indian Catalog</div>
-            </div>
-            <div style="background:var(--blue-bg);border-radius:10px;padding:12px;text-align:center;">
-                <div style="font-size:1.4rem;font-weight:900;color:var(--blue);">${intlPct.toFixed(1)}%</div>
-                <div style="font-size:0.7rem;color:var(--text-3);font-weight:700;text-transform:uppercase;">International</div>
-            </div>
-        </div>`;
-}
-
-// ── Credential doughnut ──────────────────────────────────────────
-function populateCredentialChart(courseCategory) {
-    const ctx = document.getElementById('an-credential-chart');
-    if (!ctx) return;
-    const entries = Object.entries(courseCategory || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
-    if (anCredentialChart) anCredentialChart.destroy();
-    anCredentialChart = new Chart(ctx, {
-        type: 'doughnut',
-        data: {
-            labels: entries.map(e => e[0]),
-            datasets: [{ data: entries.map(e => e[1]), backgroundColor: PALETTE, borderColor: 'transparent', borderWidth: 0, hoverOffset: 10 }]
-        },
-        options: {
-            responsive: true, maintainAspectRatio: false, cutout: '70%',
-            plugins: {
-                legend: { display: false },
-                tooltip: { callbacks: { label: c => `${c.label}: ${c.raw} programs` } }
-            },
-            onClick: (e, els) => {
-                if (!els.length) return;
-                const label = entries[els[0].index][0];
-                openAnalyticsDrilldownByCategory(label);
-            }
-        }
-    });
-    const legend = document.getElementById('an-credential-legend');
-    if (legend) legend.innerHTML = entries.map(([label, val], i) => `
-        <div class="an-legend-item" onclick="openAnalyticsDrilldownByCategory('${label.replace(/'/g, "\\'")}')">
-            <div class="an-legend-dot" style="background:${PALETTE[i % PALETTE.length]}"></div>
-            <div>
-                <div class="an-legend-name">${escHtml(label)}</div>
-                <div class="an-legend-val">${val} Courses</div>
-            </div>
-        </div>`).join('');
-}
-
-// ── Pricing bar chart ────────────────────────────────────────────
-function populatePricingChart(pricingCategory) {
-    const ctx = document.getElementById('an-pricing-chart');
-    if (!ctx) return;
-    const entries = Object.entries(pricingCategory || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
-    if (anPricingChart) anPricingChart.destroy();
-    anPricingChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: entries.map(e => e[0]),
-            datasets: [{
-                label: 'Courses', data: entries.map(e => e[1]),
-                backgroundColor: 'rgba(241,107,107,0.8)', hoverBackgroundColor: '#f16b6b',
-                borderRadius: 8, borderSkipped: false
-            }]
-        },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
-            scales: {
-                x: { grid: { display: false }, ticks: { font: { size: 12, weight: '600' }, maxRotation: 30 } },
-                y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { precision: 0 } }
-            },
-            animation: { duration: 900, easing: 'easeOutQuart' },
-            // Drill into All Courses via a real cost text-search on the bucket's
-            // first word (e.g. "Free Courses" → search "free" in cost). No
-            // fabricated mapping; an empty result honestly shows the empty-state.
-            onClick: (e, els) => {
-                if (!els.length) return;
-                const label = entries[els[0].index][0];
-                const kw = label.split(' ')[0].toLowerCase();
-                jumpToCourses({ search: kw });
-            }
-        }
-    });
-}
-
-// ── Top countries hub list ────────────────────────────────────────
-function populateAnTopCountries(countryPivot) {
-    const el = document.getElementById('an-top-countries');
-    if (!el) return;
-    const entries = Object.entries(countryPivot || {}).filter(([k]) => isValidCountry(k))
-        .sort((a, b) => b[1] - a[1]).slice(0, 5);
-    const max = entries[0]?.[1] || 1;
-    el.innerHTML = entries.map(([name, cnt], i) => `
-        <div class="an-hub-row" onclick="geoRowDrilldown('${name.replace(/'/g, "\\'")}', ${cnt})" title="Click to see courses">
-            <div class="an-hub-rank">${i + 1}</div>
-            <div class="an-hub-name">${getFlag(name)} ${escHtml(name)}</div>
-            <div class="an-hub-bar-wrap"><div class="an-hub-bar" style="width:${Math.round(cnt / max * 100)}%"></div></div>
-            <div class="an-hub-count">${cnt}</div>
-        </div>`).join('');
-}
-
-// ── Geography table ──────────────────────────────────────────────
-// Per-country verified/issues come from the server `country_status` map
-// (computed over ALL courses). The old code derived them from `recent`,
-// which excludes Verified courses — so verified was always 0/—. country_status
-// fixes that. We fall back to `recent` only if the map is absent (old server).
-function countryStatusFor(name) {
-    const cs = globalData?.country_status || {};
-    if (cs[name]) return cs[name];
-    const nl = String(name).toLowerCase();
-    for (const k of Object.keys(cs)) {
-        const kl = k.toLowerCase();
-        if (kl === nl || kl.includes(nl) || nl.includes(kl)) return cs[k];
-    }
-    return null;
-}
-
-function renderGeoTable(search = '') {
-    const tbody = document.getElementById('an-country-tbody');
-    if (!tbody) return;
-    const total = geoTableData.reduce((s, [, v]) => s + v, 0) || 1;
-    const max = geoTableData[0]?.[1] || 1;
-    const rows = search ? geoTableData.filter(([k]) => k.toLowerCase().includes(search)) : geoTableData;
-
-    tbody.innerHTML = rows.length === 0
-        ? `<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:24px;">No results</td></tr>`
-        : rows.map(([name, cnt], i) => {
-            const st = countryStatusFor(name);
-            const verified = st ? st.verified : 0;
-            const issues = st ? (st.total - st.verified) : 0;
-            return `<tr class="clickable-row" onclick="geoRowDrilldown('${name.replace(/'/g, "\\'")}', ${cnt})" title="Click to see courses">
-                <td><span class="geo-rank">${(i + 1).toString().padStart(2, '0')}</span></td>
-                <td><span style="font-size:1.1rem;margin-right:8px;">${getFlag(name)}</span><strong>${escHtml(name)}</strong></td>
-                <td style="text-align:center;"><span class="geo-volume-badge">${cnt}</span></td>
-                <td style="text-align:center;"><span style="color:var(--green);font-weight:700;">${st ? verified : '—'}</span></td>
-                <td style="text-align:center;"><span style="color:var(--accent);font-weight:700;">${st ? issues : '—'}</span></td>
-                <td style="text-align:right;"><span class="geo-share">${((cnt / total) * 100).toFixed(1)}%</span></td>
-                <td><div class="geo-prog-wrap"><div class="geo-prog-bar" style="width:${Math.round(cnt / max * 100)}%"></div></div></td>
-            </tr>`;
-        }).join('');
-}
-
-function geoRowDrilldown(countryName, cnt) {
-    const sourceData = allCoursesData.length > 0 ? allCoursesData : (globalData?.recent || []);
-    const matches = sourceData.filter(r =>
-        (r.country || '').toLowerCase().includes(countryName.toLowerCase()) ||
-        countryName.toLowerCase().includes((r.country || '').toLowerCase())
-    );
-    const rows = matches.length ? matches.map((r, i) => `<tr>
-        <td style="color:var(--text-3);">${i + 1}</td>
-        <td class="course-name-cell" style="font-weight:600;" title="${escHtml(r.name || r.course_name || '')}">${escHtml(r.name || r.course_name || '—')}</td>
-        <td style="color:var(--text-2);">${escHtml(r.university || '—')}</td>
-        <td>${escHtml(r.domain || '—')}</td>
-        <td>${statusBadge(r.status)}</td>
-    </tr>`).join('')
-        : `<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:20px;">No course-level data yet — run verification first</td></tr>`;
-
-    openDrilldown('geo-drilldown', 'geo-drilldown-title', 'geo-drilldown-tbody',
-        `${getFlag(countryName)} ${countryName} — ${cnt} Courses`, rows);
-}
-
-// ── Domain tab ───────────────────────────────────────────────────
-function populateDomainTab(domainPivot) {
-    const ctx = document.getElementById('an-domain-chart');
-    const recent = globalData?.recent || [];
-    const entries = Object.entries(domainPivot || {}).filter(([k]) => k && k !== 'Total')
-        .sort((a, b) => (b[1].Total || 0) - (a[1].Total || 0));
-
-    if (ctx) {
-        if (anDomainChart) anDomainChart.destroy();
-        anDomainChart = new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: entries.map(([k]) => k),
-                datasets: [{
-                    label: 'Total Courses', data: entries.map(([, v]) => v.Total || 0),
-                    backgroundColor: 'rgba(99,102,241,0.75)', hoverBackgroundColor: '#6366f1',
-                    borderRadius: 8, borderSkipped: false
-                }]
-            },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: {
-                    x: { grid: { display: false }, ticks: { font: { size: 11, weight: '600' }, maxRotation: 30 } },
-                    y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { precision: 0 } }
-                },
-                animation: { duration: 900, easing: 'easeOutQuart' },
-                onClick: (e, els) => {
-                    if (els.length) domainRowDrilldown(entries[els[0].index][0]);
-                }
-            }
-        });
-    }
-
-    const tbody = document.getElementById('an-domain-tbody');
-    if (tbody) tbody.innerHTML = entries.map(([name, v]) => {
-        const total = v.Total || 0, indian = v.Indian || 0, intl = v.International || 0;
-        const ip = total ? Math.round(indian / total * 100) : 50;
-        // Compute verified/issues from ALL courses (not just recent subset)
-        const domAll = allCoursesData.filter(r => normalizeDomain(r.domain || '') === name);
-        const domVerif = domAll.filter(r => (r.status || '').toLowerCase() === 'verified').length;
-        const domIssues = domAll.filter(r => (r.status || '').toLowerCase() === 'discrepancy').length;
-        return `<tr class="clickable-row" onclick="domainRowDrilldown('${name.replace(/'/g, "\\'")}')">
-            <td><div style="font-weight:800;color:var(--text-1);">${escHtml(name)}</div>
-                <div style="font-size:0.68rem;color:var(--text-3);text-transform:uppercase;letter-spacing:0.06em;margin-top:2px;">Click to explore</div></td>
-            <td style="text-align:center;"><span class="dom-total">${total}</span></td>
-            <td style="text-align:center;"><span class="dom-indian">${indian}</span></td>
-            <td style="text-align:center;"><span class="dom-intl">${intl}</span></td>
-            <td style="text-align:center;"><span style="color:var(--green);font-weight:700;">${domVerif || '—'}</span></td>
-            <td style="text-align:center;"><span style="color:var(--accent);font-weight:700;">${domIssues || '—'}</span></td>
-            <td><div class="dom-mix-bar"><div class="dom-mix-in" style="flex:${ip}"></div><div class="dom-mix-out" style="flex:${100 - ip}"></div></div></td>
-        </tr>`;
-    }).join('');
-}
-
-function domainRowDrilldown(domainName) {
-    const sourceData = allCoursesData.length > 0 ? allCoursesData : (globalData?.recent || []);
-    const matches = sourceData.filter(r =>
-        normalizeDomain(r.domain || '') === domainName);
-    const rows = matches.length ? matches.map((r, i) => `<tr>
-        <td style="color:var(--text-3);">${i + 1}</td>
-        <td class="course-name-cell" style="font-weight:600;" title="${escHtml(r.name || r.course_name || '')}">${escHtml(r.name || r.course_name || '—')}</td>
-        <td>${escHtml(r.university || '—')}</td>
-        <td>${escHtml(r.country || '—')}</td>
-        <td>${statusBadge(r.status)}</td>
-        <td style="color:var(--text-3);font-size:0.78rem;">${escHtml(r.disc_reason || r.reason || '—')}</td>
-    </tr>`).join('')
-        : `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:20px;">No course-level data yet — run verification first</td></tr>`;
-
-    openDrilldown('dom-drilldown', 'dom-drilldown-title', 'dom-drilldown-tbody',
-        `🔬 ${domainName} — Domain Deep-Dive`, rows);
-}
-
-// ── Category drill-down (credential doughnut click) ──────────────
-// Real cross-tab filter: jump to All Courses filtered by this domain/level.
-function openAnalyticsDrilldownByCategory(catLabel) {
-    jumpToCourses({ domain: catLabel });
-}
-
-// ── Verification tab ─────────────────────────────────────────────
-function populateVerificationTab(stats, recent) {
-    // KPI row
-    const kpiRow = document.getElementById('verif-kpi-row');
-    if (kpiRow) {
-        const tot = stats.total || 1;
-        const verKpis = [
-            { label: 'Verified', val: stats.verified || 0, pct: (stats.verified || 0) / tot, color: 'var(--green)' },
-            { label: 'Discrepancies', val: stats.discrepancies || 0, pct: (stats.discrepancies || 0) / tot, color: 'var(--accent)' },
-            { label: 'Errors', val: stats.errors || 0, pct: (stats.errors || 0) / tot, color: 'var(--red)' },
-        ];
-        kpiRow.innerHTML = verKpis.map(k => `
-            <div class="verif-kpi-card" style="border-left:4px solid ${k.color};">
-                <div style="font-size:1.8rem;font-weight:900;color:${k.color};">${k.val}</div>
-                <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);">${k.label}</div>
-                <div style="margin-top:8px;height:4px;background:var(--bg-hover);border-radius:20px;overflow:hidden;">
-                    <div style="height:4px;width:${(k.pct * 100).toFixed(1)}%;background:${k.color};border-radius:20px;"></div>
-                </div>
-                <div style="font-size:0.72rem;color:var(--text-2);margin-top:4px;">${(k.pct * 100).toFixed(1)}% of total</div>
-            </div>`).join('');
-    }
-
-    // Status doughnut
-    const ctx = document.getElementById('an-status-chart');
-    if (ctx) {
-        if (anStatusChart) anStatusChart.destroy();
-        anStatusChart = new Chart(ctx, {
-            type: 'doughnut',
-            data: {
-                labels: ['Verified', 'Discrepancy', 'Error'],
-                datasets: [{
-                    data: [stats.verified || 0, stats.discrepancies || 0, stats.errors || 0],
-                    backgroundColor: ['#1dda9f', '#f59e0b', '#f43f5e'],
-                    borderColor: 'transparent', borderWidth: 0, hoverOffset: 10
-                }]
-            },
-            options: {
-                responsive: true, maintainAspectRatio: false, cutout: '68%',
-                plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.label}: ${c.raw}` } } }
-            }
-        });
-    }
-
-    // Discrepancy reasons — use course_issue_list from /api/data.json when
-    // available (computed over ALL course_issue courses, not just the recent
-    // page subset), falling back to the recent list.
-    const courseIssues = globalData?.course_issue_list || recent;
-    const reasons = {};
-    courseIssues.forEach(r => {
-        if (r.disc_reason || r.reason) {
-            const key = (r.disc_reason || r.reason || '').trim();
-            if (key) reasons[key] = (reasons[key] || 0) + 1;
-        }
-    });
-    const topReasons = Object.entries(reasons).sort((a, b) => b[1] - a[1]).slice(0, 8);
-    const discEl = document.getElementById('an-disc-reasons');
-    if (discEl) {
-        discEl.innerHTML = topReasons.length ? topReasons.map(([reason, cnt]) => `
-            <div class="disc-reason-row">
-                <div class="disc-reason-text">${escHtml(reason)}</div>
-                <div class="disc-reason-right">
-                    <div class="disc-reason-bar-wrap">
-                        <div class="disc-reason-bar" style="width:${Math.round(cnt / topReasons[0][1] * 100)}%"></div>
-                    </div>
-                    <span class="disc-reason-count">${cnt}</span>
-                </div>
-            </div>`).join('')
-            : `<div style="padding:32px;text-align:center;color:var(--text-3);">✅ No discrepancy reasons found — all clean!</div>`;
-    }
-
-    // Verification by country table — from server `country_status` (computed
-    // over ALL courses, incl. Verified). The old code scanned `recent`, which
-    // excluded Verified courses, so verified was always 0 and verified-only
-    // countries were missing entirely.
-    const csMap = globalData?.country_status || {};
-    const vcEntries = Object.entries(csMap)
-        .filter(([c]) => isValidCountry(c))
-        .map(([c, st]) => [c, { total: st.total || 0, verified: st.verified || 0, discrepancy: st.discrepancies || 0, error: st.errors || 0 }])
-        .sort((a, b) => b[1].total - a[1].total);
-    const vcTbody = document.getElementById('an-verif-country-tbody');
-    if (vcTbody) {
-        vcTbody.innerHTML = vcEntries.length ? vcEntries.map(([country, st]) => {
-            const rate = st.total ? (st.verified / st.total * 100).toFixed(0) : 0;
-            const rateColor = rate >= 80 ? 'var(--green)' : rate >= 50 ? 'var(--accent)' : 'var(--red)';
-            return `<tr class="clickable-row" onclick="geoRowDrilldown('${country.replace(/'/g, "\\'")}', ${st.total})">
-                <td>${getFlag(country)} <strong>${escHtml(country)}</strong></td>
-                <td style="text-align:center;">${st.total}</td>
-                <td style="text-align:center;color:var(--green);font-weight:700;">${st.verified}</td>
-                <td style="text-align:center;color:var(--accent);font-weight:700;">${st.discrepancy}</td>
-                <td style="text-align:center;color:var(--red);font-weight:700;">${st.error}</td>
-                <td>
-                    <div style="display:flex;align-items:center;gap:10px;">
-                        <div style="flex:1;height:6px;background:var(--bg-hover);border-radius:20px;overflow:hidden;">
-                            <div style="height:6px;width:${rate}%;background:${rateColor};border-radius:20px;"></div>
-                        </div>
-                        <span style="font-weight:800;font-size:0.83rem;color:${rateColor};min-width:36px;">${rate}%</span>
-                    </div>
-                </td>
-            </tr>`;
-        }).join('')
-            : `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:24px;">No verification data available — run verification first</td></tr>`;
-    }
-}
-
-
-// -- Main fetch ----------------------------------------------------------
-// Renders every Analytics section from a given analytics payload `d`,
-// merging it with the live globalData. Pure/synchronous so the cached path
-// can paint instantly on tab re-open. Extracted from the old fetchAnalytics.
-function renderAnalytics(d) {
-    // Always-available data from the dashboard (live /api/data.json)
-    const recent = globalData?.recent || [];
-    const stats = globalData?.stats || {};
-    const countryCounts = globalData?.country_counts || {};
-    const domainCounts = globalData?.domain_counts || {};
-
-    // Analytics data (from /api/analytics.json) is now built from the same
-    // global_courses as /api/data.json, so they should always agree.
-    // Fall back to globalData equivalents ONLY if analytics is missing a section.
-    const effectiveCountryPivot = Object.keys(d.country_pivot || {}).length > 0
-        ? d.country_pivot
-        : Object.fromEntries(Object.entries(countryCounts).filter(([k]) => isValidCountry(k)));
-
-    let effectiveDomainPivot = d.domain_pivot || {};
-    if (Object.keys(effectiveDomainPivot).length === 0) {
-        // Build from ALL courses data (not just recent) for accurate counts
-        effectiveDomainPivot = {};
-        allCoursesData.forEach(c => {
-            const dom = normalizeDomain(c.domain || '');
-            if (!dom || dom === 'Other') return;
-            if (!effectiveDomainPivot[dom]) effectiveDomainPivot[dom] = { Total: 0, Indian: 0, International: 0 };
-            effectiveDomainPivot[dom].Total++;
-            if ((c.country || '').toLowerCase().includes('india')) effectiveDomainPivot[dom].Indian++;
-            else effectiveDomainPivot[dom].International++;
-        });
-    }
-
-    // Course category: prefer analytics payload; fall back to allCoursesData
-    const effectiveCourseCategory = Object.keys(d.course_category || {}).length > 0
-        ? d.course_category
-        : (() => {
-            const cc = {};
-            allCoursesData.forEach(c => {
-                const lvl = normalizeDomain(c.domain || '');
-                if (lvl && lvl !== 'Other') cc[lvl] = (cc[lvl] || 0) + 1;
-            });
-            return cc;
-        })();
-
-    // Populate all sections
-    populateAnalyticsKPIs(d, stats, countryCounts);
-    populateInsightCards({ ...d, country_pivot: effectiveCountryPivot, domain_pivot: effectiveDomainPivot }, globalData);
-    populateCredentialChart(effectiveCourseCategory);
-    populatePricingChart(d.pricing_category);
-
-    // India vs World - always from country_counts (truth from /api/data.json)
-    const realTotal = stats.total || Object.values(countryCounts).reduce((s, v) => s + v, 0) || 1;
-    const indiaTotal = Object.entries(countryCounts)
-        .filter(([k]) => k.toLowerCase().includes('india'))
-        .reduce((s, [, v]) => s + (Number(v) || 0), 0);
-    populateSplitVisual((indiaTotal / realTotal) * 100);
-
-    populateAnTopCountries(effectiveCountryPivot);
-
-    geoTableData = Object.entries(effectiveCountryPivot)
-        .filter(([k]) => isValidCountry(k)).sort((a, b) => b[1] - a[1]);
-    renderGeoTable();
-
-    populateDomainTab(effectiveDomainPivot);
-    populateVerificationTab(stats, recent);
-
-    console.log('[Analytics] OK - total:', realTotal, '| countries:', geoTableData.length, '| india:', indiaTotal);
-}
-
-// Fetch /api/analytics.json and return the parsed `data` payload, or null on
-// failure. Updates lastAnalyticsHash when a payload is successfully read.
-async function fetchAnalyticsPayload() {
-    try {
-        const res = await fetch(API_BASE_URL + '/api/analytics.json');
-        const json = await res.json();
-        if (json.status === 'success' && json.data) {
-            return json.data;
-        }
-    } catch (e) {
-        console.warn('[Analytics] analytics.json not available, using dashboard data only');
-    }
-    return null;
-}
-
-async function fetchAnalytics() {
-    // Wait for dashboard data if not yet ready (very first call only).
-    if (!globalData && !analyticsData) {
-        let waited = 0;
-        await new Promise(resolve => {
-            const poll = setInterval(() => {
-                waited += 100;
-                if (globalData || waited >= 6000) { clearInterval(poll); resolve(); }
-            }, 100);
-        });
-    }
-
-    // Cached path: render the last-known payload synchronously (instant tab
-    // switch), then re-fetch in the background and re-render only if the
-    // JSON actually changed.
-    if (analyticsData) {
-        renderAnalytics(analyticsData);
-        refreshAnalyticsInBackground();
-        return;
-    }
-
-    // First load: fetch then render.
-    const payload = await fetchAnalyticsPayload();
-    if (payload) {
-        analyticsData = payload;
-        lastAnalyticsHash = JSON.stringify(payload);
-        renderAnalytics(payload);
-    } else {
-        // No analytics available yet — render with the empty-shape defaults
-        // so the tab still shows dashboard-derived data.
-        renderAnalytics({ course_category: {}, pricing_category: {}, variant_category: {}, country_pivot: {}, domain_pivot: {} });
-    }
-}
-
-// Background refresh used by the cached path. Non-blocking: does not await.
-async function refreshAnalyticsInBackground() {
-    const payload = await fetchAnalyticsPayload();
-    if (!payload) return;
-    const hash = JSON.stringify(payload);
-    if (hash === lastAnalyticsHash) return;
-    analyticsData = payload;
-    lastAnalyticsHash = hash;
-    renderAnalytics(payload);
-}
-
-
-
-
-// ================================================================
-//  UPLOAD
-// ================================================================
-function initUpload() {
-    const input = document.getElementById('pdf-upload-global');
-    const label = document.getElementById('upload-label-global');
-    if (!input) return;
-
-    if (!isLocalEnv && label) label.style.display = 'none';
-
-    input.addEventListener('change', async () => {
-        if (!input.files.length) return;
-        if (!isLocalEnv) { alert('Upload is only available on the local dashboard.'); input.value = ''; return; }
-        const orig = label.textContent;
-        label.textContent = 'Uploading…';
-        const fd = new FormData();
-        for (const f of input.files) fd.append('files[]', f);
-        try {
-            const res = await fetch(API_BASE_URL + '/api/upload', { method: 'POST', body: fd });
-            const result = await res.json();
-            if (result.status === 'success') {
-                // ── Instant KPI update from the response (no second fetch needed) ──
-                if (result.data_payload) {
-                    // Reset hash caches to force re-render
-                    lastStatsHash = '';
-                    lastCountryHash = '';
-                    lastBarHash = '';
-                    _applyData(result.data_payload, false);
-                }
-                // Merge returned courses directly into allCoursesData
-                const updatedMap = {};
-                (result.verified_courses || []).forEach(c => { updatedMap[c.id] = c; });
-                allCoursesData = allCoursesData.map(c =>
-                    updatedMap[c.id] !== undefined ? updatedMap[c.id] : c
-                );
-                currentPage = 1;
-                renderCoursesPage();
-                // Show non-blocking success message after update
-                label.textContent = `✓ ${result.updates} updated`;
-                setTimeout(() => { label.textContent = orig; }, 3000);
-            } else {
-                alert(`✗ ${result.message}`);
-            }
-        } catch (e) { alert('Upload failed: ' + (e.message || 'network error')); }
-        finally { 
-            input.value = ''; 
-            if (label.textContent === 'Uploading…') label.textContent = orig;
-        }
-    });
-}
-
-// ================================================================
-//  HELPERS
-// ================================================================
-function getBadgeClass(status) {
-    switch ((status || '').toLowerCase()) {
-        case 'verified': return 'badge-verified';
-        case 'error': return 'badge-error';
-        case 'discrepancy': return 'badge-discrepancy';
-        default: return 'badge-open';
-    }
-}
-
-function escHtml(str) {
-    if (!str) return '';
-    return String(str)
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function escJs(str) {
-    if (!str) return '';
-    return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
-}
-
-// ================================================================
-//  INIT
-// ================================================================
-document.addEventListener('DOMContentLoaded', () => {
-    initTheme();
-    initTabs();
-    initGlobe();
-    initCharts();
-    initFilters();
-    initModal();
-    initUpload();
-    initAnalyticsSubTabs();
-
-    // ── Tier 1: Server-pre-embedded data (instant, 0 ms latency) ─────────
-    // The Flask index route embeds the current payload into window.__INITIAL_DATA__.
-    // Consuming it here paints real KPI numbers before any network request fires.
-    if (window.__INITIAL_DATA__ && window.__INITIAL_DATA__.status === 'success') {
-        _applyData(window.__INITIAL_DATA__, true /*animate*/);
-        firstDataFetch = false;
-    }
-
-    // ── Tier 2: localStorage cache (instant, 0 ms, for static/Firebase host) ──
-    // When the static site serves the page (no Flask pre-embed), use the
-    // localStorage snapshot from the previous session for an instant first paint.
-    if (!globalData) {
-        try {
-            const cached = JSON.parse(localStorage.getItem('cv_data_cache') || 'null');
-            // Accept cache up to 10 minutes old
-            if (cached && cached.data && (Date.now() - cached.ts) < 10 * 60 * 1000) {
-                _applyData(cached.data, true);
-                firstDataFetch = false;
-            }
-        } catch (_) {}
-    }
-
-    // ── Tier 3: Live fetch (always runs initially to ensure fresh data) ──────
-    fetchData().then(() => fetchAnalytics());
-
-    // Polling has been removed per user request. 
-    // Data now only updates on initial load and immediately after a successful upload/solve action.
-});
-=======
 /* ================================================================
    COURSEVERIFY CATALOG  ·  APP.JS  v9  (static JSON edition)
    Loads courses directly from courses.json in the same folder.
@@ -2184,10 +25,36 @@ let firstDataFetch = true;
 let courseFilter = { search: '', country: 'all', domain: 'all', qs: 'any', nirf: 'any', courseType: 'all' };
 
 // ── edX All Courses filter state ────────────────────────────────────
+const COURSES_PAGE_SIZE = 12;
+const favoriteCourses = new Set(JSON.parse(localStorage.getItem('cv_favorites') || '[]'));
 let edxFilterState = {
     typePill: 'all',   // course type from #course-type-pills
-    domainChip: 'all'  // domain category from #domain-chips-scroll
+    domainChip: 'all', // domain category from #domain-chips-scroll
+    levelPill: 'all',  // skill level from #skill-level-pills
+    country: 'all',    // country filter (e.g. from globe/metrics)
+    search: '',
+    sort: 'relevance',
+    view: 'grid',
+    page: 1
 };
+
+function getSkillLevel(course) {
+    // Infer skill level from course type and domain when no explicit field exists.
+    const type = normalizeDomain(course.domain);
+    const domain = getDomainCategory(course.id);
+    const beginnerTypes = ['Free', 'Free to Audit', 'Certificate'];
+    const advancedTypes = ["Bachelor's Degree", "Master's Degree"];
+    if (beginnerTypes.includes(type)) return 'Beginner';
+    if (advancedTypes.includes(type)) return 'Advanced';
+    if (domain === 'Foundational') return 'Beginner';
+    if (domain === 'Data & Application' || domain === 'Legal & Ethical') return 'Intermediate';
+    return 'Intermediate';
+}
+
+function matchLevelPill(course, level) {
+    if (level === 'all') return true;
+    return getSkillLevel(course) === level;
+}
 
 // ── Domain category by course idx (ID number) ───────────────────
 const DOMAIN_RANGES = [
@@ -2212,6 +79,84 @@ function getDomainCategory(idxRaw) {
 }
 
 const ALL_DOMAIN_LABELS = DOMAIN_RANGES.map(r => r.label);
+
+// ════════════════════════════════════════════════════════════════
+//  CYBERSECURITY DOMAIN KNOWLEDGE DATA
+// ════════════════════════════════════════════════════════════════
+const CYBER_DOMAINS_DATA = [
+    {
+        id: 'foundational',
+        title: 'Foundational',
+        icon: '🧱',
+        color: '#14b8a6',
+        summary: 'Core concepts every cybersecurity learner needs — from threat basics to risk frameworks and governance.',
+        subDomains: ['Cybersecurity Basics', 'Risk Management', 'Threat Landscape', 'Security Frameworks', 'Security Governance'],
+        skills: ['Risk Assessment', 'Policy Writing', 'NIST/ISO 27001', 'Security Awareness', 'Asset Management'],
+        roles: ['Security Analyst', 'GRC Analyst', 'IT Auditor', 'Risk Manager'],
+        courseTypes: ['Certificate', 'Free to Audit', "Bachelor's Degree"],
+        filterDomain: 'Foundational'
+    },
+    {
+        id: 'network',
+        title: 'Network Infrastructure',
+        icon: '🌐',
+        color: '#6366f1',
+        summary: 'Protect the arteries of digital infrastructure — firewalls, IDS/IPS, cloud networks, and zero-trust architecture.',
+        subDomains: ['Network Security', 'Firewalls & VPN', 'IDS/IPS', 'Cloud Security', 'Zero Trust Architecture'],
+        skills: ['Packet Analysis', 'Firewall Rules', 'SDN Security', 'VPC Design', 'Network Segmentation'],
+        roles: ['Network Security Engineer', 'Cloud Security Architect', 'SOC Analyst', 'Infrastructure Engineer'],
+        courseTypes: ['Certificate', 'Diploma', "Master's Degree"],
+        filterDomain: 'Network Infrastructure'
+    },
+    {
+        id: 'endpoint',
+        title: 'System & Endpoint',
+        icon: '💻',
+        color: '#06b6d4',
+        summary: 'Harden endpoints, operating systems, and mobile devices against malware, misconfiguration, and lateral movement.',
+        subDomains: ['Endpoint Security', 'OS Hardening', 'Mobile Security', 'Patch Management', 'Malware Defense'],
+        skills: ['EDR/XDR', 'OS Internals', 'Threat Hunting', 'Vulnerability Management', 'Incident Triage'],
+        roles: ['Endpoint Security Engineer', 'SOC Analyst', 'Threat Hunter', 'System Administrator'],
+        courseTypes: ['Certificate', 'Diploma', "Post Graduate Diploma"],
+        filterDomain: 'System & Endpoint'
+    },
+    {
+        id: 'forensics',
+        title: 'Cyber Forensics',
+        icon: '🔍',
+        color: '#8b5cf6',
+        summary: 'Investigate breaches, recover digital evidence, and reconstruct attacks using forensic tools and incident-response playbooks.',
+        subDomains: ['Digital Forensics', 'Incident Response', 'Reverse Engineering', 'eDiscovery', 'Threat Intelligence'],
+        skills: ['Disk Imaging', 'Memory Forensics', 'Kill Chain Analysis', 'Chain of Custody', 'IOC Triage'],
+        roles: ['Digital Forensics Specialist', 'Incident Responder', 'Malware Analyst', 'Threat Intel Analyst'],
+        courseTypes: ['Certificate', "Post Graduate Certificate", "Master's Degree"],
+        filterDomain: 'Cyber Forensics'
+    },
+    {
+        id: 'data',
+        title: 'Data & Application',
+        icon: '🗄️',
+        color: '#f43f5e',
+        summary: 'Secure code, databases, cryptography, and data privacy to protect the applications and information that power organizations.',
+        subDomains: ['Application Security', 'Data Privacy', 'Cryptography', 'Database Security', 'DevSecOps'],
+        skills: ['Secure Coding', 'OWASP Top 10', 'Encryption', 'Privacy by Design', 'CI/CD Security'],
+        roles: ['Application Security Engineer', 'Data Privacy Officer', 'DevSecOps Engineer', 'Cryptographer'],
+        courseTypes: ['Certificate', "Post Graduate Diploma", "Master's Degree"],
+        filterDomain: 'Data & Application'
+    },
+    {
+        id: 'legal',
+        title: 'Legal & Ethical',
+        icon: '⚖️',
+        color: '#f59e0b',
+        summary: 'Navigate cyber law, ethics, compliance, and reporting obligations across jurisdictions and industries.',
+        subDomains: ['Cyber Law', 'Ethics & Professionalism', 'Regulatory Compliance', 'Incident Reporting', 'Digital Rights'],
+        skills: ['Legal Research', 'Compliance Mapping', 'Incident Disclosure', 'Ethical Hacking Ethics', 'GDPR/CCPA'],
+        roles: ['Cybersecurity Lawyer', 'Compliance Manager', 'Ethics Officer', 'Policy Advisor'],
+        courseTypes: ['Certificate', 'Diploma', 'Free to Audit'],
+        filterDomain: 'Legal & Ethical'
+    }
+];
 
 // ── Academic-domain normalizer ──────────────────────────────────
 const _CANON_DOMAIN_FRAGMENTS = [
@@ -2241,7 +186,7 @@ function normalizeDomain(raw) {
     return 'Other';
 }
 
-let barChart, mapChart, lineChart, quantityBarChartInstance;
+let barChart, mapChart, lineChart;
 let barMode = 'domain'; // 'domain' | 'country'
 
 // ── Country flag emoji helper ─────────────────────────────────────
@@ -2274,13 +219,17 @@ function initTheme() {
         if (label) label.textContent = 'Light';
     }
     if (toggle) {
-        toggle.addEventListener('click', () => {
+        const doToggle = () => {
             document.body.classList.toggle('light-mode');
             const isLight = document.body.classList.contains('light-mode');
             localStorage.setItem('cvTheme', isLight ? 'light' : 'dark');
             if (label) label.textContent = isLight ? 'Light' : 'Dark';
             updateChartThemeColors();
             applyGlobeTheme(isLight ? 'light' : 'dark');
+        };
+        toggle.addEventListener('click', doToggle);
+        toggle.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); doToggle(); }
         });
     }
 
@@ -2289,29 +238,60 @@ function initTheme() {
 }
 
 function updateChartThemeColors() {
-    const isLight = document.body.classList.contains('light-mode');
-    const tickColor = isLight ? 'rgba(13, 19, 33, 0.7)' : 'rgba(255,255,255,0.7)';
-    if (quantityBarChartInstance) {
-        quantityBarChartInstance.options.plugins.legend.labels.color = tickColor;
-        quantityBarChartInstance.options.scales.x.ticks.color = tickColor;
-        quantityBarChartInstance.update();
+    if (window.__analyticsCountries) {
+        renderChartCountries('chart-countries', window.__analyticsCountries);
+    }
+    if (window.__analyticsTypes) {
+        renderChartSpecializations('chart-specializations', window.__analyticsTypes);
+    }
+    if (window.__analyticsPricing) {
+        renderChartPricing('chart-pricing', window.__analyticsPricing);
     }
 }
 
 // ================================================================
 //  TABS
 // ================================================================
-function switchTab(targetId) {
-    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+function ensureAnalyticsTabPlacement() {
+    // Defensive: if a cached/corrupted HTML file nested the Analytics tab
+    // inside another tab (e.g. tab-courses with display:none), move it out
+    // so it becomes a direct child of .page and can actually paint.
+    const tab = document.getElementById('tab-analytics');
+    const page = document.querySelector('.page');
+    if (!tab || !page) return;
+    const parent = tab.parentElement;
+    if (parent && parent !== page) {
+        console.warn('[Analytics] tab was nested inside', parent.id || parent.className, '— moving to .page');
+        page.appendChild(tab);
+    }
+}
+
+async function switchTab(targetId) {
+    document.querySelectorAll('.tab-content').forEach(t => {
+        t.classList.remove('active', 'tab-enter');
+    });
     document.querySelectorAll('#nav-tabs a').forEach(a => a.classList.remove('active'));
     const content = document.getElementById(targetId);
-    if (content) content.classList.add('active');
+    if (content) {
+        content.classList.add('active', 'tab-enter');
+        setTimeout(() => content.classList.remove('tab-enter'), 350);
+    }
     const link = document.querySelector(`#nav-tabs a[data-target="${targetId}"]`);
     if (link) link.classList.add('active');
     if (targetId === 'tab-courses') loadAllCourses();
     if (targetId === 'tab-analytics') {
-        if (allCoursesData.length === 0) loadAllCourses(true);
-        renderAnalytics({});
+        ensureAnalyticsTabPlacement();
+        renderAnalyticsTab();
+    }
+    if (targetId !== 'tab-dashboard') hideGlobeTooltip();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function hideGlobeTooltip() {
+    const tooltipEl = document.getElementById('cobe-tooltip');
+    if (tooltipEl) {
+        tooltipEl.classList.remove('visible');
+        tooltipEl.style.display = 'none';
     }
 }
 
@@ -2322,6 +302,8 @@ function initTabs() {
             switchTab(a.getAttribute('data-target'));
         });
     });
+    // Run once on load to fix any malformed DOM before the user clicks Analytics.
+    ensureAnalyticsTabPlacement();
 }
 
 // ================================================================
@@ -2329,6 +311,7 @@ function initTabs() {
 // ================================================================
 let globeInstance = null;   // { isCobe, pointOfView(), controls() }
 let selectedCountry = null;
+let hoverCountry = null;      // shared across globe init/update/highlight
 let cobeMarkers = [];
 
 const COUNTRY_COORDS = {
@@ -2391,18 +374,18 @@ function hexToRgb01(hex) {
 
 const GLOBE_THEMES = {
     dark: {
-        base: '#111827',      // slate-900 sphere base (visible but still dark)
-        bg: '#0b0f19',        // canvas background
-        halo: '#6366f1',      // brighter indigo atmosphere
-        marker: '#d8b4fe',    // brighter violet markers
-        arc: '#22d3ee'        // neon cyan arcs
+        base: '#111827',      
+        bg: '#0b0f19',        
+        halo: '#6366f1',      
+        marker: '#d8b4fe',    
+        arc: '#22d3ee'        
     },
     light: {
-        base: '#e2e8f0',      // slate-200 sphere base (clear against light bg)
-        bg: '#f8fafc',        // bright off-white canvas
-        halo: '#4f46e5',      // deeper indigo bloom
-        marker: '#7e22ce',    // deep purple markers for contrast on light sphere
-        arc: '#0891b2'        // darker cyan arcs for contrast on light sphere
+        base: '#e2e8f0',      
+        bg: '#f8fafc',        
+        halo: '#4f46e5',      
+        marker: '#7e22ce',    
+        arc: '#0891b2'        
     }
 };
 
@@ -2418,7 +401,7 @@ function applyGlobeTheme(theme) {
     const arc = hexToRgb01(t.arc);
 
     if (cobeGlobe) {
-        // Re-generate dense N×N hub arcs with the current theme color
+        
         const denseArcs = generateDenseArcData().map(a => ({
             from: [a.startLat, a.startLng],
             to: [a.endLat, a.endLng],
@@ -2430,8 +413,8 @@ function applyGlobeTheme(theme) {
             glowColor: glow,
             markerColor: marker,
             arcColor: arc,
-            arcWidth: 0.8,   // visible precision lines
-            arcHeight: 0.28, // gentle orbital curve
+            arcWidth: 0.8,  
+            arcHeight: 0.28, 
             markers: cobeMarkers,
             arcs: denseArcs
         });
@@ -2450,14 +433,35 @@ function initGlobe() {
         return;
     }
     initCobeGlobe(container);
+
+    globeInstance.pointOfView({
+        lat: 20.5937,
+        lng: 78.9629,
+        altitude: 2.1 
+    }, 0);
+
+    const controls = globeInstance.controls();
+    controls.enableZoom = false;
+    controls.minDistance = 250;
+    controls.maxDistance = 250;
 }
 
-// COBE render state
 let cobeGlobe = null;
-let cobeState = { phi: 0, theta: 0.3, scale: 0.85 };
+let cobeState = { phi: -2.949, theta: 0.359, scale: 1.024 };
 let cobeAutoRotate = true;
 let cobeIsDragging = false;
 let cobeAnimationId = null;
+let cobeMinScale = 0.78;
+let cobeMaxScale = 1.08;
+let cobeZoomMinDistance = 200;
+let cobeZoomMaxDistance = 380;
+
+function syncGlobeScaleBounds() {
+    const base = 215;
+    cobeMaxScale = Math.min(1.08, base / cobeZoomMinDistance);
+    cobeMinScale = Math.max(0.78, base / cobeZoomMaxDistance);
+}
+syncGlobeScaleBounds();
 
 function initCobeGlobe(container) {
     container.innerHTML = '';
@@ -2474,7 +478,6 @@ function initCobeGlobe(container) {
     canvas.height = Math.floor(height * dpr);
     container.appendChild(canvas);
 
-    // COBE wraps the canvas in its own div; make sure that wrapper is sized and interactive
     setTimeout(() => {
         const wrapper = canvas.parentElement;
         if (wrapper && wrapper !== container) {
@@ -2489,14 +492,14 @@ function initCobeGlobe(container) {
         id: 'cobe-' + i,
         location: [lat, lng],
         size: 0.022,
-        color: [0.847, 0.706, 0.996]  // #d8b4fe bright violet hub marker
+        color: [0.847, 0.706, 0.996]  
     }));
 
     const arcs = generateDenseArcData().map((arc, i) => ({
         id: 'arc-' + i,
         from: [arc.startLat, arc.startLng],
         to: [arc.endLat, arc.endLng],
-        color: [0.133, 0.827, 0.933]   // default neon cyan, overridden by theme
+        color: [0.133, 0.827, 0.933]  
     }));
 
     const initialTheme = getCurrentGlobeTheme();
@@ -2525,7 +528,6 @@ function initCobeGlobe(container) {
             markers: cobeMarkers,
             arcs: arcs,
             onRender: (state) => {
-                // Sync our tracked state into COBE before every frame
                 state.phi = cobeState.phi;
                 state.theta = cobeState.theta;
                 state.scale = cobeState.scale;
@@ -2537,10 +539,16 @@ function initCobeGlobe(container) {
         return;
     }
 
-    // Public API used by handleCountryClick / resetCountrySelection
     globeInstance = {
         isCobe: true,
-        controls: () => ({ autoRotate: cobeAutoRotate, enableZoom: true }),
+        controls: () => ({
+            autoRotate: cobeAutoRotate,
+            enableZoom: true,
+            get minDistance() { return cobeZoomMinDistance; },
+            set minDistance(v) { cobeZoomMinDistance = Number(v) || 200; syncGlobeScaleBounds(); },
+            get maxDistance() { return cobeZoomMaxDistance; },
+            set maxDistance(v) { cobeZoomMaxDistance = Number(v) || 380; syncGlobeScaleBounds(); }
+        }),
         pointOfView: ({ lat = 20, lng = 0, altitude = 2.5 }, duration = 1000) => {
             // Match COBE's rotation convention used in cobeProject() so the clicked
             // country ends up centered and facing the viewer (north up).
@@ -2548,7 +556,7 @@ function initCobeGlobe(container) {
             const targetTheta = lat * (Math.PI / 180);
             // COBE uses a unit sphere scale rather than a camera distance; lower scale
             // pulls the globe back so it occupies ~55–60 % of the viewport height.
-            const targetScale = Math.max(0.72, Math.min(1.18, 2.15 / altitude));
+            const targetScale = Math.max(cobeMinScale, Math.min(cobeMaxScale, 2.15 / altitude));
             const startPhi = cobeState.phi;
             const startTheta = cobeState.theta;
             const startScale = cobeState.scale;
@@ -2638,12 +646,20 @@ function initCobeGlobe(container) {
     }
 
     function showTooltip(e, name, count) {
-        tooltipEl.innerHTML = `<b>${escHtml(name)}</b>${count ? `<br/>${count} course${count === 1 ? '' : 's'}` : '<br/>Click to view'}`;
+        const flag = getFlag(name);
+        tooltipEl.innerHTML = `<b>${flag} ${escHtml(name)}</b>${count ? `<br/>${count.toLocaleString()} course${count === 1 ? '' : 's'}` : '<br/>Click to view'}`;
         tooltipEl.style.display = 'block';
-        tooltipEl.style.left = (e.clientX + 12) + 'px';
-        tooltipEl.style.top = (e.clientY + 12) + 'px';
+        const tipRect = tooltipEl.getBoundingClientRect();
+        let left = e.clientX + 14;
+        let top = e.clientY + 14;
+        if (left + tipRect.width > window.innerWidth - 12) left = e.clientX - tipRect.width - 12;
+        if (top + tipRect.height > window.innerHeight - 12) top = e.clientY - tipRect.height - 12;
+        tooltipEl.style.left = left + 'px';
+        tooltipEl.style.top = top + 'px';
+        tooltipEl.classList.add('visible');
     }
     function hideTooltip() {
+        tooltipEl.classList.remove('visible');
         tooltipEl.style.display = 'none';
     }
 
@@ -2655,6 +671,10 @@ function initCobeGlobe(container) {
     function updateHover(clientX, clientY) {
         if (isDown) { hideTooltip(); return; }
         const country = getHoveredCountry(clientX, clientY);
+        if (country !== hoverCountry) {
+            hoverCountry = country;
+            updateGlobeHighlight(globalData?.country_counts || {});
+        }
         if (country) {
             const count = (globalData?.country_counts && Object.entries(globalData.country_counts)
                 .filter(([k]) => isSameCountry(k, country)).reduce((s, [, v]) => s + v, 0)) || 0;
@@ -2744,13 +764,24 @@ function initCobeGlobe(container) {
         cobeGlobe.update(cobeState);
     }, { passive: true });
 
-    // Zoom with wheel
-    canvas.addEventListener('wheel', e => {
-        e.preventDefault();
-        cobeState.scale += e.deltaY * -0.0008;
-        cobeState.scale = Math.max(0.55, Math.min(1.35, cobeState.scale));
-        cobeGlobe.update(cobeState);
-    }, { passive: false });
+    // Keyboard controls for globe (rotation only — zoom disabled)
+    canvas.setAttribute('tabindex', '0');
+    canvas.setAttribute('aria-label', 'Interactive 3D globe. Use arrow keys to rotate.');
+    canvas.addEventListener('keydown', e => {
+        const key = e.key;
+        const step = 0.04;
+        let handled = true;
+        if (key === 'ArrowLeft') cobeState.phi -= step;
+        else if (key === 'ArrowRight') cobeState.phi += step;
+        else if (key === 'ArrowUp') cobeState.theta = Math.min(Math.PI / 2 - 0.1, cobeState.theta + step);
+        else if (key === 'ArrowDown') cobeState.theta = Math.max(-Math.PI / 2 + 0.1, cobeState.theta - step);
+        else handled = false;
+        if (handled) {
+            e.preventDefault();
+            cobeAutoRotate = false;
+            cobeGlobe.update(cobeState);
+        }
+    });
 
     // Resize handling
     const ro = new ResizeObserver(() => {
@@ -2762,21 +793,34 @@ function initCobeGlobe(container) {
     });
     ro.observe(container);
 
-    // Dedicated animation loop so rotation/drag/zoom are applied every frame
     function animate() {
         if (cobeAutoRotate && !cobeIsDragging) {
             cobeState.phi += 0.005;
         }
+        // Keep selected-country pulse animating
+        if (selectedCountry) updateGlobeHighlight(globalData?.country_counts || {});
         cobeGlobe.update(cobeState);
         cobeAnimationId = requestAnimationFrame(animate);
     }
     cobeAnimationId = requestAnimationFrame(animate);
 
-    // Apply the dynamic theme once the globe is alive (also wires arc/marker colors)
     applyGlobeTheme(initialTheme);
 
     console.log('[Globe] COBE active. Markers:', cobeMarkers.length, 'Arcs:', arcs.length);
     updateGlobeHighlight(globalData?.country_counts || {});
+
+    // Click outside / Esc to close country detail panel
+    const panel = document.getElementById('course-details-panel');
+    if (panel) {
+        document.addEventListener('click', e => {
+            if (!panel.contains(e.target) && !canvas.contains(e.target) && panel.style.display !== 'none') {
+                resetCountrySelection();
+            }
+        });
+    }
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && panel && panel.style.display !== 'none') resetCountrySelection();
+    });
 }
 
 function getCountryCoords(countryName) {
@@ -2798,29 +842,7 @@ function handleCountryClick(countryName) {
         globeInstance.controls().autoRotate = false;
     }
 
-    const matches = allCoursesData.filter(c => isSameCountry(c.country, countryName));
-
-    // Update dashboard widgets to reflect only this country
-    const countryCounts = {};
-    const domainCounts = {};
-    matches.forEach(c => {
-        if (c.country && isValidCountry(c.country)) {
-            countryCounts[c.country] = (countryCounts[c.country] || 0) + 1;
-        }
-        const cat = getDomainCategory(c.id);
-        if (cat && cat !== 'Uncategorised') domainCounts[cat] = (domainCounts[cat] || 0) + 1;
-    });
-    const scopedData = {
-        status: 'success',
-        documents: matches,
-        stats: { total: matches.length },
-        country_counts: countryCounts,
-        domain_counts: domainCounts
-    };
-    updateDashboardExtras(scopedData);
-    updateCards(scopedData.stats);
-
-    renderCountryDetailPanel(countryName, matches);
+    jumpToCourses({ country: countryName });
 }
 
 function renderCountryDetailPanel(countryName, courses) {
@@ -2854,8 +876,8 @@ function renderCountryDetailPanel(countryName, courses) {
     const cdsTotal = document.getElementById('cds-total');
     const cdsQs = document.getElementById('cds-qs');
     const cdsDomain = document.getElementById('cds-domain');
-    if (cdsTotal) cdsTotal.textContent = courses.length.toLocaleString();
-    if (cdsQs) cdsQs.textContent = qsCount.toLocaleString();
+    if (cdsTotal) countUp(cdsTotal, courses.length, courses.length.toLocaleString());
+    if (cdsQs) countUp(cdsQs, qsCount, qsCount.toLocaleString());
     if (cdsDomain) cdsDomain.textContent = topDomain;
 
     const topicList = document.getElementById('country-detail-topic-list');
@@ -2874,19 +896,54 @@ function renderCountryDetailPanel(countryName, courses) {
     const qsRank = c => c.qs ? String(c.qs) : (c.has_qs_badge ? 'Yes' : 'No');
     const nirfRank = c => c.nirf ? String(c.nirf) : (c.has_nirf_badge ? 'Yes' : 'No');
 
+    function formatRankCell(val, badgeType) {
+        if (!val || val === 'No') return '<span class="rank-text muted">—</span>';
+        if (badgeType === 'qs') return `<span class="table-rank-badge qs">🌟 ${escHtml(val)}</span>`;
+        if (badgeType === 'nirf') return `<span class="table-rank-badge nirf">🇮🇳 ${escHtml(val)}</span>`;
+        return escHtml(val);
+    }
+
     tbody.innerHTML = courses.length === 0
-        ? '<tr><td colspan="4" class="empty-state">No courses found for this country.</td></tr>'
-        : courses.slice(0, 20).map(c => `
-            <tr>
-                <td class="course-name-cell" title="${escHtml(c.name)}"><strong>${escHtml(c.name)}</strong></td>
+        ? `<tr class="empty-row">
+            <td colspan="5" class="empty-state">
+                <div class="empty-icon">📭</div>
+                <strong>No courses found</strong>
+                <div class="empty-sub">Try a different country or reset the filters.</div>
+            </td>
+          </tr>`
+        : courses.slice(0, 20).map((c, i) => {
+            const qsVal = c.qs ? String(c.qs) : (c.has_qs_badge ? 'Ranked' : '');
+            const nirfVal = c.nirf ? String(c.nirf) : (c.has_nirf_badge ? 'Ranked' : '');
+            const saved = favoriteCourses.has(String(c.id));
+            return `
+            <tr tabindex="0" data-course-id="${c.id}" title="View ${escHtml(c.name)}">
+                <td class="course-name-cell freeze-col">
+                    <span class="row-num">${(i + 1).toString().padStart(2, '0')}</span>
+                    <strong>${escHtml(c.name)}</strong>
+                </td>
                 <td>${escHtml(c.university || '—')}</td>
-                <td>${escHtml(qsRank(c))}</td>
-                <td>${escHtml(nirfRank(c))}</td>
-            </tr>`).join('');
+                <td class="col-center">${formatRankCell(qsVal, 'qs')}</td>
+                <td class="col-center">${formatRankCell(nirfVal, 'nirf')}</td>
+                <td class="col-actions">
+                    <div class="row-actions" role="group" aria-label="Row actions">
+                        <button class="row-action" title="View details" aria-label="View details" onclick="event.stopPropagation(); showCourseModal('${c.id}')">👁</button>
+                        <button class="row-action ${saved ? 'saved' : ''}" title="${saved ? 'Remove from saved' : 'Save course'}" aria-label="${saved ? 'Remove from saved' : 'Save course'}" aria-pressed="${saved}" onclick="event.stopPropagation(); toggleFavorite('${c.id}', this)">${saved ? '♥' : '♡'}</button>
+                        <a class="row-action" href="${escHtml(getCourseUrl(c))}" target="_blank" rel="noopener" title="Visit course website" aria-label="Visit course website" onclick="event.stopPropagation();">↗</a>
+                    </div>
+                </td>
+            </tr>`;
+        }).join('');
+
+    // Make rows keyboard-activatable
+    tbody.querySelectorAll('tr[data-course-id]').forEach(row => {
+        row.addEventListener('click', () => showCourseModal(row.dataset.courseId));
+        row.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showCourseModal(row.dataset.courseId); }
+        });
+    });
 
     panel.style.display = 'flex';
 
-    // Dim the right-sidebar chart so it never visually collides with the open panel.
     const dashRight = document.querySelector('.dash-right');
     if (dashRight) dashRight.classList.add('has-active-selection');
 }
@@ -2903,7 +960,7 @@ function resetCountrySelection() {
     const dashRight = document.querySelector('.dash-right');
     if (dashRight) dashRight.classList.remove('has-active-selection');
     if (globeInstance) {
-        globeInstance.pointOfView({ lat: 20, lng: 0, altitude: 2.5 }, 1200);
+        globeInstance.pointOfView({ lat: 20.5937, lng: 78.9629, altitude: 2.1 }, 1200);
         globeInstance.controls().autoRotate = true;
     }
     // Restore global dashboard data
@@ -2921,70 +978,94 @@ function updateGlobeHighlight(countryCounts) {
     const theme = GLOBE_THEMES[getCurrentGlobeTheme()];
     const baseMarker = hexToRgb01(theme.marker);
     const selectedMarker = hexToRgb01('#00f2fe');   // bright cyan for active selection
+    const hoverMarker = hexToRgb01('#ffffff');      // white glow on hover
+    const dimFactor = selectedCountry ? 0.45 : 1;
+    const pulse = selectedCountry ? 1 + Math.sin(performance.now() / 250) * 0.08 : 1;
     cobeMarkers = markerEntries.map(([name, [lat, lng]], i) => {
         const count = Object.entries(counts)
             .filter(([k]) => isSameCountry(k, name))
             .reduce((s, [, v]) => s + v, 0);
         const isSelected = selectedCountry && isSameCountry(selectedCountry, name);
+        const isHovered = hoverCountry && isSameCountry(hoverCountry, name);
         // Square-root scale with a hard max so India doesn't swallow smaller dots.
         const maxSize = 0.055;
         const minSize = 0.018;
-        const size = isSelected ? 0.065 : (count ? Math.min(maxSize, minSize + (Math.sqrt(count) / Math.sqrt(max)) * (maxSize - minSize)) : minSize);
+        let size = isSelected ? 0.065 * pulse : (count ? Math.min(maxSize, minSize + (Math.sqrt(count) / Math.sqrt(max)) * (maxSize - minSize)) : minSize);
+        if (isHovered) size *= 1.25;
+        let color;
+        if (isSelected) color = selectedMarker;
+        else if (isHovered) color = hoverMarker;
+        else if (count) color = baseMarker;
+        else color = [baseMarker[0] * 0.55, baseMarker[1] * 0.55, baseMarker[2] * 0.55];
+        // Dim non-selected markers when a country is selected.
+        if (selectedCountry && !isSelected) {
+            color = [color[0] * dimFactor, color[1] * dimFactor, color[2] * dimFactor];
+        }
         return {
             id: 'cobe-' + i,
             location: [lat, lng],
             size,
-            color: isSelected ? selectedMarker : (count ? baseMarker : [baseMarker[0] * 0.55, baseMarker[1] * 0.55, baseMarker[2] * 0.55])
+            color
         };
     });
     cobeGlobe.update({ markers: cobeMarkers });
 }
-// ================================================================
-//  DASHBOARD EXTRAS (IIT/IIIT/NIT, Free/FTA/HVLC, Top 5 Countries)
-// ================================================================
-function renderCountryBarChart(intlCountries, total) {
-    const qCtx = document.getElementById('quantityBarChart');
-    if (!qCtx) return;
-    if (quantityBarChartInstance) quantityBarChartInstance.destroy();
-    const labels = intlCountries.map(c => c[0]);
-    const dVals = intlCountries.map(c => (c[1] / total) * 100);
 
+function renderCountryBarChart(intlCountries, total) {
+    const container = document.getElementById('quantity-bars');
+    if (!container) return;
+    if (!intlCountries.length) { container.innerHTML = ''; return; }
+    const max = Math.max(...intlCountries.map(c => c[1]), 1);
     const isLight = document.body.classList.contains('light-mode');
-    const tickColor = isLight ? 'rgba(13, 19, 33, 0.7)' : 'rgba(255,255,255,0.7)';
-    const fillColor = isLight ? '#378ADD' : '#60a5fa';
-    quantityBarChartInstance = new Chart(qCtx.getContext('2d'), {
-        type: 'bar',
-        data: { labels, datasets: [{ data: dVals, backgroundColor: fillColor, borderRadius: 4, barThickness: 18 }] },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: { display: false },
-                tooltip: {
-                    callbacks: {
-                        title: (ctx) => intlCountries[ctx[0].dataIndex][0],
-                        label: (ctx) => {
-                            const raw = intlCountries[ctx[0].dataIndex][1];
-                            return `${raw.toLocaleString()} courses (${ctx.raw.toFixed(1)}%)`;
-                        }
-                    }
-                }
-            },
-            scales: {
-                x: {
-                    grid: { display: false, drawBorder: false },
-                    ticks: { color: tickColor, font: { size: 10 } }
-                },
-                y: {
-                    display: true,
-                    beginAtZero: true,
-                    max: 20,
-                    grid: { color: isLight ? 'rgba(0,0,0,0.04)' : 'rgba(255,255,255,0.04)', drawBorder: false },
-                    ticks: { color: tickColor, font: { size: 10 }, callback: v => v + '%' }
-                }
-            },
-            layout: { padding: { top: 10, bottom: 0 } }
-        }
+    container.innerHTML = intlCountries.map(([name, count]) => {
+        const pct = (count / total) * 100;
+        const relative = (count / max) * 100;
+        return `
+            <div class="simple-bar clickable" data-country="${escHtml(name)}" role="button" tabindex="0" title="Show courses from ${escHtml(name)}">
+                <div class="simple-bar-label"><span>${escHtml(getFlag(name))} ${escHtml(name)}</span> <span>${count.toLocaleString()} · ${pct.toFixed(1)}%</span></div>
+                <div class="simple-bar-track"><div class="simple-bar-fill" style="width:${relative}%"></div></div>
+            </div>`;
+    }).join('');
+
+    container.querySelectorAll('.simple-bar.clickable').forEach(bar => {
+        bar.addEventListener('click', () => {
+            jumpToCourses({ country: bar.dataset.country });
+        });
+        bar.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jumpToCourses({ country: bar.dataset.country }); }
+        });
+    });
+}
+
+function initStickyFilterBar() {
+    const bar = document.getElementById('trending-filter-container');
+    if (!bar) return;
+    const observer = new IntersectionObserver(([entry]) => {
+        bar.classList.toggle('is-stuck', entry.intersectionRatio < 1);
+    }, { threshold: [1], rootMargin: '-1px 0px 0px 0px' });
+    observer.observe(bar);
+}
+
+function initDashboardClickableMetrics() {
+    document.querySelectorAll('.metric-row.clickable[data-filter-type]').forEach(row => {
+        const type = row.dataset.filterType;
+        row.addEventListener('click', () => jumpToCourses({ courseType: type }));
+        row.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jumpToCourses({ courseType: type }); }
+        });
+    });
+    document.querySelectorAll('.metric-card.clickable[data-filter-all]').forEach(card => {
+        card.addEventListener('click', () => jumpToCourses({}));
+        card.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jumpToCourses({}); }
+        });
+    });
+    document.querySelectorAll('.metric-card.clickable[data-filter-country]').forEach(card => {
+        const country = card.dataset.filterCountry;
+        card.addEventListener('click', () => jumpToCourses({ country }));
+        card.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jumpToCourses({ country }); }
+        });
     });
 }
 
@@ -3010,9 +1091,9 @@ function updateDashboardExtras(data) {
             if (!seen.nit.has(key)) { nitCount++; seen.nit.add(key); }
         }
     });
-    set('dash-iit-count', iitCount.toLocaleString());
-    set('dash-iiit-count', iiitCount.toLocaleString());
-    set('dash-nit-count', nitCount.toLocaleString());
+    countUp('dash-iit-count', iitCount, iitCount.toLocaleString());
+    countUp('dash-iiit-count', iiitCount, iiitCount.toLocaleString());
+    countUp('dash-nit-count', nitCount, nitCount.toLocaleString());
     const instMax = Math.max(iitCount, iiitCount, nitCount, 1);
     setPct('dash-iit-bar', (iitCount / instMax * 100) + '%');
     setPct('dash-iiit-bar', (iiitCount / instMax * 100) + '%');
@@ -3022,9 +1103,9 @@ function updateDashboardExtras(data) {
     const freeCount = domainCounts['Free'] || 0;
     const ftaCount = domainCounts['Free to Audit'] || 0;
     const hvlcCount = domainCounts['High Value Low Cost'] || 0;
-    set('dash-free-count', freeCount.toLocaleString());
-    set('dash-fta-count', ftaCount.toLocaleString());
-    set('dash-hvlc-count', hvlcCount.toLocaleString());
+    countUp('dash-free-count', freeCount, freeCount.toLocaleString());
+    countUp('dash-fta-count', ftaCount, ftaCount.toLocaleString());
+    countUp('dash-hvlc-count', hvlcCount, hvlcCount.toLocaleString());
 
     const countryCounts = data.country_counts || {};
     const sortedCountries = Object.entries(countryCounts)
@@ -3034,7 +1115,7 @@ function updateDashboardExtras(data) {
     const indiaEntry = sortedCountries.find(([k]) => isSameCountry(k, 'India'));
     if (indiaEntry) {
         const [name, count] = indiaEntry;
-        set('india-stat-count', count.toLocaleString());
+        countUp('india-stat-count', count, count.toLocaleString());
         set('india-stat-pct', `${Math.round(count / total * 100)}% of catalog`);
     } else {
         set('india-stat-count', '—');
@@ -3161,8 +1242,8 @@ function initCharts() {
 //  DATA UPDATES
 // ================================================================
 function updateCards(stats) {
-    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-    set('total-count', stats.total || 0);
+    const total = stats.total || 0;
+    countUp('total-count', total, total.toLocaleString());
 }
 
 function updateBarChart(animate = true) {
@@ -3179,6 +1260,14 @@ function isValidCountry(k) {
     if (!k) return false;
     const s = String(k).trim().toLowerCase();
     return s !== '' && s !== 'undefined' && s !== 'unknown' && s !== 'null' && !s.startsWith('not found');
+}
+
+function isSameCountry(a, b) {
+    if (!a || !b) return false;
+    const al = String(a).trim().toLowerCase();
+    const bl = String(b).trim().toLowerCase();
+    if (!al || !bl) return false;
+    return al === bl || al.includes(bl) || bl.includes(al);
 }
 
 function updateLineChart(countryCounts, animate = true) {
@@ -3260,7 +1349,7 @@ function applyFilter(type, value) {
     const nirfRank = c => c.nirf ? String(c.nirf) : (c.has_nirf_badge ? 'Yes' : 'No');
 
     tbody.innerHTML = filtered.length === 0
-        ? '<tr><td colspan="4" class="empty-state">No courses found</td></tr>'
+        ? '<tr><td colspan="4" class="empty-state"><strong>No courses found</strong>Adjust filters to see matching courses.</td></tr>'
         : filtered.map(c => `
             <tr>
                 <td class="course-name-cell" title="${escHtml(c.name)}"><strong>${escHtml(c.name)}</strong></td>
@@ -3358,103 +1447,448 @@ function matchDomainChip(course, chip) {
     return getDomainCategory(course.id) === chip;
 }
 
+function matchCountry(course, country) {
+    if (!country || country === 'all') return true;
+    return isSameCountry(course.country, country);
+}
+
 function getEdxFilteredCourses() {
     const base = getFilteredCourseData();
-    return base.filter(c => matchTypePill(c, edxFilterState.typePill) && matchDomainChip(c, edxFilterState.domainChip));
+    let result = base.filter(c =>
+        matchTypePill(c, edxFilterState.typePill) &&
+        matchDomainChip(c, edxFilterState.domainChip) &&
+        matchLevelPill(c, edxFilterState.levelPill) &&
+        matchCountry(c, edxFilterState.country)
+    );
+    const q = edxFilterState.search.trim().toLowerCase();
+    if (q) {
+        result = result.filter(c =>
+            (c.name || '').toLowerCase().includes(q) ||
+            (c.university || '').toLowerCase().includes(q) ||
+            (c.country || '').toLowerCase().includes(q) ||
+            getDomainCategory(c.id).toLowerCase().includes(q)
+        );
+    }
+    const sort = edxFilterState.sort;
+    if (sort === 'name') {
+        result = result.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    } else if (sort === 'nameDesc') {
+        result = result.slice().sort((a, b) => (b.name || '').localeCompare(a.name || ''));
+    } else if (sort === 'country') {
+        result = result.slice().sort((a, b) => (a.country || '').localeCompare(b.country || ''));
+    } else if (sort === 'qs') {
+        result = result.slice().sort((a, b) => (b.has_qs_badge ? 1 : 0) - (a.has_qs_badge ? 1 : 0));
+    }
+    return result;
 }
 
-function getEdxCardBannerClass(course) {
-    const cat = getDomainCategory(course.id).toLowerCase();
-    if (cat.includes('cyber forensics') || cat.includes('network infrastructure') || cat.includes('system & endpoint')) return 'cyber';
-    if (cat.includes('data & application')) return 'data';
-    if (cat.includes('legal & ethical')) return 'business';
-    if (cat.includes('foundational')) return 'ai';
-    if (['Post Graduate Diploma', 'Post Graduate Certificate'].includes(normalizeDomain(course.domain))) return 'exec';
-    return 'default';
+function updateFilterCounts() {
+    const base = getFilteredCourseData();
+    const typeCounts = {};
+    const domainCounts = {};
+    const levelCounts = {};
+
+    document.querySelectorAll('#course-type-pills .type-pill').forEach(b => {
+        const type = b.dataset.type || 'all';
+        typeCounts[type] = base.filter(c => matchTypePill(c, type)).length;
+    });
+    document.querySelectorAll('#domain-chips-scroll .domain-chip').forEach(b => {
+        const domain = b.dataset.domain || 'all';
+        domainCounts[domain] = base.filter(c => matchDomainChip(c, domain)).length;
+    });
+    document.querySelectorAll('#skill-level-pills .type-pill').forEach(b => {
+        const level = b.dataset.level || 'all';
+        levelCounts[level] = base.filter(c => matchLevelPill(c, level)).length;
+    });
+
+    document.querySelectorAll('#course-type-pills .type-pill .filter-count').forEach(el => {
+        const type = el.closest('.type-pill')?.dataset.type || 'all';
+        el.textContent = typeCounts[type] ?? 0;
+    });
+    document.querySelectorAll('#domain-chips-scroll .domain-chip .filter-count').forEach(el => {
+        const domain = el.closest('.domain-chip')?.dataset.domain || 'all';
+        el.textContent = domainCounts[domain] ?? 0;
+    });
+    document.querySelectorAll('#skill-level-pills .type-pill .filter-count').forEach(el => {
+        const level = el.closest('.type-pill')?.dataset.level || 'all';
+        el.textContent = levelCounts[level] ?? 0;
+    });
 }
 
-function getEdxCardTag(course) {
-    const norm = normalizeDomain(course.domain);
-    if (['Post Graduate Diploma', 'Post Graduate Certificate'].includes(norm)) return 'Executive Education';
-    if (norm === "Master's Degree") return "Master's";
-    if (norm === "Bachelor's Degree") return "Bachelor's";
-    if (norm === 'Certificate' || norm === 'Diploma') return 'Certificate';
-    if (norm === 'Free to Audit') return 'Free to Audit';
-    if (norm === 'High Value Low Cost') return 'High Value';
-    if (norm === 'Free') return 'Free';
-    return 'Trending';
-}
-
-function getProviderLogoInitials(name) {
-    if (!name) return '?';
+function getUniversityInitials(name) {
+    if (!name) return 'CV';
     const words = String(name).trim().split(/\s+/).filter(w => w.length > 1 && !/^(the|of|and|&|for|in)$/i.test(w));
     const firstLetters = words.slice(0, 2).map(w => w[0].toUpperCase());
     return firstLetters.join('') || name[0].toUpperCase();
 }
 
-function formatDuration(course) {
-    if (course.duration) return String(course.duration).trim();
-    const weeks = (course.id % 12) + 2; // stable synthetic fallback when no duration field
-    return `${weeks} weeks to complete`;
+function getAccessPill(course) {
+    const norm = normalizeDomain(course.domain);
+    if (norm === 'Free') return { label: 'FREE', cls: 'free' };
+    if (norm === 'Free to Audit') return { label: 'FREE TO AUDIT', cls: 'audit' };
+    if (norm === 'High Value Low Cost') return { label: 'HIGH VALUE', cls: 'value' };
+    return { label: 'PAID', cls: 'paid' };
 }
 
-function getEdxRelevanceTag(course) {
-    if (course.has_qs_badge && course.has_nirf_badge) return { label: 'Dual Ranked', icon: '🏆' };
-    if (course.has_qs_badge) return { label: 'QS Ranked', icon: '🌟' };
-    if (course.has_nirf_badge) return { label: 'NIRF Ranked', icon: '🇮🇳' };
-    if (course.country && ['India', 'United States', 'United Kingdom', 'Australia', 'Canada'].some(c => isSameCountry(c, course.country))) {
-        return { label: 'Top Hub', icon: '🌐' };
+function formatDurationShort(course) {
+    if (course.duration) {
+        const d = String(course.duration).trim();
+        const m = d.match(/(\d+)\s*months?/i);
+        if (m) return `${m[1]}M`;
+        const w = d.match(/(\d+)\s*weeks?/i);
+        if (w) return `${w[1]}W`;
+        return d;
     }
-    return { label: 'Relevant', icon: '✨' };
+    const weeks = (parseInt(course.id, 10) % 12) + 2;
+    return `${weeks}W`;
+}
+
+function formatMode(course) {
+    if (course.mode) return course.mode;
+    if (course.duration && /online/i.test(String(course.duration))) return 'Online';
+    return 'Online';
+}
+
+function toggleFavorite(id, btn) {
+    const key = String(id);
+    if (favoriteCourses.has(key)) favoriteCourses.delete(key);
+    else favoriteCourses.add(key);
+    localStorage.setItem('cv_favorites', JSON.stringify(Array.from(favoriteCourses)));
+    const saved = favoriteCourses.has(key);
+    if (btn) {
+        btn.classList.toggle('saved', saved);
+        btn.setAttribute('aria-pressed', saved);
+        btn.title = saved ? 'Remove from saved' : 'Save course';
+        btn.textContent = saved ? '♥' : '♡';
+    }
+    const card = document.querySelector(`.clean-course-card[data-course-id="${CSS.escape(key)}"]`);
+    if (card) card.classList.toggle('saved', saved);
+    if (quickViewCourseId === key) updateQuickViewSaveState(key);
+    showToast(saved ? 'Course saved' : 'Removed from saved');
+}
+
+const toastQueue = [];
+let toastProcessing = false;
+const TOAST_DURATION = 3000;
+
+function showToast(message, type = 'info') {
+    toastQueue.push({ message, type });
+    if (!toastProcessing) processToastQueue();
+}
+
+function processToastQueue() {
+    if (toastQueue.length === 0) { toastProcessing = false; return; }
+    toastProcessing = true;
+    const { message, type } = toastQueue.shift();
+    const toast = document.getElementById('toast');
+    if (!toast) return;
+
+    const iconMap = {
+        success: '✓', error: '✕', warning: '⚠', info: 'ℹ'
+    };
+    const titleMap = {
+        success: 'Success', error: 'Error', warning: 'Warning', info: 'Info'
+    };
+
+    const iconEl = document.getElementById('toast-icon');
+    const titleEl = document.getElementById('toast-title');
+    const msgEl = document.getElementById('toast-msg');
+    const progressEl = document.getElementById('toast-progress');
+
+    if (iconEl) iconEl.textContent = iconMap[type] || iconMap.info;
+    if (titleEl) titleEl.textContent = titleMap[type] || titleMap.info;
+    if (msgEl) msgEl.textContent = message;
+    announce(message);
+
+    toast.className = `toast show ${type}`;
+    if (progressEl) progressEl.style.animation = 'none';
+    requestAnimationFrame(() => {
+        if (progressEl) progressEl.style.animation = `toastProgress ${TOAST_DURATION}ms linear forwards`;
+    });
+
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(processToastQueue, 250);
+    }, TOAST_DURATION);
+}
+
+function setButtonLoading(btn, loading = true) {
+    if (!btn) return;
+    if (loading) {
+        if (!btn.dataset.originalText) btn.dataset.originalText = btn.textContent;
+        btn.textContent = '';
+        const spinner = document.createElement('span');
+        spinner.className = 'btn-spinner';
+        spinner.setAttribute('aria-hidden', 'true');
+        btn.appendChild(spinner);
+        btn.appendChild(document.createTextNode(' Loading…'));
+        btn.disabled = true;
+    } else {
+        btn.textContent = btn.dataset.originalText || btn.textContent.replace(' Loading…', '');
+        btn.disabled = false;
+    }
+}
+
+function showLoadingCurtain(message = 'Loading…') {
+    const curtain = document.getElementById('loading-curtain');
+    const msgEl = document.getElementById('loading-curtain-msg');
+    if (msgEl) msgEl.textContent = message;
+    if (curtain) {
+        curtain.classList.add('open');
+        curtain.setAttribute('aria-hidden', 'false');
+    }
+}
+
+function hideLoadingCurtain() {
+    const curtain = document.getElementById('loading-curtain');
+    if (curtain) {
+        curtain.classList.remove('open');
+        curtain.setAttribute('aria-hidden', 'true');
+    }
+}
+
+async function shareCourse(course) {
+    const text = `${course.name} — ${course.university || 'CourseVerify'}`;
+    const url = window.location.href.split('?')[0] + `?course=${encodeURIComponent(course.id)}`;
+    try {
+        if (navigator.share) {
+            await navigator.share({ title: text, text, url });
+        } else if (navigator.clipboard) {
+            await navigator.clipboard.writeText(url);
+            showToast('Course link copied to clipboard');
+        } else {
+            window.prompt('Copy this link:', url);
+        }
+    } catch (e) {
+        // User cancelled or share failed
+    }
+}
+
+function getRankPill(course) {
+    if (course.has_qs_badge && course.has_nirf_badge) return `<span class="rank-pill dual">🏆 DUAL RANKED</span>`;
+    if (course.has_qs_badge) return `<span class="rank-pill qs">🌟 QS RANKED</span>`;
+    if (course.has_nirf_badge) return `<span class="rank-pill nirf">🇮🇳 NIRF RANKED</span>`;
+    return '';
+}
+
+function renderSkeletonCards(count = COURSES_PAGE_SIZE) {
+    return Array.from({ length: count }, () => `
+        <article class="clean-course-card skeleton-card" aria-hidden="true">
+            <div class="skeleton-header">
+                <div class="skeleton-badge"></div>
+                <div style="flex:1;">
+                    <div class="skeleton-row short"></div>
+                    <div class="skeleton-row" style="width:35%;"></div>
+                </div>
+            </div>
+            <div class="skeleton-row med"></div>
+            <div class="skeleton-row"></div>
+            <div class="skeleton-row short"></div>
+        </article>
+    `).join('');
 }
 
 function renderEdxCards() {
     const row = document.getElementById('edx-cards-row');
     const countEl = document.getElementById('edx-result-count');
+    const paginationEl = document.getElementById('courses-pagination');
     if (!row) return;
 
-    const courses = getEdxFilteredCourses();
-    if (countEl) countEl.textContent = `${courses.length.toLocaleString()} course${courses.length === 1 ? '' : 's'}`;
+    const all = getEdxFilteredCourses();
+    const total = all.length;
+    if (countEl) countEl.textContent = `${total.toLocaleString()} course${total === 1 ? '' : 's'}`;
 
-    if (courses.length === 0) {
-        row.innerHTML = `<div class="edx-empty">
-            <div style="font-size:2rem;margin-bottom:10px;">🔍</div>
-            No courses match the selected filters.
-        </div>`;
+    renderActiveFilterChips();
+
+    if (total === 0) {
+        row.innerHTML = `
+            <div class="edx-empty">
+                <div class="edx-empty-icon">🔍</div>
+                <strong>No courses match the selected filters.</strong><br>
+                Try adjusting the category, topic, or search terms above.
+                <div class="edx-empty-actions">
+                    <button class="btn-view-details" onclick="clearAllCourseFilters()">Clear all filters</button>
+                    <button class="btn-quick-view" onclick="jumpToCourses({})">Browse everything</button>
+                </div>
+            </div>`;
+        if (paginationEl) paginationEl.innerHTML = '';
+        updateCourseViewClass();
         return;
     }
 
-    row.innerHTML = courses.map(c => {
-        const bannerClass = getEdxCardBannerClass(c);
-        const tag = getEdxCardTag(c);
-        const provider = getProviderLogoInitials(c.university);
-        const duration = formatDuration(c);
-        const relevance = getEdxRelevanceTag(c);
+    const page = edxFilterState.page || 1;
+    const start = (page - 1) * COURSES_PAGE_SIZE;
+    const pageCourses = all.slice(start, start + COURSES_PAGE_SIZE);
+
+    row.innerHTML = pageCourses.map((c, i) => {
+        const initials = getUniversityInitials(c.university);
+        const access = getAccessPill(c);
+        const duration = formatDurationShort(c);
+        const mode = formatMode(c);
+        const rank = getRankPill(c);
+        const flag = getFlag(c.country);
+        const cid = String(c.id);
+        const saved = favoriteCourses.has(cid);
         return `
-        <article class="edx-card" onclick="showCourseModal('${c.id}')">
-            <div class="edx-card-banner ${bannerClass}">
-                <div class="edx-card-logo">
-                    <span class="logo-initial">${escHtml(provider)}</span>
-                    <span>${escHtml(c.university || '—')}</span>
+        <article class="clean-course-card ${saved ? 'saved' : ''}" style="animation: fadeStagger 0.4s ease ${i * 0.04}s both;" onclick="showCourseModal('${c.id}')" data-course-id="${c.id}">
+            <div class="card-header-bar">
+                <div class="univ-badge">
+                    <span class="univ-avatar">${escHtml(initials)}</span>
+                    <span class="univ-name">${escHtml(c.university || '—')}</span>
                 </div>
-                <div class="edx-card-tag">${escHtml(tag)}</div>
-            </div>
-            <div class="edx-card-body">
-                <h3 class="edx-card-title">${escHtml(c.name)}</h3>
-                <div class="edx-card-meta">
-                    <span class="edx-card-duration">⏱ ${escHtml(duration)}</span>
-                    <span class="edx-card-relevance">${relevance.icon} ${escHtml(relevance.label)}</span>
+                <div class="card-actions">
+                    <button class="card-action-btn ${saved ? 'saved' : ''}"
+                        title="${saved ? 'Remove from saved' : 'Save course'}"
+                        aria-label="${saved ? 'Remove from saved' : 'Save course'}"
+                        aria-pressed="${saved}"
+                        onclick="event.stopPropagation(); toggleFavorite('${c.id}', this)">${saved ? '♥' : '♡'}</button>
+                    <a class="card-action-btn" href="${escHtml(getCourseUrl(c))}" target="_blank" rel="noopener"
+                        title="Visit course website"
+                        aria-label="Visit course website"
+                        onclick="event.stopPropagation();">↗</a>
                 </div>
             </div>
-            <div class="edx-card-footer">
-                <button class="edx-card-btn" onclick="event.stopPropagation(); showCourseModal('${c.id}')">View Details</button>
+            <div class="card-body">
+                <h3 class="course-title" title="${escHtml(c.name)}">${escHtml(c.name)}</h3>
+                <div class="meta-row">
+                    <span class="meta-pill">⏱ ${escHtml(duration)}</span>
+                    <span class="meta-pill">${escHtml(mode)}</span>
+                    <span class="card-country">${flag} ${escHtml(c.country || '—')}</span>
+                    ${rank}
+                </div>
+            </div>
+            <div class="card-footer">
+                <button class="btn-view-details" onclick="event.stopPropagation(); showCourseModal('${c.id}')">View Details</button>
+                <a class="btn-visit-site" href="${escHtml(getCourseUrl(c))}" target="_blank" rel="noopener" onclick="event.stopPropagation();">Visit website</a>
             </div>
         </article>`;
     }).join('');
+
+    renderPagination(page, total);
+    updateCourseViewClass();
+    updateFilterCounts();
+}
+
+function renderPagination(currentPage, total) {
+    const el = document.getElementById('courses-pagination');
+    if (!el) return;
+    const pages = Math.ceil(total / COURSES_PAGE_SIZE);
+    if (pages <= 1) { el.innerHTML = ''; return; }
+
+    const cp = Math.max(1, Math.min(currentPage, pages));
+    const addPage = (p, label = p) =>
+        `<button class="pagination-btn ${p === cp ? 'active' : ''}" data-page="${p}" aria-label="Page ${p}" ${p === cp ? 'aria-current="true"' : ''}>${label}</button>`;
+    const addEllipsis = () => `<span class="pagination-btn ellipsis" aria-hidden="true">…</span>`;
+
+    let html = `<button class="pagination-btn" data-page="prev" aria-label="Previous page" ${cp <= 1 ? 'disabled' : ''}>‹</button>`;
+
+    if (pages <= 7) {
+        for (let i = 1; i <= pages; i++) html += addPage(i);
+    } else {
+        html += addPage(1);
+        if (cp > 3) html += addEllipsis();
+
+        const start = Math.max(2, cp - 1);
+        const end = Math.min(pages - 1, cp + 1);
+        for (let i = start; i <= end; i++) html += addPage(i);
+
+        if (cp < pages - 2) html += addEllipsis();
+        html += addPage(pages);
+    }
+
+    html += `<button class="pagination-btn" data-page="next" aria-label="Next page" ${cp >= pages ? 'disabled' : ''}>›</button>`;
+    el.innerHTML = html;
+}
+
+function goToCoursePage(page) {
+    const all = getEdxFilteredCourses();
+    const pages = Math.ceil(all.length / COURSES_PAGE_SIZE) || 1;
+    let next = page;
+    if (page === 'prev') next = Math.max(1, (edxFilterState.page || 1) - 1);
+    if (page === 'next') next = Math.min(pages, (edxFilterState.page || 1) + 1);
+    edxFilterState.page = next;
+    renderEdxCards();
+    const row = document.getElementById('edx-cards-row');
+    if (row) row.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function shareCourseById(id) {
+    const c = getCourseById(id);
+    if (c) shareCourse(c);
+}
+
+function getCourseById(id) {
+    return allCoursesData.find(c => String(c.id) === String(id));
+}
+
+function getCourseUrl(course) {
+    return course?.url || course?.course_url || course?.link || '#';
+}
+
+function updateCourseViewClass() {
+    const row = document.getElementById('edx-cards-row');
+    if (!row) return;
+    row.classList.toggle('list-view', edxFilterState.view === 'list');
+}
+
+function renderActiveFilterChips() {
+    const container = document.getElementById('active-filters');
+    if (!container) return;
+    const chips = [];
+    const f = edxFilterState;
+    if (f.search.trim()) chips.push({ key: 'search', label: `Search: "${f.search.trim()}"` });
+    if (f.typePill && f.typePill !== 'all') chips.push({ key: 'typePill', label: f.typePill });
+    if (f.domainChip && f.domainChip !== 'all') chips.push({ key: 'domainChip', label: f.domainChip });
+    if (f.levelPill && f.levelPill !== 'all') chips.push({ key: 'levelPill', label: `Level: ${f.levelPill}` });
+    if (f.country && f.country !== 'all') chips.push({ key: 'country', label: `Country: ${f.country}` });
+    if (f.sort && f.sort !== 'relevance') chips.push({ key: 'sort', label: sortLabel(f.sort) });
+
+    if (chips.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+
+    container.innerHTML = chips.map(c => `
+        <span class="filter-chip">
+            ${escHtml(c.label)}
+            <button aria-label="Remove ${escHtml(c.label)} filter" onclick="removeFilterChip('${c.key}')">×</button>
+        </span>
+    `).join('');
+}
+
+function sortLabel(sort) {
+    return {
+        relevance: 'Relevance', name: 'Name A–Z', nameDesc: 'Name Z–A', country: 'Country A–Z', qs: 'QS Ranked first'
+    }[sort] || sort;
+}
+
+function removeFilterChip(key) {
+    if (key === 'search') edxFilterState.search = '';
+    if (key === 'typePill') edxFilterState.typePill = 'all';
+    if (key === 'domainChip') edxFilterState.domainChip = 'all';
+    if (key === 'levelPill') edxFilterState.levelPill = 'all';
+    if (key === 'country') { edxFilterState.country = 'all'; courseFilter.country = 'all'; }
+    if (key === 'sort') edxFilterState.sort = 'relevance';
+    edxFilterState.page = 1;
+    syncEdxUIFromState();
+    renderEdxCards();
+}
+
+function syncEdxUIFromState() {
+    const searchInput = document.getElementById('course-search');
+    if (searchInput) searchInput.value = edxFilterState.search;
+    const sortSelect = document.getElementById('course-sort');
+    if (sortSelect) sortSelect.value = edxFilterState.sort;
+    document.querySelectorAll('#course-type-pills .type-pill').forEach(b => b.classList.toggle('active', b.dataset.type === edxFilterState.typePill));
+    document.querySelectorAll('#domain-chips-scroll .domain-chip').forEach(b => b.classList.toggle('active', b.dataset.domain === edxFilterState.domainChip));
+    document.querySelectorAll('#skill-level-pills .type-pill').forEach(b => b.classList.toggle('active', b.dataset.level === edxFilterState.levelPill));
+    document.querySelectorAll('.courses-view-toggle .view-btn').forEach(b => b.classList.toggle('active', b.id === `view-${edxFilterState.view}`));
 }
 
 function setEdxTypePill(pill) {
     edxFilterState.typePill = pill;
+    edxFilterState.page = 1;
     document.querySelectorAll('#course-type-pills .type-pill').forEach(b => {
         b.classList.toggle('active', b.dataset.type === pill);
     });
@@ -3463,8 +1897,18 @@ function setEdxTypePill(pill) {
 
 function setEdxDomainChip(chip) {
     edxFilterState.domainChip = chip;
+    edxFilterState.page = 1;
     document.querySelectorAll('#domain-chips-scroll .domain-chip').forEach(b => {
         b.classList.toggle('active', b.dataset.domain === chip);
+    });
+    renderEdxCards();
+}
+
+function setEdxLevelPill(level) {
+    edxFilterState.levelPill = level;
+    edxFilterState.page = 1;
+    document.querySelectorAll('#skill-level-pills .type-pill').forEach(b => {
+        b.classList.toggle('active', b.dataset.level === level);
     });
     renderEdxCards();
 }
@@ -3477,6 +1921,12 @@ function syncEdxFiltersFromLegacy() {
     }
     if (f.domain && f.domain !== 'all' && ALL_DOMAIN_CHIPS.includes(f.domain)) {
         edxFilterState.domainChip = f.domain;
+    }
+    if (f.country && f.country !== 'all') {
+        edxFilterState.country = f.country;
+    }
+    if (f.search && f.search.trim()) {
+        edxFilterState.search = f.search.trim();
     }
 }
 
@@ -3497,12 +1947,163 @@ function initEdxControls() {
         });
     }
 
-    document.getElementById('edx-reset-filters')?.addEventListener('click', () => {
-        edxFilterState = { typePill: 'all', domainChip: 'all' };
-        courseFilter = { search: '', country: 'all', domain: 'all', qs: 'any', nirf: 'any', courseType: 'all' };
-        setEdxTypePill('all');
-        setEdxDomainChip('all');
+    const levelPills = document.getElementById('skill-level-pills');
+    if (levelPills) {
+        levelPills.addEventListener('click', e => {
+            const btn = e.target.closest('.type-pill');
+            if (btn) setEdxLevelPill(btn.dataset.level || 'all');
+        });
+    }
+
+    const searchInput = document.getElementById('course-search');
+    if (searchInput) {
+        searchInput.value = edxFilterState.search;
+        searchInput.addEventListener('input', debounce(e => {
+            edxFilterState.search = e.target.value;
+            edxFilterState.page = 1;
+            renderEdxCards();
+        }, 200));
+        searchInput.addEventListener('keydown', e => {
+            if (e.key === 'Escape') {
+                edxFilterState.search = '';
+                searchInput.value = '';
+                edxFilterState.page = 1;
+                renderEdxCards();
+            }
+        });
+    }
+
+    const sortSelect = document.getElementById('course-sort');
+    if (sortSelect) {
+        sortSelect.value = edxFilterState.sort;
+        sortSelect.addEventListener('change', e => {
+            edxFilterState.sort = e.target.value;
+            edxFilterState.page = 1;
+            renderEdxCards();
+        });
+    }
+
+    const viewGrid = document.getElementById('view-grid');
+    const viewList = document.getElementById('view-list');
+    if (viewGrid && viewList) {
+        viewGrid.addEventListener('click', () => setCourseView('grid'));
+        viewList.addEventListener('click', () => setCourseView('list'));
+    }
+
+    document.getElementById('edx-reset-filters')?.addEventListener('click', () => clearAllCourseFilters());
+
+    initFilterCollapse();
+
+    const pagination = document.getElementById('courses-pagination');
+    if (pagination) {
+        pagination.addEventListener('click', e => {
+            const btn = e.target.closest('.pagination-btn');
+            if (!btn) return;
+            const page = btn.dataset.page;
+            if (page) goToCoursePage(page);
+        });
+    }
+
+    const backToTop = document.getElementById('back-to-top');
+    if (backToTop) {
+        const onScroll = () => {
+            backToTop.classList.toggle('visible', window.scrollY > 400);
+        };
+        window.addEventListener('scroll', onScroll, { passive: true });
+        backToTop.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+    }
+
+    initCourseKeyboardShortcuts();
+}
+
+function initFilterCollapse() {
+    const btn = document.getElementById('filter-collapse-btn');
+    const panel = document.getElementById('filter-panel-body');
+    const container = document.getElementById('trending-filter-container');
+    if (!btn || !panel || !container) return;
+
+    const icon = btn.querySelector('.filter-collapse-icon');
+    const text = btn.querySelector('.filter-collapse-text');
+    const saved = localStorage.getItem('cvFiltersCollapsed') === '1';
+    if (saved) container.classList.add('collapsed');
+    updateCollapseState();
+
+    btn.addEventListener('click', () => {
+        container.classList.toggle('collapsed');
+        localStorage.setItem('cvFiltersCollapsed', container.classList.contains('collapsed') ? '1' : '0');
+        updateCollapseState();
     });
+
+    function updateCollapseState() {
+        const collapsed = container.classList.contains('collapsed');
+        if (icon) icon.textContent = collapsed ? '▼' : '▲';
+        if (text) text.textContent = collapsed ? 'Show filters' : 'Hide filters';
+        btn.setAttribute('aria-expanded', String(!collapsed));
+    }
+}
+
+function clearAllCourseFilters() {
+    edxFilterState = { typePill: 'all', domainChip: 'all', levelPill: 'all', country: 'all', search: '', sort: 'relevance', view: edxFilterState.view, page: 1 };
+    courseFilter = { search: '', country: 'all', domain: 'all', qs: 'any', nirf: 'any', courseType: 'all' };
+    syncEdxUIFromState();
+    setEdxTypePill('all');
+    setEdxDomainChip('all');
+    setEdxLevelPill('all');
+    renderEdxCards();
+}
+
+function setCourseView(view) {
+    edxFilterState.view = view;
+    document.querySelectorAll('.courses-view-toggle .view-btn').forEach(b => {
+        b.classList.toggle('active', b.id === `view-${view}`);
+    });
+    updateCourseViewClass();
+}
+
+function initCourseKeyboardShortcuts() {
+    document.addEventListener('keydown', e => {
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'SELECT' || active.isContentEditable)) return;
+
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+            e.preventDefault();
+            const searchInput = document.getElementById('global-search-input');
+            if (searchInput) {
+                searchInput.focus();
+                searchInput.select();
+            }
+            return;
+        }
+
+        if (e.key === 'Escape') {
+            const searchInput = document.getElementById('course-search');
+            if (searchInput && searchInput.value) {
+                searchInput.value = '';
+                edxFilterState.search = '';
+                edxFilterState.page = 1;
+                renderEdxCards();
+            }
+            return;
+        }
+
+        if (/^[1-9]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            const chips = Array.from(document.querySelectorAll('#domain-chips-scroll .domain-chip'));
+            const idx = parseInt(e.key, 10) - 1;
+            if (chips[idx]) {
+                e.preventDefault();
+                chips[idx].scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+                setEdxDomainChip(chips[idx].dataset.domain || 'all');
+            }
+        }
+    });
+}
+
+function debounce(fn, ms) {
+    let t;
+    return (...args) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn(...args), ms);
+    };
 }
 
 function scrollDomains(dx) {
@@ -3513,19 +2114,31 @@ function scrollDomains(dx) {
 async function loadAllCourses(force = false) {
     const row = document.getElementById('edx-cards-row');
     if (allCoursesData.length > 0 && !force) { renderEdxCards(); return; }
-    if (row) row.innerHTML = `<div class="edx-empty">Loading trending courses…</div>`;
+    if (row) row.innerHTML = renderSkeletonCards(COURSES_PAGE_SIZE);
+    showLoadingCurtain('Loading trending courses…');
     try {
         const res = await fetch(COURSES_JSON);
         const data = await res.json();
         allCoursesData = (Array.isArray(data) ? data : data.courses || []).sort((a, b) => parseInt(a.id || '9') - parseInt(b.id || '9'));
+
+        // Build globalData here too, so Analytics can render even if the initial
+        // fetchData() hasn't finished or failed.
+        const stats = computeStats(allCoursesData);
+        const countryCounts = computeCountryCounts(allCoursesData);
+        const domainCounts = computeDomainCounts(allCoursesData);
+        globalData = { status: 'success', documents: allCoursesData, stats, country_counts: countryCounts, domain_counts: domainCounts };
+
         refreshFilterOptions();
         syncEdxFiltersFromLegacy();
+        syncEdxUIFromState();
         setEdxTypePill(edxFilterState.typePill);
         setEdxDomainChip(edxFilterState.domainChip);
         renderEdxCards();
     } catch (e) {
         if (row) row.innerHTML = `<div class="edx-empty" style="color:var(--red);">Error loading courses.</div>`;
         console.error('loadAllCourses error:', e);
+    } finally {
+        hideLoadingCurtain();
     }
 }
 
@@ -3544,16 +2157,414 @@ function applyCourseFilter() {
 
 function jumpToCourses(partial) {
     courseFilter = { search: '', country: 'all', domain: 'all', qs: 'any', nirf: 'any', courseType: 'all', ...partial };
-    edxFilterState = { typePill: 'all', domainChip: 'all' };
+    edxFilterState = {
+        typePill: 'all', domainChip: 'all', levelPill: 'all', country: partial?.country || 'all',
+        search: partial?.search ?? '', sort: 'relevance', view: edxFilterState.view, page: 1
+    };
     if (partial && partial.domain && ALL_DOMAIN_CHIPS.includes(partial.domain)) {
         edxFilterState.domainChip = partial.domain;
     }
     if (partial && partial.courseType && ALL_TYPE_PILLS.includes(partial.courseType)) {
         edxFilterState.typePill = partial.courseType;
     }
+    if (partial && partial.level) {
+        edxFilterState.levelPill = partial.level;
+    }
+    if (partial && partial.country) {
+        edxFilterState.country = partial.country;
+    }
     setEdxTypePill(edxFilterState.typePill);
     setEdxDomainChip(edxFilterState.domainChip);
+    setEdxLevelPill(edxFilterState.levelPill);
+    syncEdxUIFromState();
     switchTab('tab-courses');
+}
+
+// ================================================================
+//  GLOBAL NAVBAR SEARCH
+// ================================================================
+function initGlobalSearch() {
+    const input = document.getElementById('global-search-input');
+    const results = document.getElementById('global-search-results');
+    if (!input || !results) return;
+
+    input.addEventListener('input', debounce(() => renderGlobalSearch(input.value), 150));
+    input.addEventListener('focus', () => {
+        if (input.value.trim()) renderGlobalSearch(input.value);
+    });
+    input.addEventListener('keydown', e => {
+        if (e.key === 'Escape') {
+            input.value = '';
+            results.classList.remove('open');
+            results.innerHTML = '';
+            input.blur();
+        }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            navigateGlobalSearchResults(e.key === 'ArrowDown' ? 1 : -1);
+        }
+        if (e.key === 'Enter') {
+            const active = results.querySelector('.global-search-item.active');
+            if (active) active.click();
+            else doGlobalSearch(input.value.trim());
+        }
+    });
+
+    document.addEventListener('click', e => {
+        if (!document.getElementById('navbar-search').contains(e.target)) {
+            results.classList.remove('open');
+        }
+    });
+}
+
+function renderGlobalSearch(query) {
+    const results = document.getElementById('global-search-results');
+    const q = query.trim().toLowerCase();
+    if (!q) { results.classList.remove('open'); results.innerHTML = ''; return; }
+
+    const pool = allCoursesData.length ? allCoursesData : (globalData?.documents || []);
+    const matches = pool.map(c => {
+        const name = (c.name || '').toLowerCase();
+        const uni = (c.university || '').toLowerCase();
+        const country = (c.country || '').toLowerCase();
+        const domain = getDomainCategory(c.id).toLowerCase();
+        let score = 0;
+        if (name.startsWith(q)) score += 100;
+        else if (name.includes(q)) score += 50;
+        if (uni.includes(q)) score += 30;
+        if (country.includes(q)) score += 20;
+        if (domain.includes(q)) score += 10;
+        return { c, score };
+    }).filter(m => m.score > 0).sort((a, b) => b.score - a.score).slice(0, 8);
+
+    if (!matches.length) {
+        results.innerHTML = `<div class="global-search-empty">No matches for “${escHtml(q)}”</div>
+            <div class="global-search-action" onclick="doGlobalSearch('${escHtml(q)}')">Search all courses →</div>`;
+        results.classList.add('open');
+        return;
+    }
+
+    results.innerHTML = matches.map((m, i) => `
+        <div class="global-search-item ${i === 0 ? 'active' : ''}" data-index="${i}" tabindex="-1"
+            onclick="openGlobalSearchResult('${m.c.id}')">
+            <div class="global-search-item-title">${escHtml(m.c.name)}</div>
+            <div class="global-search-item-meta">${escHtml(m.c.university || '—')} · ${escHtml(m.c.country || '—')} · ${getDomainCategory(m.c.id)}</div>
+        </div>
+    `).join('') + `
+        <div class="global-search-action" onclick="doGlobalSearch('${escHtml(q)}')">View all ${matches.length === 8 ? 'matching' : ''} results →</div>`;
+    results.classList.add('open');
+}
+
+function navigateGlobalSearchResults(dir) {
+    const results = document.getElementById('global-search-results');
+    const items = Array.from(results.querySelectorAll('.global-search-item'));
+    if (!items.length) return;
+    const active = results.querySelector('.global-search-item.active');
+    let idx = active ? items.indexOf(active) : -1;
+    idx = (idx + dir + items.length) % items.length;
+    items.forEach(it => it.classList.remove('active'));
+    items[idx].classList.add('active');
+    items[idx].scrollIntoView({ block: 'nearest' });
+}
+
+function openGlobalSearchResult(id) {
+    showCourseModal(id);
+    const input = document.getElementById('global-search-input');
+    const results = document.getElementById('global-search-results');
+    if (input) input.value = '';
+    if (results) { results.classList.remove('open'); results.innerHTML = ''; }
+}
+
+function doGlobalSearch(query) {
+    if (!query) return;
+    jumpToCourses({ search: query });
+    const input = document.getElementById('global-search-input');
+    const results = document.getElementById('global-search-results');
+    if (input) input.value = '';
+    if (results) { results.classList.remove('open'); results.innerHTML = ''; }
+}
+
+// ================================================================
+//  QUICK VIEW MODAL
+// ================================================================
+let quickViewCourseId = null;
+
+function initQuickView() {
+    const overlay = document.getElementById('quick-view-modal');
+    const closeBtn = document.getElementById('quick-view-close');
+    const saveBtn = document.getElementById('quick-view-saved');
+    const visitBtn = document.getElementById('quick-view-visit');
+    const detailsBtn = document.getElementById('quick-view-details');
+    if (!overlay) return;
+
+    closeBtn?.addEventListener('click', closeQuickView);
+    overlay.addEventListener('click', e => {
+        if (e.target === overlay) closeQuickView();
+    });
+    saveBtn?.addEventListener('click', () => {
+        if (quickViewCourseId) {
+            toggleFavorite(quickViewCourseId, saveBtn);
+            updateQuickViewSaveState(quickViewCourseId);
+        }
+    });
+    visitBtn?.addEventListener('click', e => {
+        e.preventDefault();
+        if (quickViewCourseId) {
+            const c = getCourseById(quickViewCourseId);
+            const url = getCourseUrl(c);
+            if (url && url !== '#') window.open(url, '_blank', 'noopener');
+        }
+    });
+    detailsBtn?.addEventListener('click', () => {
+        if (quickViewCourseId) {
+            closeQuickView();
+            showCourseModal(quickViewCourseId);
+        }
+    });
+}
+
+function showQuickView(courseId) {
+    const c = getCourseById(courseId);
+    if (!c) return;
+    quickViewCourseId = courseId;
+    const body = document.getElementById('quick-view-body');
+    const title = document.getElementById('quick-view-title');
+    if (title) title.textContent = c.name;
+    if (body) {
+        const level = getSkillLevel(c);
+        const access = getAccessPill(c);
+        const duration = formatDurationShort(c);
+        const mode = formatMode(c);
+        const flag = getFlag(c.country);
+        const rank = getRankPill(c);
+        body.innerHTML = `
+            <div class="quick-view-meta">
+                <span class="quick-view-badge">${flag} ${escHtml(c.country || '—')}</span>
+                <span class="quick-view-badge">${escHtml(duration)}</span>
+                <span class="quick-view-badge">${escHtml(mode)}</span>
+                <span class="quick-view-badge level-${level.toLowerCase()}">${escHtml(level)}</span>
+                <span class="quick-view-badge access-pill ${escHtml(access.cls)}">${escHtml(access.label)}</span>
+                ${rank}
+            </div>
+            <p class="quick-view-desc">${escHtml(c.domain || '')}</p>
+            <div class="quick-view-tags">
+                <span class="tag">Domain: ${getDomainCategory(c.id)}</span>
+                ${c.has_qs_badge ? '<span class="tag">QS Ranked</span>' : ''}
+                ${c.has_nirf_badge ? '<span class="tag">NIRF Ranked</span>' : ''}
+            </div>
+        `;
+    }
+    updateQuickViewSaveState(courseId);
+    const visitBtn = document.getElementById('quick-view-visit');
+    if (visitBtn) {
+        const url = getCourseUrl(c);
+        visitBtn.href = url;
+        visitBtn.style.display = (url && url !== '#') ? 'inline-flex' : 'none';
+    }
+    const overlay = document.getElementById('quick-view-modal');
+    overlay.classList.add('open');
+    overlay.setAttribute('aria-hidden', 'false');
+    trapFocus(overlay);
+    document.addEventListener('keydown', quickViewEscapeHandler);
+}
+
+function updateQuickViewSaveState(id) {
+    const btn = document.getElementById('quick-view-saved');
+    if (!btn) return;
+    const saved = favoriteCourses.has(String(id));
+    btn.textContent = saved ? '♥ Saved' : '♡ Save';
+    btn.classList.toggle('saved', saved);
+    btn.setAttribute('aria-pressed', saved);
+}
+
+function closeQuickView() {
+    const overlay = document.getElementById('quick-view-modal');
+    if (overlay) {
+        overlay.classList.remove('open');
+        overlay.setAttribute('aria-hidden', 'true');
+        releaseFocus(overlay);
+    }
+    quickViewCourseId = null;
+    document.removeEventListener('keydown', quickViewEscapeHandler);
+}
+
+function quickViewEscapeHandler(e) {
+    if (e.key === 'Escape') closeQuickView();
+}
+
+// ================================================================
+//  ONBOARDING QUIZ
+// ================================================================
+let onboardingState = { step: 1, level: null, domain: null };
+let onboardingHasOpened = false;
+
+function initOnboarding() {
+    const overlay = document.getElementById('onboarding-modal');
+    const closeBtn = document.getElementById('onboarding-close');
+    const nextBtn = document.getElementById('onboarding-next');
+    const backBtn = document.getElementById('onboarding-back');
+    const skipBtn = document.getElementById('onboarding-skip');
+    const ctaBtn = document.getElementById('onboarding-cta');
+    if (!overlay) return;
+
+    // Robust guide button handler: direct + delegated fallback.
+    function attachGuideListener() {
+        const guideBtn = document.getElementById('guide-btn');
+        if (!guideBtn) return false;
+        guideBtn.addEventListener('click', e => {
+            e.preventDefault();
+            e.stopPropagation();
+            openOnboarding(true);
+        });
+        guideBtn.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                openOnboarding(true);
+            }
+        });
+        return true;
+    }
+    if (!attachGuideListener()) {
+        document.addEventListener('click', e => {
+            const guideBtn = e.target.closest('#guide-btn');
+            if (guideBtn) openOnboarding(true);
+        });
+    }
+
+    closeBtn?.addEventListener('click', closeOnboarding);
+    overlay.addEventListener('click', e => {
+        if (e.target === overlay) closeOnboarding();
+    });
+    nextBtn?.addEventListener('click', onboardingNext);
+    backBtn?.addEventListener('click', onboardingBack);
+    skipBtn?.addEventListener('click', () => {
+        closeOnboarding();
+        switchTab('tab-courses');
+    });
+    ctaBtn?.addEventListener('click', () => {
+        closeOnboarding();
+        const params = {};
+        if (onboardingState.level) params.level = onboardingState.level;
+        if (onboardingState.domain) params.domain = onboardingState.domain;
+        jumpToCourses(params);
+    });
+
+    document.querySelectorAll('.onboarding-option').forEach(btn => {
+        btn.addEventListener('click', e => {
+            const target = e.target.closest('.onboarding-option');
+            if (!target) return;
+            const step = target.closest('.onboarding-step')?.dataset.step;
+            if (step === '1') {
+                onboardingState.level = target.dataset.level || null;
+                document.querySelectorAll('.onboarding-step[data-step="1"] .onboarding-option').forEach(b => b.classList.remove('selected'));
+                target.classList.add('selected');
+                onboardingNext();
+            } else if (step === '2') {
+                onboardingState.domain = target.dataset.domain || null;
+                document.querySelectorAll('.onboarding-step[data-step="2"] .onboarding-option').forEach(b => b.classList.remove('selected'));
+                target.classList.add('selected');
+                onboardingNext();
+            }
+        });
+    });
+
+    if (!localStorage.getItem('cvOnboardingSeen') && !onboardingHasOpened) {
+        onboardingHasOpened = true;
+        setTimeout(() => openOnboarding(false), 900);
+    }
+
+    initWelcomeBanner();
+}
+
+function initWelcomeBanner() {
+    const banner = document.getElementById('dash-welcome-banner');
+    const closeBtn = document.getElementById('dash-welcome-close');
+    const tourBtn = document.getElementById('dash-welcome-tour');
+    if (!banner) return;
+
+    if (localStorage.getItem('cvWelcomeDismissed')) {
+        banner.classList.add('dismissed');
+    }
+
+    closeBtn?.addEventListener('click', () => {
+        banner.classList.add('dismissed');
+        localStorage.setItem('cvWelcomeDismissed', '1');
+    });
+
+    tourBtn?.addEventListener('click', () => {
+        localStorage.setItem('cvWelcomeDismissed', '1');
+        banner.classList.add('dismissed');
+        openOnboarding(true);
+    });
+}
+
+function openOnboarding(trackOpen = false) {
+    const overlay = document.getElementById('onboarding-modal');
+    if (!overlay) return;
+    overlay.classList.add('open');
+    overlay.setAttribute('aria-hidden', 'false');
+    onboardingState = { step: 1, level: null, domain: null };
+    renderOnboardingStep(1);
+    trapFocus(overlay);
+    document.addEventListener('keydown', onboardingEscapeHandler);
+    if (trackOpen) localStorage.setItem('cvOnboardingSeen', '1');
+}
+
+function closeOnboarding() {
+    const overlay = document.getElementById('onboarding-modal');
+    if (overlay) {
+        overlay.classList.remove('open');
+        overlay.setAttribute('aria-hidden', 'true');
+        releaseFocus(overlay);
+    }
+    localStorage.setItem('cvOnboardingSeen', '1');
+    document.removeEventListener('keydown', onboardingEscapeHandler);
+}
+
+function onboardingEscapeHandler(e) {
+    if (e.key === 'Escape') closeOnboarding();
+}
+
+function onboardingNext() {
+    if (onboardingState.step === 1 && !onboardingState.level) return;
+    if (onboardingState.step === 2 && !onboardingState.domain) return;
+    if (onboardingState.step < 3) {
+        onboardingState.step++;
+        renderOnboardingStep(onboardingState.step);
+    } else {
+        closeOnboarding();
+    }
+}
+
+function onboardingBack() {
+    if (onboardingState.step > 1) {
+        onboardingState.step--;
+        renderOnboardingStep(onboardingState.step);
+    }
+}
+
+function renderOnboardingStep(step) {
+    onboardingState.step = step;
+    document.querySelectorAll('.onboarding-step').forEach(s => s.classList.toggle('active', parseInt(s.dataset.step, 10) === step));
+    document.querySelectorAll('.onboarding-dots .dot').forEach(d => d.classList.toggle('active', parseInt(d.dataset.step, 10) === step));
+
+    const backBtn = document.getElementById('onboarding-back');
+    const nextBtn = document.getElementById('onboarding-next');
+    if (backBtn) backBtn.disabled = step === 1;
+    if (nextBtn) nextBtn.textContent = step === 3 ? 'Done' : 'Next';
+
+    if (step === 3) {
+        const text = document.getElementById('onboarding-result-text');
+        const level = onboardingState.level || 'any';
+        const domain = onboardingState.domain || 'all areas';
+        if (text) {
+            const count = allCoursesData.filter(c =>
+                (!onboardingState.level || getSkillLevel(c) === onboardingState.level) &&
+                (!onboardingState.domain || getDomainCategory(c.id) === onboardingState.domain)
+            ).length;
+            text.textContent = `We found ${count} ${level.toLowerCase()} course${count === 1 ? '' : 's'} in ${domain}.`;
+        }
+    }
 }
 
 // ================================================================
@@ -3594,12 +2605,48 @@ async function showCourseModal(courseId, fallbackName, fallbackUni) {
     }
     let c = allCoursesData.find(x => String(x.id) === String(courseId));
     if (!c && fallbackName) c = allCoursesData.find(x => x.name === fallbackName && (x.university || '') === (fallbackUni || ''));
-    if (!c) { alert('Course not found.'); return; }
+    if (!c) { showToast('Course not found', 'error'); return; }
+
+    const domain = getDomainCategory(c.id);
+    const accentMap = {
+        'Foundational': 'accent-teal',
+        'Network Infrastructure': 'accent-indigo',
+        'System & Endpoint': 'accent-cyan',
+        'Cyber Forensics': 'accent-violet',
+        'Data & Application': 'accent-rose',
+        'Legal & Ethical': 'accent-amber'
+    };
+    const hdr = document.getElementById('modal-hdr');
+    if (hdr) {
+        hdr.className = 'modal-hdr';
+        if (accentMap[domain]) hdr.classList.add(accentMap[domain]);
+    }
 
     document.getElementById('modal-course-title').textContent = c.name;
     document.getElementById('modal-body').innerHTML = buildCourseDetails(c);
 
-    document.getElementById('course-modal').classList.add('open');
+    const primary = document.getElementById('modal-primary');
+    if (primary) {
+        const url = getCourseUrl(c);
+        primary.href = url;
+        primary.textContent = (url && url !== '#') ? '↗ Visit course website' : 'No external link available';
+        primary.style.display = 'inline-flex';
+        primary.classList.toggle('disabled', !url || url === '#');
+    }
+
+    const modal = document.getElementById('course-modal');
+    modal.classList.add('open');
+    trapFocus(modal);
+    document.body.style.overflow = 'hidden';
+}
+
+function closeCourseModal() {
+    const modal = document.getElementById('course-modal');
+    if (modal) {
+        modal.classList.remove('open');
+        releaseFocus(modal);
+    }
+    document.body.style.overflow = '';
 }
 
 function recomputeAndRender() {
@@ -3618,12 +2665,56 @@ function recomputeAndRender() {
 }
 
 function initModal() {
-    document.getElementById('close-modal')?.addEventListener('click', () =>
-        document.getElementById('course-modal').classList.remove('open'));
-    document.getElementById('course-modal')?.addEventListener('click', e => {
-        if (e.target === document.getElementById('course-modal'))
-            document.getElementById('course-modal').classList.remove('open');
+    const modal = document.getElementById('course-modal');
+    const closeBtn = document.getElementById('close-modal');
+    const secondaryBtn = document.getElementById('modal-secondary');
+
+    closeBtn?.addEventListener('click', closeCourseModal);
+    secondaryBtn?.addEventListener('click', closeCourseModal);
+
+    modal?.addEventListener('click', e => {
+        if (e.target === modal) closeCourseModal();
     });
+
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && modal?.classList.contains('open')) {
+            closeCourseModal();
+        }
+    });
+
+    // Suggestion overlay close
+    const suggest = document.getElementById('suggest-overlay');
+    const suggestClose = document.getElementById('suggest-close');
+    suggestClose?.addEventListener('click', () => suggest?.classList.remove('open'));
+    suggest?.addEventListener('click', e => { if (e.target === suggest) suggest.classList.remove('open'); });
+}
+
+function trapFocus(container) {
+    const focusable = Array.from(container.querySelectorAll(
+        'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    )).filter(el => el.offsetParent !== null);
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    first.focus();
+    container._focusTrap = e => {
+        if (e.key !== 'Tab') return;
+        if (e.shiftKey && document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+        }
+    };
+    container.addEventListener('keydown', container._focusTrap);
+}
+
+function releaseFocus(container) {
+    if (container && container._focusTrap) {
+        container.removeEventListener('keydown', container._focusTrap);
+        delete container._focusTrap;
+    }
 }
 
 // ================================================================
@@ -3654,6 +2745,7 @@ function computeDomainCounts(courses) {
 
 async function fetchData() {
     if (!globalData) document.body.dataset.loading = 'true';
+    showLoadingCurtain('Loading course data…');
     try {
         const res = await fetch(COURSES_JSON + '?v=' + Date.now());
         const data = await res.json();
@@ -3669,6 +2761,9 @@ async function fetchData() {
         _applyData(globalData, animate);
     } catch (e) {
         console.error('Data fetch error:', e);
+    } finally {
+        document.body.dataset.loading = 'false';
+        hideLoadingCurtain();
     }
 }
 
@@ -3700,371 +2795,183 @@ function _applyData(data, animate) {
 }
 
 // ================================================================
-//  ANALYTICS TAB
-// ================================================================
-let anCredentialChart = null;
-let anPricingChart = null;
-let anDomainChart = null;
-let geoTableData = [];
-
-const PALETTE = ['#6366f1', '#818cf8', '#f43f5e', '#1dda9f', '#f59e0b', '#06b6d4', '#ec4899', '#8b5cf6'];
-
-function initAnalyticsSubTabs() {
-    document.querySelectorAll('.asubtab').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('.asubtab').forEach(b => b.classList.remove('active'));
-            document.querySelectorAll('.atab-content').forEach(c => c.classList.remove('active'));
-            btn.classList.add('active');
-            const t = document.getElementById(btn.dataset.atab);
-            if (t) t.classList.add('active');
-        });
-    });
-    document.getElementById('an-country-search')?.addEventListener('input', e =>
-        renderGeoTable(e.target.value.toLowerCase()));
-}
 
 function closeDrilldown(id) {
     const el = document.getElementById(id);
     if (el) { el.style.animation = 'slideDown 0.2s ease'; setTimeout(() => el.style.display = 'none', 180); }
 }
 
-function openDrilldown(panelId, titleId, tbodyId, title, rows) {
-    const panel = document.getElementById(panelId);
-    const titleEl = document.getElementById(titleId);
-    const tbody = document.getElementById(tbodyId);
-    if (!panel || !titleEl || !tbody) return;
-    titleEl.textContent = title;
-    tbody.innerHTML = rows;
-    panel.style.display = 'block';
-    panel.style.animation = 'slideUp 0.25s ease';
-    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+// ================================================================
+//  ANALYTICS ENGINE (REBUILT — NATIVE DOM, NO CHART.JS)
+// ================================================================
+async function renderAnalyticsTab() {
+    console.log('[Analytics] renderAnalyticsTab() called');
+    const stateEl = document.getElementById('analytics-state');
+    const contentEl = document.getElementById('analytics-content');
+    if (!stateEl || !contentEl) {
+        console.warn('[Analytics] required DOM containers missing. stateEl:', !!stateEl, 'contentEl:', !!contentEl);
+        return;
+    }
+
+    stateEl.style.display = 'block';
+    contentEl.style.display = 'none';
+    stateEl.textContent = 'Loading analytics…';
+    console.log('[Analytics] loading state shown');
+
+    try {
+        if (allCoursesData.length === 0) {
+            console.log('[Analytics] no data yet, loading courses...');
+            await loadAllCourses(true);
+        }
+        console.log('[Analytics] allCoursesData length:', allCoursesData.length);
+
+        if (allCoursesData.length === 0) {
+            stateEl.textContent = 'No course data available. Please check that courses.json is present and reload.';
+            return;
+        }
+
+        const docs = allCoursesData;
+        const total = docs.length;
+
+        let indiaCount = 0;
+        let intlCount = 0;
+        const countries = {};
+        const types = {};
+        const pricing = {};
+
+        docs.forEach(c => {
+            const country = String(c.country || 'Unknown').trim();
+            countries[country] = (countries[country] || 0) + 1;
+            if (country.toLowerCase().includes('india')) indiaCount++;
+            else intlCount++;
+
+            const type = normalizeDomain(c.domain || 'Other');
+            if (type !== 'Other') types[type] = (types[type] || 0) + 1;
+
+            const cost = String(c.cost || '').toLowerCase();
+            if (cost === 'free') pricing['Free'] = (pricing['Free'] || 0) + 1;
+            else if (cost.includes('audit')) pricing['Free to Audit'] = (pricing['Free to Audit'] || 0) + 1;
+            else if (cost.includes('low cost') || cost.includes('value')) pricing['High Value Low Cost'] = (pricing['High Value Low Cost'] || 0) + 1;
+            else pricing['Paid'] = (pricing['Paid'] || 0) + 1;
+        });
+
+        const validCountries = Object.keys(countries).filter(k => isValidCountry(k));
+        const countryCount = validCountries.length;
+
+        console.log('[Analytics] computed totals:', total, 'india:', indiaCount, 'intl:', intlCount, 'countries:', countryCount);
+
+        countUp('an-total', total, total.toLocaleString());
+        countUp('an-indian', indiaCount, indiaCount.toLocaleString());
+        countUp('an-intl', intlCount, intlCount.toLocaleString());
+        countUp('an-countries', countryCount, countryCount.toLocaleString());
+
+        // Persist analytics data for search/sort/csv.
+        window.__analyticsCountries = countries;
+        window.__analyticsTypes = types;
+        window.__analyticsTotal = total;
+        window.__analyticsPricing = pricing;
+        window.__analyticsSort = { key: 'count', dir: 'desc' };
+        window.__analyticsSearch = '';
+
+        renderChartCountries('chart-countries', countries);
+        renderChartSpecializations('chart-specializations', types);
+        renderChartPricing('chart-pricing', pricing);
+        applyAnalyticsFilters();
+        updateAnalyticsMeta(total, countryCount);
+
+        const toolbar = document.getElementById('analytics-toolbar');
+        if (toolbar) toolbar.style.display = 'flex';
+        stateEl.style.display = 'none';
+        contentEl.style.display = 'block';
+
+        // Domain explorer removed from Analytics tab
+
+        // Defensive: ensure the parent tab is actually visible and sized.
+        const tab = document.getElementById('tab-analytics');
+        const wrapEl = tab?.querySelector('.analytics-wrap');
+        const pageEl = document.querySelector('.page');
+        if (tab) {
+            tab.classList.add('active');
+            tab.style.display = 'block';
+            tab.style.visibility = 'visible';
+            tab.style.position = 'relative';
+            // Use the real page width so the tab cannot collapse to 0.
+            const pageWidth = pageEl?.offsetWidth || window.innerWidth;
+            tab.style.width = pageWidth + 'px';
+            tab.style.minHeight = (window.innerHeight - 62) + 'px';
+        }
+        if (wrapEl) {
+            wrapEl.style.width = '100%';
+            wrapEl.style.minHeight = (window.innerHeight - 62) + 'px';
+        }
+        if (contentEl) {
+            contentEl.style.width = '100%';
+            contentEl.style.display = 'block';
+        }
+
+        // Force a layout recalculation in case the browser cached a zero-height
+        // state from when the tab was display:none during initial paint.
+        if (contentEl) {
+            contentEl.style.display = 'none';
+            void contentEl.offsetHeight;
+            contentEl.style.display = 'block';
+        }
+
+        console.log('[Analytics] rendered', total, 'courses |', countryCount, 'countries');
+    } catch (err) {
+        console.error('[Analytics] render failed:', err);
+        stateEl.textContent = 'Analytics failed to load. See browser console for details.';
+    }
 }
 
-function populateAnalyticsKPIs(d, stats, countryCounts) {
-    const el = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
-    const tot = stats?.total || 0;
-    const indiaCount = Object.entries(countryCounts || {})
-        .filter(([k]) => k.toLowerCase().includes('india'))
-        .reduce((s, [, v]) => s + (Number(v) || 0), 0);
-    const intlCount = Math.max(0, tot - indiaCount);
-    const countryCnt = Object.keys(countryCounts || {}).filter(k => isValidCountry(k)).length;
-
-    el('an-total', tot);
-    el('an-indian', indiaCount);
-    el('an-intl', intlCount);
-    el('an-variants-sub', `${Object.values(d.variant_category || {}).reduce((s, v) => s + (Number(v) || 0), 0)} delivery variants`);
-    el('an-indian-pct', `${tot ? ((indiaCount / tot) * 100).toFixed(1) : '—'}% of total catalog`);
-    el('an-countries-count', `${countryCnt} countries represented`);
-}
-
-function populateInsightCards(d, globalData) {
-    const container = document.getElementById('insight-cards-row');
+function renderAnalyticsBars(containerId, data, limit, showFlags) {
+    const container = document.getElementById(containerId);
     if (!container) return;
-
-    const docs = globalData?.documents || [];
-    const countryPivot = d.country_pivot || {};
-    const domainPivot = d.domain_pivot || {};
-
-    const topCountry = Object.entries(countryPivot).filter(([k]) => isValidCountry(k))
-        .sort((a, b) => b[1] - a[1])[0];
-    const topDomain = Object.entries(domainPivot).filter(([k]) => k && k !== 'Total')
-        .sort((a, b) => (b[1].Total || 0) - (a[1].Total || 0))[0];
-
-    const uniCounts = {};
-    docs.forEach(r => { if (r.university) uniCounts[r.university] = (uniCounts[r.university] || 0) + 1; });
-    const topUni = Object.entries(uniCounts).sort((a, b) => b[1] - a[1])[0];
-
-    const insights = [
-        { icon: '🌍', color: 'var(--blue)', label: 'Top Country', value: topCountry ? getFlag(topCountry[0]) + ' ' + topCountry[0] : '—', sub: topCountry ? `${topCountry[1]} courses` : '' },
-        { icon: '🔬', color: 'var(--purple)', label: 'Top Domain', value: topDomain?.[0] || '—', sub: topDomain ? `${topDomain[1].Total || 0} courses` : '' },
-        { icon: '🏛️', color: 'var(--blue)', label: 'Top University', value: topUni?.[0] || '—', sub: topUni ? `${topUni[1]} courses` : '' },
-    ];
-
-    container.innerHTML = insights.map(ins => `
-        <div class="insight-card" style="border-top:3px solid ${ins.color};">
-            <div class="insight-icon">${ins.icon}</div>
-            <div class="insight-body">
-                <div class="insight-label">${ins.label}</div>
-                <div class="insight-value" style="color:${ins.color};">${ins.value}</div>
-                <div class="insight-sub">${ins.sub}</div>
+    const sorted = Object.entries(data)
+        .filter(([label]) => label && label !== 'Unknown' && label !== 'Total' && label !== 'Other')
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, limit);
+    const max = sorted[0]?.[1] || 1;
+    const isDomains = containerId === 'an-simple-domains';
+    const domainClassMap = {
+        'Foundational': 'domain-foundational',
+        'Network Infrastructure': 'domain-network',
+        'System & Endpoint': 'domain-endpoint',
+        'Cyber Forensics': 'domain-forensics',
+        'Data & Application': 'domain-data',
+        'Legal & Ethical': 'domain-legal'
+    };
+    container.innerHTML = sorted.map(([label, count]) => {
+        const domainCls = isDomains ? ` ${domainClassMap[label] || ''}` : '';
+        return `
+        <div class="css-bar-row${domainCls}">
+            <div class="css-bar-label" title="${escHtml(label)}">${showFlags ? getFlag(label) + ' ' : ''}${escHtml(label)}</div>
+            <div class="css-bar-track">
+                <div class="css-bar-fill" style="width: ${Math.round((count / max) * 100)}%"></div>
             </div>
-        </div>`).join('');
-}
-
-function populateSplitVisual(indianPct) {
-    const el = document.getElementById('an-split-visual');
-    if (!el) return;
-    const intlPct = 100 - indianPct;
-    el.innerHTML = `
-        <div style="margin-bottom:8px;display:flex;justify-content:space-between;">
-            <span style="font-size:0.78rem;font-weight:700;color:var(--green);">🇮🇳 India ${indianPct.toFixed(1)}%</span>
-            <span style="font-size:0.78rem;font-weight:700;color:var(--blue);">🌐 International ${intlPct.toFixed(1)}%</span>
+            <div class="css-bar-value">${count.toLocaleString()}</div>
         </div>
-        <div style="height:16px;border-radius:20px;overflow:hidden;display:flex;">
-            <div style="flex:${Math.round(indianPct)};background:var(--green);border-radius:20px 0 0 20px;"></div>
-            <div style="flex:${Math.round(intlPct)};background:var(--blue);border-radius:0 20px 20px 0;"></div>
-        </div>
-        <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-            <div style="background:var(--green-bg);border-radius:10px;padding:12px;text-align:center;">
-                <div style="font-size:1.4rem;font-weight:900;color:var(--green);">${indianPct.toFixed(1)}%</div>
-                <div style="font-size:0.7rem;color:var(--text-3);font-weight:700;text-transform:uppercase;">Indian Catalog</div>
-            </div>
-            <div style="background:var(--blue-bg);border-radius:10px;padding:12px;text-align:center;">
-                <div style="font-size:1.4rem;font-weight:900;color:var(--blue);">${intlPct.toFixed(1)}%</div>
-                <div style="font-size:0.7rem;color:var(--text-3);font-weight:700;text-transform:uppercase;">International</div>
-            </div>
-        </div>`;
+    `}).join('');
 }
 
-function populateCredentialChart(courseCategory) {
-    const ctx = document.getElementById('an-credential-chart');
-    if (!ctx) return;
-    const entries = Object.entries(courseCategory || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
-    if (anCredentialChart) anCredentialChart.destroy();
-    anCredentialChart = new Chart(ctx, {
-        type: 'doughnut',
-        data: { labels: entries.map(e => e[0]), datasets: [{ data: entries.map(e => e[1]), backgroundColor: PALETTE, borderColor: 'transparent', borderWidth: 0, hoverOffset: 10 }] },
-        options: {
-            responsive: true, maintainAspectRatio: false, cutout: '70%',
-            plugins: {
-                legend: { display: false },
-                tooltip: { callbacks: { label: c => `${c.label}: ${c.raw} programs` } }
-            },
-            onClick: (e, els) => {
-                if (!els.length) return;
-                openAnalyticsDrilldownByCategory(entries[els[0].index][0]);
-            }
-        }
-    });
-    const legend = document.getElementById('an-credential-legend');
-    if (legend) legend.innerHTML = entries.map(([label, val], i) => `
-        <div class="an-legend-item" onclick="openAnalyticsDrilldownByCategory('${label.replace(/'/g, "\\'")}')">
-            <div class="an-legend-dot" style="background:${PALETTE[i % PALETTE.length]}"></div>
-            <div>
-                <div class="an-legend-name">${escHtml(label)}</div>
-                <div class="an-legend-val">${val} Courses</div>
-            </div>
-        </div>`).join('');
-}
-
-function populatePricingChart(pricingCategory) {
-    const ctx = document.getElementById('an-pricing-chart');
-    if (!ctx) return;
-    const entries = Object.entries(pricingCategory || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
-    if (anPricingChart) anPricingChart.destroy();
-    anPricingChart = new Chart(ctx, {
-        type: 'bar',
-        data: { labels: entries.map(e => e[0]), datasets: [{ label: 'Courses', data: entries.map(e => e[1]), backgroundColor: 'rgba(241,107,107,0.8)', hoverBackgroundColor: '#f16b6b', borderRadius: 8, borderSkipped: false }] },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
-            scales: {
-                x: { grid: { display: false }, ticks: { font: { size: 12, weight: '600' }, maxRotation: 30 } },
-                y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { precision: 0 } }
-            },
-            animation: { duration: 900, easing: 'easeOutQuart' },
-            onClick: (e, els) => {
-                if (!els.length) return;
-                const label = entries[els[0].index][0];
-                const kw = label.split(' ')[0].toLowerCase();
-                jumpToCourses({ search: kw });
-            }
-        }
-    });
-}
-
-function populateAnTopCountries(countryPivot) {
-    const el = document.getElementById('an-top-countries');
-    if (!el) return;
-    const entries = Object.entries(countryPivot || {}).filter(([k]) => isValidCountry(k))
-        .sort((a, b) => b[1] - a[1]).slice(0, 5);
-    const max = entries[0]?.[1] || 1;
-    el.innerHTML = entries.map(([name, cnt], i) => `
-        <div class="an-hub-row" onclick="geoRowDrilldown('${name.replace(/'/g, "\\'")}', ${cnt})" title="Click to see courses">
-            <div class="an-hub-rank">${i + 1}</div>
-            <div class="an-hub-name">${getFlag(name)} ${escHtml(name)}</div>
-            <div class="an-hub-bar-wrap"><div class="an-hub-bar" style="width:${Math.round(cnt / max * 100)}%"></div></div>
-            <div class="an-hub-count">${cnt}</div>
-        </div>`).join('');
-}
-
-function renderGeoTable(search = '') {
-    const tbody = document.getElementById('an-country-tbody');
+function renderAnalyticsCountryTable(countries, total) {
+    const tbody = document.getElementById('an-all-countries-tbody');
     if (!tbody) return;
-    const total = geoTableData.reduce((s, [, v]) => s + v, 0) || 1;
-    const max = geoTableData[0]?.[1] || 1;
-    const rows = search ? geoTableData.filter(([k]) => k.toLowerCase().includes(search)) : geoTableData;
-
+    const rows = Object.entries(countries)
+        .filter(([k]) => isValidCountry(k))
+        .sort((a, b) => b[1] - a[1]);
     tbody.innerHTML = rows.length === 0
-        ? `<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:24px;">No results</td></tr>`
-        : rows.map(([name, cnt], i) => `
-            <tr class="clickable-row" onclick="geoRowDrilldown('${name.replace(/'/g, "\\'")}', ${cnt})" title="Click to see courses">
+        ? `<tr><td colspan="4" class="empty-state"><strong>No country data</strong></td></tr>`
+        : rows.map(([name, count], i) => `
+            <tr>
                 <td><span class="geo-rank">${(i + 1).toString().padStart(2, '0')}</span></td>
                 <td><span style="font-size:1.1rem;margin-right:8px;">${getFlag(name)}</span><strong>${escHtml(name)}</strong></td>
-                <td style="text-align:center;"><span class="geo-volume-badge">${cnt}</span></td>
-                <td style="text-align:right;"><span class="geo-share">${((cnt / total) * 100).toFixed(1)}%</span></td>
-                <td><div class="geo-prog-wrap"><div class="geo-prog-bar" style="width:${Math.round(cnt / max * 100)}%"></div></div></td>
-            </tr>`).join('');
+                <td style="text-align:center;"><span class="geo-volume-badge">${count.toLocaleString()}</span></td>
+                <td style="text-align:right;"><span class="geo-share">${((count / total) * 100).toFixed(1)}%</span></td>
+            </tr>
+        `).join('');
 }
 
-function isSameCountry(a, b) {
-    if (!a || !b) return false;
-    const al = String(a).trim().toLowerCase();
-    const bl = String(b).trim().toLowerCase();
-    if (!al || !bl) return false;
-    return al === bl || al.includes(bl) || bl.includes(al);
-}
-
-function geoRowDrilldown(countryName, cnt) {
-    const sourceData = allCoursesData.length > 0 ? allCoursesData : (globalData?.documents || []);
-    const matches = sourceData.filter(r => isSameCountry(r.country, countryName));
-    const rows = matches.length ? matches.map((r, i) => `<tr>
-        <td style="color:var(--text-3);">${i + 1}</td>
-        <td class="course-name-cell" style="font-weight:600;" title="${escHtml(r.name || r.course_name || '')}">${escHtml(r.name || r.course_name || '—')}</td>
-        <td style="color:var(--text-2);">${escHtml(r.university || '—')}</td>
-        <td>${escHtml(r.domain || '—')}</td>
-    </tr>`).join('')
-        : `<tr><td colspan="4" style="text-align:center;color:var(--text-3);padding:20px;">No course-level data yet</td></tr>`;
-
-    openDrilldown('geo-drilldown', 'geo-drilldown-title', 'geo-drilldown-tbody',
-        `${getFlag(countryName)} ${countryName} — ${cnt} Courses`, rows);
-}
-
-function populateDomainTab(domainPivot) {
-    const ctx = document.getElementById('an-domain-chart');
-    const entries = Object.entries(domainPivot || {}).filter(([k]) => k && k !== 'Total')
-        .sort((a, b) => (b[1].Total || 0) - (a[1].Total || 0));
-
-    if (ctx) {
-        if (anDomainChart) anDomainChart.destroy();
-        anDomainChart = new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: entries.map(([k]) => k),
-                datasets: [{
-                    label: 'Total Courses', data: entries.map(([, v]) => v.Total || 0),
-                    backgroundColor: 'rgba(99,102,241,0.75)', hoverBackgroundColor: '#6366f1',
-                    borderRadius: 8, borderSkipped: false
-                }]
-            },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: {
-                    x: { grid: { display: false }, ticks: { font: { size: 11, weight: '600' }, maxRotation: 30 } },
-                    y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { precision: 0 } }
-                },
-                animation: { duration: 900, easing: 'easeOutQuart' },
-                onClick: (e, els) => {
-                    if (els.length) domainRowDrilldown(entries[els[0].index][0]);
-                }
-            }
-        });
-    }
-
-    const tbody = document.getElementById('an-domain-tbody');
-    if (tbody) tbody.innerHTML = entries.map(([name, v]) => {
-        const total = v.Total || 0, indian = v.Indian || 0, intl = v.International || 0;
-        const ip = total ? Math.round(indian / total * 100) : 50;
-        return `<tr class="clickable-row" onclick="domainRowDrilldown('${name.replace(/'/g, "\\'")}')">
-            <td><div style="font-weight:800;color:var(--text-1);">${escHtml(name)}</div>
-                <div style="font-size:0.68rem;color:var(--text-3);text-transform:uppercase;letter-spacing:0.06em;margin-top:2px;">Click to explore</div></td>
-            <td style="text-align:center;"><span class="dom-total">${total}</span></td>
-            <td style="text-align:center;"><span class="dom-indian">${indian}</span></td>
-            <td style="text-align:center;"><span class="dom-intl">${intl}</span></td>
-            <td><div class="dom-mix-bar"><div class="dom-mix-in" style="flex:${ip}"></div><div class="dom-mix-out" style="flex:${100 - ip}"></div></div></td>
-        </tr>`;
-    }).join('');
-}
-
-function domainRowDrilldown(domainName) {
-    const sourceData = allCoursesData.length > 0 ? allCoursesData : (globalData?.documents || []);
-    const matches = sourceData.filter(r => normalizeDomain(r.domain || '') === domainName);
-    const rows = matches.length ? matches.map((r, i) => `<tr>
-        <td style="color:var(--text-3);">${i + 1}</td>
-        <td class="course-name-cell" style="font-weight:600;" title="${escHtml(r.name || r.course_name || '')}">${escHtml(r.name || r.course_name || '—')}</td>
-        <td>${escHtml(r.university || '—')}</td>
-        <td>${escHtml(r.country || '—')}</td>
-    </tr>`).join('')
-        : `<tr><td colspan="4" style="text-align:center;color:var(--text-3);padding:20px;">No course-level data yet</td></tr>`;
-
-    openDrilldown('dom-drilldown', 'dom-drilldown-title', 'dom-drilldown-tbody',
-        `🔬 ${domainName} — Domain Deep-Dive`, rows);
-}
-
-function openAnalyticsDrilldownByCategory(catLabel) {
-    jumpToCourses({ domain: catLabel });
-}
-
-function renderAnalytics(d) {
-    const docs = globalData?.documents || [];
-    const stats = globalData?.stats || {};
-    const countryCounts = globalData?.country_counts || {};
-
-    const effectiveCountryPivot = Object.keys(d.country_pivot || {}).length > 0
-        ? d.country_pivot
-        : Object.fromEntries(Object.entries(countryCounts).filter(([k]) => isValidCountry(k)));
-
-    let effectiveDomainPivot = d.domain_pivot || {};
-    if (Object.keys(effectiveDomainPivot).length === 0) {
-        effectiveDomainPivot = {};
-        allCoursesData.forEach(c => {
-            const dom = normalizeDomain(c.domain || '');
-            if (!dom || dom === 'Other') return;
-            if (!effectiveDomainPivot[dom]) effectiveDomainPivot[dom] = { Total: 0, Indian: 0, International: 0 };
-            effectiveDomainPivot[dom].Total++;
-            if ((c.country || '').toLowerCase().includes('india')) effectiveDomainPivot[dom].Indian++;
-            else effectiveDomainPivot[dom].International++;
-        });
-    }
-
-    const effectiveCourseCategory = Object.keys(d.course_category || {}).length > 0
-        ? d.course_category
-        : (() => {
-            const cc = {};
-            allCoursesData.forEach(c => {
-                const lvl = normalizeDomain(c.domain || '');
-                if (lvl && lvl !== 'Other') cc[lvl] = (cc[lvl] || 0) + 1;
-            });
-            return cc;
-        })();
-
-    const effectivePricingCategory = Object.keys(d.pricing_category || {}).length > 0
-        ? d.pricing_category
-        : (() => {
-            const pc = {};
-            allCoursesData.forEach(c => {
-                const cost = String(c.cost || '').toLowerCase();
-                let bucket = 'Paid';
-                if (cost === 'free') bucket = 'Free Courses';
-                else if (cost.includes('audit')) bucket = 'Free to Audit';
-                else if (cost.includes('low cost') || cost.includes('value')) bucket = 'High Value Low Cost';
-                pc[bucket] = (pc[bucket] || 0) + 1;
-            });
-            return pc;
-        })();
-
-    populateAnalyticsKPIs(d, stats, countryCounts);
-    populateInsightCards({ ...d, country_pivot: effectiveCountryPivot, domain_pivot: effectiveDomainPivot }, globalData);
-    populateCredentialChart(effectiveCourseCategory);
-    populatePricingChart(effectivePricingCategory);
-
-    const realTotal = stats.total || Object.values(countryCounts).reduce((s, v) => s + v, 0) || 1;
-    const indiaTotal = Object.entries(countryCounts)
-        .filter(([k]) => k.toLowerCase().includes('india'))
-        .reduce((s, [, v]) => s + (Number(v) || 0), 0);
-    populateSplitVisual((indiaTotal / realTotal) * 100);
-
-    populateAnTopCountries(effectiveCountryPivot);
-
-    geoTableData = Object.entries(effectiveCountryPivot)
-        .filter(([k]) => isValidCountry(k)).sort((a, b) => b[1] - a[1]);
-    renderGeoTable();
-
-    populateDomainTab(effectiveDomainPivot);
-
-    console.log('[Analytics] OK - total:', realTotal, '| countries:', geoTableData.length, '| india:', indiaTotal);
-}
 
 // ================================================================
 //  HELPERS
@@ -4081,6 +2988,26 @@ function escJs(str) {
     return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
 }
 
+/**
+ * Animate a number from 0 to target, optionally formatting the final value.
+ * Accepts an element id or an HTMLElement.
+ */
+function countUp(targetOrEl, targetValue, finalText = null, duration = 800) {
+    const el = typeof targetOrEl === 'string' ? document.getElementById(targetOrEl) : targetOrEl;
+    if (!el) return;
+    const start = performance.now();
+    const startValue = 0;
+    function tick(now) {
+        const p = Math.min(1, (now - start) / duration);
+        const ease = 1 - Math.pow(1 - p, 3);
+        const current = Math.round(startValue + (targetValue - startValue) * ease);
+        el.textContent = current.toLocaleString();
+        if (p < 1) requestAnimationFrame(tick);
+        else if (finalText !== null) el.textContent = finalText;
+    }
+    requestAnimationFrame(tick);
+}
+
 // ================================================================
 //  INIT
 // ================================================================
@@ -4091,8 +3018,542 @@ initGlobe();
 initCharts();
 initFilters();
 initModal();
-initAnalyticsSubTabs();
 initEdxControls();
+initGlobalSearch();
+initQuickView();
+initOnboarding();
+initStickyFilterBar();
+initDashboardClickableMetrics();
+// initDomainFeedObserver removed — domain feed is rendered on dashboard scroll instead
 
-fetchData().then(() => renderAnalytics({}));
->>>>>>> be254b7 (Remove index.html template file from frontend/templates directory)
+fetchData().then(() => {
+    // If the Analytics tab is active on load, render it.
+    const analyticsTab = document.getElementById('tab-analytics');
+    if (analyticsTab && analyticsTab.classList.contains('active')) renderAnalyticsTab();
+});
+
+// ================================================================
+//  BATCH 2-4 UI POLISH — Navbar, Dashboard, Globe, Cards
+// ================================================================
+
+function initScrollProgress() {
+    const bar = document.getElementById('scroll-progress');
+    if (!bar) return;
+    function update() {
+        const doc = document.documentElement;
+        const scroll = doc.scrollTop || document.body.scrollTop;
+        const height = doc.scrollHeight - doc.clientHeight;
+        const pct = height > 0 ? (scroll / height) * 100 : 0;
+        bar.style.width = pct + '%';
+    }
+    window.addEventListener('scroll', update, { passive: true });
+    update();
+}
+
+function initMobileMenu() {
+    const btn = document.getElementById('mobile-menu-btn');
+    const drawer = document.getElementById('mobile-nav-drawer');
+    if (!btn || !drawer) return;
+
+    function toggle() {
+        const open = drawer.classList.toggle('open');
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        drawer.setAttribute('aria-hidden', open ? 'false' : 'true');
+    }
+
+    btn.addEventListener('click', toggle);
+    drawer.querySelectorAll('a').forEach(a => a.addEventListener('click', () => {
+        drawer.classList.remove('open');
+        btn.setAttribute('aria-expanded', 'false');
+        drawer.setAttribute('aria-hidden', 'true');
+    }));
+
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && drawer.classList.contains('open')) toggle();
+    });
+}
+
+function initNavbarKeyboardNav() {
+    const tabs = Array.from(document.querySelectorAll('#nav-tabs a'));
+    tabs.forEach((a, i) => {
+        a.addEventListener('keydown', e => {
+            if (e.key === 'ArrowRight') {
+                e.preventDefault();
+                const next = tabs[(i + 1) % tabs.length];
+                next.focus();
+                next.click();
+            } else if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                const prev = tabs[(i - 1 + tabs.length) % tabs.length];
+                prev.focus();
+                prev.click();
+            }
+        });
+    });
+}
+
+function updateNavbarAria() {
+    document.querySelectorAll('#nav-tabs a').forEach(a => {
+        const active = a.classList.contains('active');
+        a.setAttribute('aria-current', active ? 'page' : 'false');
+    });
+}
+
+function initGlobeControls() {
+    const resetBtn = document.getElementById('globe-reset-btn');
+    const fsBtn = document.getElementById('globe-fullscreen-btn');
+    const container = document.getElementById('globe-container');
+
+    if (resetBtn && globeInstance?.pointOfView) {
+        resetBtn.addEventListener('click', () => {
+            globeInstance.pointOfView({ lat: 20.5937, lng: 78.9629, altitude: 2.1 }, 800);
+        });
+    }
+
+    if (fsBtn && container) {
+        fsBtn.addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                container.requestFullscreen?.().catch(() => {});
+            } else {
+                document.exitFullscreen?.().catch(() => {});
+            }
+        });
+    }
+}
+
+function initCountryPanelShortcuts() {
+    const panel = document.getElementById('course-details-panel');
+    const clearBtn = document.getElementById('clear-filter');
+    if (!panel) return;
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && panel.style.display !== 'none') {
+            clearBtn?.click();
+        }
+    });
+}
+
+function initDashboardCountUp() {
+    // Observe when metric values change and animate them once.
+    const ids = ['total-count', 'india-stat-count', 'dash-iit-count', 'dash-iiit-count', 'dash-nit-count', 'dash-free-count', 'dash-fta-count', 'dash-hvlc-count'];
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        let done = false;
+        const obs = new MutationObserver(() => {
+            if (done || el.textContent === '0' || el.textContent === '—') return;
+            done = true;
+            el.style.transition = 'transform 0.3s var(--ease-spring)';
+            el.style.transform = 'scale(1.12)';
+            setTimeout(() => el.style.transform = 'scale(1)', 300);
+            obs.disconnect();
+        });
+        obs.observe(el, { childList: true, subtree: true, characterData: true });
+    });
+}
+
+// Run the new polish initializers after the existing ones.
+initScrollProgress();
+initMobileMenu();
+initNavbarKeyboardNav();
+initGlobeControls();
+initCountryPanelShortcuts();
+initDashboardCountUp();
+
+// Patch switchTab to keep ARIA and mobile drawer in sync.
+const _origSwitchTab = switchTab;
+switchTab = async function(targetId) {
+    await _origSwitchTab(targetId);
+    updateNavbarAria();
+};
+
+// ================================================================
+//  BATCH 5 — Analytics Tab Controls (search, sort, CSV, donut)
+// ================================================================
+
+function updateAnalyticsMeta(total, countryCount) {
+    const dateEl = document.getElementById('an-meta-date');
+    const scopeEl = document.getElementById('an-meta-scope');
+    if (dateEl) {
+        const now = new Date();
+        dateEl.textContent = `Updated ${now.toLocaleDateString()} ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    }
+    if (scopeEl) {
+        scopeEl.textContent = `${total.toLocaleString()} courses · ${countryCount} countries`;
+    }
+}
+
+let chartCountries = null;
+let chartSpecializations = null;
+let chartPricing = null;
+
+function renderChartCountries(containerId, data) {
+    const ctx = document.getElementById(containerId);
+    if (!ctx) return;
+    if (chartCountries) chartCountries.destroy();
+
+    const sorted = Object.entries(data)
+        .filter(([label]) => label && label !== 'Unknown' && label !== 'Total' && label !== 'Other')
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+
+    const isLight = document.body.classList.contains('light-mode');
+    const textColor = isLight ? '#111827' : '#f8fafc';
+    const gridColor = isLight ? '#e2e8f0' : '#334155';
+
+    chartCountries = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: sorted.map(([label]) => label),
+            datasets: [{
+                label: 'Courses',
+                data: sorted.map(([, count]) => count),
+                backgroundColor: '#14b8a6',
+                borderRadius: 4,
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { color: gridColor }, ticks: { color: textColor, font: { family: 'Inter' } } },
+                y: { grid: { display: false }, ticks: { color: textColor, font: { family: 'Inter', weight: '500' } } }
+            }
+        }
+    });
+}
+
+function renderChartSpecializations(containerId, data) {
+    const ctx = document.getElementById(containerId);
+    if (!ctx) return;
+    if (chartSpecializations) chartSpecializations.destroy();
+
+    const sorted = Object.entries(data)
+        .filter(([label]) => label && label !== 'Unknown' && label !== 'Total' && label !== 'Other')
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+
+    const isLight = document.body.classList.contains('light-mode');
+    const textColor = isLight ? '#111827' : '#f8fafc';
+
+    chartSpecializations = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: sorted.map(([label]) => label),
+            datasets: [{
+                data: sorted.map(([, count]) => count),
+                backgroundColor: ['#14b8a6', '#3b82f6', '#8b5cf6', '#ec4899', '#f43f5e', '#f59e0b', '#10b981', '#6366f1', '#a855f7', '#d946ef'],
+                borderWidth: 0,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'right', labels: { color: textColor, font: { family: 'Inter' } } }
+            }
+        }
+    });
+}
+
+function renderChartPricing(containerId, data) {
+    const ctx = document.getElementById(containerId);
+    if (!ctx) return;
+    if (chartPricing) chartPricing.destroy();
+
+    const labels = ['Free', 'Free to Audit', 'High Value Low Cost', 'Paid'];
+    const values = labels.map(l => data[l] || 0);
+
+    const isLight = document.body.classList.contains('light-mode');
+    const textColor = isLight ? '#111827' : '#f8fafc';
+
+    chartPricing = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: values,
+                backgroundColor: ['#22c55e', '#eab308', '#a855f7', '#94a3b8'],
+                borderWidth: 0,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'right', labels: { color: textColor, font: { family: 'Inter' } } }
+            }
+        }
+    });
+}
+
+function applyAnalyticsFilters() {
+    if (!window.__analyticsCountries || !window.__analyticsTotal) return;
+    let entries = Object.entries(window.__analyticsCountries).filter(([k]) => isValidCountry(k));
+    const q = (window.__analyticsSearch || '').trim().toLowerCase();
+    if (q) entries = entries.filter(([k]) => k.toLowerCase().includes(q));
+
+    const sort = window.__analyticsSort || { key: 'count', dir: 'desc' };
+    entries.sort((a, b) => {
+        if (sort.key === 'name') {
+            return sort.dir === 'asc' ? a[0].localeCompare(b[0]) : b[0].localeCompare(a[0]);
+        }
+        if (sort.key === 'share') {
+            const sa = a[1] / window.__analyticsTotal;
+            const sb = b[1] / window.__analyticsTotal;
+            return sort.dir === 'asc' ? sa - sb : sb - sa;
+        }
+        return sort.dir === 'asc' ? a[1] - b[1] : b[1] - a[1];
+    });
+
+    updateAnalyticsSortHeaders(sort);
+
+    const tbody = document.getElementById('an-all-countries-tbody');
+    if (tbody) {
+        if (entries.length === 0) {
+            tbody.innerHTML = `
+                <tr class="empty-row">
+                    <td colspan="4" class="empty-state">
+                        <div class="empty-icon">🔍</div>
+                        <strong>No countries match your search</strong>
+                        <div class="empty-sub">Try a different term or clear the filter.</div>
+                    </td>
+                </tr>`;
+        } else {
+            tbody.innerHTML = entries.map(([name, count], i) => `
+                <tr tabindex="0" data-country="${escHtml(name)}" title="${escHtml(name)} — ${count.toLocaleString()} courses">
+                    <td><span class="geo-rank">${(i + 1).toString().padStart(2, '0')}</span></td>
+                    <td><span class="table-flag">${getFlag(name)}</span><strong>${escHtml(name)}</strong></td>
+                    <td class="col-center"><span class="geo-volume-badge">${count.toLocaleString()}</span></td>
+                    <td class="col-right"><span class="geo-share">${((count / window.__analyticsTotal) * 100).toFixed(1)}%</span></td>
+                </tr>
+            `).join('');
+        }
+    }
+}
+
+function updateAnalyticsSortHeaders(sort) {
+    const table = document.getElementById('analytics-country-table');
+    if (!table) return;
+    table.querySelectorAll('thead th.sortable').forEach(th => {
+        const key = th.dataset.sort;
+        th.classList.remove('sort-asc', 'sort-desc', 'sort-active');
+        if (key === sort.key) {
+            th.classList.add('sort-active', sort.dir === 'asc' ? 'sort-asc' : 'sort-desc');
+        }
+    });
+}
+
+function downloadAnalyticsCSV() {
+    if (!window.__analyticsCountries || !window.__analyticsTotal) return;
+    const rows = Object.entries(window.__analyticsCountries)
+        .filter(([k]) => isValidCountry(k))
+        .sort((a, b) => b[1] - a[1]);
+    const csv = [
+        ['Rank', 'Country', 'Courses', 'Share'].join(','),
+        ...rows.map(([name, count], i) => [
+            i + 1,
+            `"${name.replace(/"/g, '""')}"`,
+            count,
+            ((count / window.__analyticsTotal) * 100).toFixed(2) + '%'
+        ].join(','))
+    ].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `course-analytics-countries-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
+
+function initAnalyticsControls() {
+    const search = document.getElementById('an-country-search');
+    const sortBtn = document.getElementById('an-sort-btn');
+    const csvBtn = document.getElementById('an-csv-btn');
+    const refreshBtn = document.getElementById('an-refresh-btn');
+
+    if (search) {
+        search.addEventListener('input', e => {
+            window.__analyticsSearch = e.target.value;
+            applyAnalyticsFilters();
+        });
+    }
+
+    const table = document.getElementById('analytics-country-table');
+    if (table) {
+        table.querySelectorAll('thead th.sortable').forEach(th => {
+            th.addEventListener('click', () => {
+                const key = th.dataset.sort;
+                const current = window.__analyticsSort || { key: 'count', dir: 'desc' };
+                let dir = 'desc';
+                if (current.key === key && current.dir === 'desc') dir = 'asc';
+                window.__analyticsSort = { key, dir };
+                if (sortBtn) sortBtn.textContent = `⇅ Sort: ${key} ${dir}`;
+                applyAnalyticsFilters();
+            });
+        });
+    }
+
+    if (sortBtn) {
+        sortBtn.addEventListener('click', () => {
+            const sort = window.__analyticsSort || { key: 'count', dir: 'desc' };
+            if (sort.key === 'count') {
+                sort.key = 'name';
+                sort.dir = 'asc';
+            } else {
+                sort.key = 'count';
+                sort.dir = 'desc';
+            }
+            window.__analyticsSort = sort;
+            sortBtn.textContent = `⇅ Sort: ${sort.key} ${sort.dir}`;
+            applyAnalyticsFilters();
+        });
+    }
+
+    if (csvBtn) csvBtn.addEventListener('click', downloadAnalyticsCSV);
+    if (refreshBtn) refreshBtn.addEventListener('click', () => renderAnalyticsTab());
+}
+
+initAnalyticsControls();
+
+// ================================================================
+//  BATCH 9-10 — MICRO-INTERACTIONS, ACCESSIBILITY, ANNOUNCEMENTS
+// ================================================================
+
+function createLiveRegion() {
+    if (document.getElementById('live-region')) return;
+    const el = document.createElement('div');
+    el.id = 'live-region';
+    el.className = 'sr-only';
+    el.setAttribute('aria-live', 'polite');
+    el.setAttribute('aria-atomic', 'true');
+    document.body.appendChild(el);
+}
+
+function announce(message) {
+    createLiveRegion();
+    const el = document.getElementById('live-region');
+    if (el) {
+        el.textContent = '';
+        // small delay so screen readers notice the change
+        requestAnimationFrame(() => { el.textContent = message; });
+    }
+}
+
+function initRipple() {
+    const selectors = '.btn-view-details, .modal-btn.primary, .modal-btn.secondary, .edx-reset-btn, .type-pill, .domain-chip, .chip-scroll-btn, .view-btn, .pagination-btn, .card-action-btn, .row-action';
+    document.querySelectorAll(selectors).forEach(btn => btn.classList.add('ripple'));
+    document.addEventListener('click', e => {
+        const btn = e.target.closest('.ripple');
+        if (!btn) return;
+        const rect = btn.getBoundingClientRect();
+        const size = Math.max(rect.width, rect.height);
+        const x = e.clientX - rect.left - size / 2;
+        const y = e.clientY - rect.top - size / 2;
+        const ripple = document.createElement('span');
+        ripple.className = 'ripple-effect';
+        ripple.style.width = ripple.style.height = size + 'px';
+        ripple.style.left = x + 'px';
+        ripple.style.top = y + 'px';
+        btn.appendChild(ripple);
+        setTimeout(() => ripple.remove(), 600);
+    });
+}
+
+function initMagneticButtons() {
+    document.querySelectorAll('.btn-view-details, .modal-btn.primary').forEach(btn => {
+        btn.classList.add('magnetic');
+        btn.addEventListener('mousemove', e => {
+            const rect = btn.getBoundingClientRect();
+            const dx = e.clientX - rect.left - rect.width / 2;
+            const dy = e.clientY - rect.top - rect.height / 2;
+            btn.style.transform = `translate(${dx * 0.12}px, ${dy * 0.12}px)`;
+        });
+        btn.addEventListener('mouseleave', () => {
+            btn.style.transform = '';
+        });
+    });
+}
+
+function renderDomainCards(gridId, sectionId) {
+    const grid = document.getElementById(gridId);
+    const section = document.getElementById(sectionId);
+    if (!grid) return;
+    if (grid.dataset.rendered === 'true') return;
+    grid.dataset.rendered = 'true';
+
+    grid.innerHTML = CYBER_DOMAINS_DATA.map((d, i) => {
+        const pills = (d.courseTypes || []).map(t =>
+            `<button class="domain-type-pill" onclick="jumpToCourses({courseType:'${escJs(t)}', domain:'${escJs(d.filterDomain)}'})" title="Show ${escHtml(t)} courses in ${escHtml(d.title)}">${escHtml(t)}</button>`
+        ).join('');
+        const skills = (d.skills || []).slice(0, 5).map(s =>
+            `<span class="domain-skill">${escHtml(s)}</span>`
+        ).join('');
+        const roles = (d.roles || []).slice(0, 3).join(' • ');
+        return `
+        <article class="domain-card" style="--domain-color:${escHtml(d.color)}; animation: fadeStagger 0.5s ease ${i * 0.08}s both;">
+            <div class="domain-card-hdr">
+                <div class="domain-icon" style="color:${escHtml(d.color)}; border-color:${escHtml(d.color)}40; background:${escHtml(d.color)}14;">${d.icon}</div>
+                <div class="domain-card-title-wrap">
+                    <div class="domain-card-title">${escHtml(d.title)}</div>
+                    <div class="domain-card-roles">${escHtml(roles)}</div>
+                </div>
+            </div>
+            <div class="domain-summary">${escHtml(d.summary)}</div>
+            ${skills ? `<div class="domain-section">
+                <div class="domain-section-label">Top Skills</div>
+                <div class="domain-skills">${skills}</div>
+            </div>` : ''}
+            <div class="domain-actions">
+                <button class="domain-primary-btn" onclick="jumpToCourses({domain:'${escJs(d.filterDomain)}'})">Explore ${escHtml(d.title)} Courses</button>
+                <div class="domain-types">${pills}</div>
+            </div>
+        </article>`;
+    }).join('');
+
+    if (section) {
+        section.classList.add('domain-visible');
+        section.style.opacity = '1';
+    }
+}
+
+function initDomainExplorer() {
+    const dashboardSection = document.getElementById('domain-info-section');
+    const dashboardGrid = document.getElementById('domain-cards-grid');
+    const analyticsSection = document.getElementById('analytics-domain-section');
+    const analyticsGrid = document.getElementById('analytics-domain-cards-grid');
+
+    if (dashboardSection && dashboardGrid) {
+        const obs = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) renderDomainCards('domain-cards-grid', 'domain-info-section');
+            });
+        }, { threshold: 0.12, rootMargin: '0px 0px -50px 0px' });
+        obs.observe(dashboardSection);
+        if (dashboardSection.getBoundingClientRect().top < window.innerHeight) {
+            renderDomainCards('domain-cards-grid', 'domain-info-section');
+        }
+    }
+
+    if (analyticsSection && analyticsGrid) {
+        const obs = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) renderDomainCards('analytics-domain-cards-grid', 'analytics-domain-section');
+            });
+        }, { threshold: 0.12, rootMargin: '0px 0px -50px 0px' });
+        obs.observe(analyticsSection);
+    }
+}
+
+function initBatch9And10() {
+    createLiveRegion();
+    initRipple();
+    initMagneticButtons();
+    initDomainExplorer();
+}
+
+initBatch9And10();
