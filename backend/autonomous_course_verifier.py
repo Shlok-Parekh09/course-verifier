@@ -4198,6 +4198,10 @@ CRITICAL RULES:
             LLM_TEXT_BUDGET = 400000
         if LLM_TEXT_BUDGET <= 0:
             LLM_TEXT_BUDGET = 400000
+            
+        if os.environ.get('LLM_BACKEND') == 'ollama':
+            # Strict safety cap for local Ollama to prevent 100% RAM / Memory Swapping
+            LLM_TEXT_BUDGET = min(LLM_TEXT_BUDGET, 40000)
 
         if "--- EXCEL FEES DATA ---" in page_text or "--- EXCEL SYLLABUS DATA ---" in page_text:
             web_part = page_text

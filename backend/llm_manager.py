@@ -902,7 +902,8 @@ class LLMManagerOllama:
             "prompt": prompt,
             "stream": False,
             "options": {
-                "temperature": temperature
+                "temperature": temperature,
+                "num_ctx": 16384
             }
         }
         if system:
@@ -965,7 +966,8 @@ class LLMManagerOllama:
             "stream": False,
             "images": [base64_image],
             "options": {
-                "temperature": 0.0
+                "temperature": 0.0,
+                "num_ctx": 16384
             }
         }
         if system:
