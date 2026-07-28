@@ -6901,16 +6901,11 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
         print(f"    -> Synchronously resolving and downloading ChromeDriver...")
         resolved_driver_path = None
         try:
-            from selenium import webdriver
-            from selenium.webdriver.chrome.options import Options as StdOptions
-            std_opts = StdOptions()
-            std_opts.add_argument("--headless=new")
-            std_opts.add_argument("--disable-gpu")
-            std_opts.add_argument("--no-sandbox")
-            std_opts.add_argument("--disable-dev-shm-usage")
-            _t_drv = webdriver.Chrome(options=std_opts)
-            resolved_driver_path = _t_drv.service.path
-            _t_drv.quit()
+            import undetected_chromedriver as uc
+            from undetected_chromedriver.patcher import Patcher
+            patcher = Patcher(version_main=get_chrome_main_version())
+            patcher.auto()
+            resolved_driver_path = patcher.executable_path
             print(f"    -> Downloaded matching chromedriver to: {resolved_driver_path}")
         except Exception as e:
             print(f"    -> Warning during driver resolution: {e}")
