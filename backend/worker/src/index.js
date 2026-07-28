@@ -412,7 +412,64 @@ export default {
       }
     }
 
+
+    // ─── Route: /api/update_domain (admin) ─────────────────────────────────
+    // Patches the domain field for specific course IDs in courses.json KV.
+    // Body: { "domain_updates": [ { "id": 337, "domain": "Master's Degree" }, ... ] }
+    if (path === '/api/update_domain' && request.method === 'POST') {
+      const auth = request.headers.get('Authorization');
+      if (auth !== `Bearer ${env.KV_PUSH_KEY}`) {
+        return jsonResponse({ status: 'error', message: 'Unauthorized' }, 401, request, env);
+      }
+      try {
+        const body = await request.json();
+        const updates = body.domain_updates;
+        if (!Array.isArray(updates) || updates.length === 0) {
+          return jsonResponse({ status: 'error', message: 'Provide domain_updates array' }, 400, request, env);
+        }
+
+        // Build a fast lookup: id -> new domain
+        const domainMap = {};
+        for (const u of updates) {
+          if (u.id != null && u.domain) domainMap[String(u.id)] = u.domain;
+        }
+
+        // Read existing courses.json from KV
+        const courses = await env.COURSE_DATA.get('courses.json', { type: 'json' });
+        if (!courses || !Array.isArray(courses)) {
+          return jsonResponse({ status: 'error', message: 'courses.json not found or not an array in KV' }, 404, request, env);
+        }
+
+        let patched = 0;
+        for (const c of courses) {
+          const idStr = String(c.id ?? '');
+          if (domainMap[idStr] !== undefined && c.domain !== domainMap[idStr]) {
+            c.domain = domainMap[idStr];
+            patched++;
+          }
+        }
+
+        await env.COURSE_DATA.put('courses.json', JSON.stringify(courses));
+
+        // Purge edge cache for courses.json endpoint
+        try {
+          const cache = caches.default;
+          const cacheUrl = new URL('/api/courses.json', request.url);
+          await cache.delete(new Request(cacheUrl.toString()));
+        } catch (e) {}
+
+        return jsonResponse({
+          status: 'success',
+          message: `Patched domain for ${patched} of ${updates.length} requested courses`,
+          patched,
+        }, 200, request, env);
+      } catch (e) {
+        return jsonResponse({ status: 'error', message: 'Domain update failed: ' + e.message }, 500, request, env);
+      }
+    }
+
     // Default: 404
+
     return jsonResponse({
       status: 'error',
       message: 'Not found.',
