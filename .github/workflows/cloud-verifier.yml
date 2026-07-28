@@ -240,6 +240,9 @@ jobs:
           path: chunk_artifacts
           merge-multiple: false
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
       - name: Install PyMuPDF for merging
         run: |
           uv venv --clear .venv
