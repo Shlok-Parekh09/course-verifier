@@ -52,10 +52,7 @@ jobs:
         run: python3 --version
       
       - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        uses: astral-sh/setup-uv@v5
 
       - name: Install PyMuPDF & gdown
         run: |
@@ -153,11 +150,7 @@ jobs:
           google-chrome --version || echo "::warning::Google Chrome not found! Make sure to install it."
 
       - name: Install uv
-        shell: bash
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        uses: astral-sh/setup-uv@v5
 
       - name: Install Python Dependencies
         shell: bash
