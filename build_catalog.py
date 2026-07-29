@@ -17,6 +17,7 @@ import json
 import csv
 import re
 import os
+import sqlite3
 from difflib import SequenceMatcher
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -24,6 +25,7 @@ BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 INPUT_JSON = os.path.join(BASE_DIR, "frontend", "1.json")
 CSV_PATH   = os.path.join(BASE_DIR, "Untitled spreadsheet - Sheet1.csv")
 OUTPUT     = os.path.join(BASE_DIR, "frontend", "course_catalog.json")
+DB_PATH    = os.path.join(BASE_DIR, "backend", "local_database.db")
 
 # ── Domain Bands (same as app.js DOMAIN_RANGES) ───────────────────────────────
 DOMAIN_RANGES = [
@@ -76,6 +78,9 @@ ALIASES = {
     "iisc":                "Indian Institute of Science",
     "iisc bangalore":      "Indian Institute of Science",
     "indian institute of science bangalore": "Indian Institute of Science",
+    "iiitm kancheepuram":  "Indian Institute of Information Technology Design and Manufacturing Kancheepuram",
+    "atal bihari vajpayee indian institute of information technology and management gwalior": "IIITM Gwalior",
+    "iiitm gwalior": "IIITM Gwalior",
     # IIMs
     "iim ahmedabad":       "Indian Institute of Management Ahmedabad",
     "iima":                "Indian Institute of Management Ahmedabad",
@@ -154,7 +159,8 @@ ALIASES = {
 _PUNCT = re.compile(r"[^a-z0-9 ]")
 
 def _norm(text):
-    return _PUNCT.sub(" ", (text or "").lower()).strip()
+    t = _PUNCT.sub(" ", (text or "").lower())
+    return " ".join(t.split())
 
 
 def _token_ratio(a, b):
@@ -272,7 +278,33 @@ def extract_skills_description(course):
     return (course.get("skills") or "").strip()
 
 
-# ── Domain band lookup ───────────────────────────────────────────────────────────────
+# ── Database ──────────────────────────────────────────────────────────────────
+def get_affiliated_uni_from_db(cur, course_name: str, university: str) -> str:
+    """Look up affiliated university from local SQLite database using an existing cursor."""
+    if not cur:
+        return ""
+    try:
+        # Try exact match first
+        cur.execute(
+            "SELECT affiliated_uni FROM affiliations WHERE LOWER(course_name)=LOWER(?) AND LOWER(university)=LOWER(?)",
+            (course_name.strip(), university.strip())
+        )
+        row = cur.fetchone()
+        if row:
+            return row["affiliated_uni"]
+        # Fallback: university-only match
+        cur.execute(
+            "SELECT affiliated_uni FROM affiliations WHERE LOWER(university)=LOWER(?)",
+            (university.strip(),)
+        )
+        row = cur.fetchone()
+        return row["affiliated_uni"] if row else ""
+    except Exception as e:
+        print(f"[WARN] DB lookup error: {e}")
+        return ""
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     print(f"[*] Loading {INPUT_JSON}...")
     with open(INPUT_JSON, "r", encoding="utf-8") as f:
@@ -280,6 +312,14 @@ def main():
     print(f"    {len(courses)} courses loaded.")
 
     logo_map = load_logo_map(CSV_PATH)
+    
+    # Init DB connection for fast lookups
+    db_cur = None
+    db_conn = None
+    if os.path.exists(DB_PATH):
+        db_conn = sqlite3.connect(DB_PATH)
+        db_conn.row_factory = sqlite3.Row
+        db_cur = db_conn.cursor()
 
     catalog = []
     matched = 0
@@ -309,7 +349,7 @@ def main():
             "id":                 cid,
             "name":               c.get("name", ""),
             "university":         uni_name,
-            "affiliated_uni":     c.get("affiliated_uni", ""),
+            "affiliated_uni":     get_affiliated_uni_from_db(db_cur, c.get("name", ""), uni_name) or c.get("affiliated_uni", ""),
             "logo_url":           logo_url,
             "domain":             domain_band,
             "course_type":        course_type,
@@ -332,6 +372,9 @@ def main():
     with open(OUTPUT, "w", encoding="utf-8") as f:
         json.dump(catalog, f, ensure_ascii=False, indent=2)
     print(f"[OK] Wrote {len(catalog)} courses -> {OUTPUT}")
+
+    if db_conn:
+        db_conn.close()
 
     unique_unmatched = list(dict.fromkeys(unmatched_unis))[:25]
     if unique_unmatched:

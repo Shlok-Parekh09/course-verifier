@@ -107,7 +107,10 @@ ALIASES = {
     "iit patna": "Indian Institute of Technology Patna",
     "iit indore": "Indian Institute of Technology Indore",
     "iisc": "Indian Institute of Science",
-    "iisc bangalore": "Indian Institute of Science",
+    "indian institute of science bangalore": "Indian Institute of Science",
+    "iiitm kancheepuram": "Indian Institute of Information Technology Design and Manufacturing Kancheepuram",
+    "atal bihari vajpayee indian institute of information technology and management gwalior": "IIITM Gwalior",
+    "iiitm gwalior": "IIITM Gwalior",
     "iim ahmedabad": "Indian Institute of Management Ahmedabad",
     "iima": "Indian Institute of Management Ahmedabad",
     "iim bangalore": "Indian Institute of Management Bangalore",
@@ -149,7 +152,8 @@ ALIASES = {
 _PUNCT = re.compile(r"[^a-z0-9 ]")
 
 def _norm(text):
-    return _PUNCT.sub(" ", (text or "").lower()).strip()
+    t = _PUNCT.sub(" ", (text or "").lower())
+    return " ".join(t.split())
 
 _ALIAS_NORM = {_norm(k): _norm(v) for k, v in ALIASES.items()}
 
