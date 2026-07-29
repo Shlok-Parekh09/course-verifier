@@ -2484,6 +2484,7 @@ class AutonomousCourseVerifier:
                 
                 # Clean up ligatures and symbols before extraction
                 full_text_sorted = full_text_sorted.replace('\ufb02', 'fl').replace('\ufb01', 'fi').replace('\ufb00', 'ff')
+                full_text_sorted = full_text_sorted.replace('\ufb03', 'ffi').replace('\ufb04', 'ffl')
                 full_text_sorted = full_text_sorted.replace('\u2018', "'").replace('\u2019', "'")
                 full_text_sorted = full_text_sorted.replace('\u201c', '"').replace('\u201d', '"')
                 full_text_sorted = full_text_sorted.replace('\u2013', '-').replace('\u2014', '-')
