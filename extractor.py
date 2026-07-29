@@ -153,6 +153,30 @@ def _norm(text):
 
 _ALIAS_NORM = {_norm(k): _norm(v) for k, v in ALIASES.items()}
 
+# ── PDF ligature normalisation ─────────────────────────────────────────────────────────
+_LIGATURES = [
+    ("\ufb01", "fi"),  # fi ligature (Shef?eld -> Sheffield)
+    ("\ufb02", "fl"),  # fl ligature
+    ("\ufb00", "ff"),  # ff ligature
+    ("\ufb03", "ffi"), # ffi ligature
+    ("\ufb04", "ffl"), # ffl ligature
+]
+
+def _clean_uni_name(name):
+    """Normalise PDF ligatures, fix missing spaces, strip affiliation parentheticals."""
+    if not name:
+        return name
+    for bad, good in _LIGATURES:
+        name = name.replace(bad, good)
+    # Fix missing spaces e.g. "University ofWashington"
+    name = re.sub(r"([a-z])([A-Z])", r"\1 \2", name)
+    # Strip parenthetical affiliation: "College (Anna University)" -> "College"
+    # Handles: (Anna Uni.) (Jawaharlal Nehru Technological Uni.) (A.P.J. Abdul Kalam Technological University)
+    name = re.sub(r"\s*\([^)]*(?:university|uni\.|univ\.)[^)]*\)\s*", " ", name, flags=re.IGNORECASE).strip()
+    # Strip trailing location qualifiers: "College, City, State"
+    name = re.sub(r",\s+[A-Z][a-zA-Z .]+$", "", name).strip()
+    return name.strip()
+
 
 def resolve_university_name(raw_name: str, logo_map: dict) -> str:
     """
@@ -161,24 +185,24 @@ def resolve_university_name(raw_name: str, logo_map: dict) -> str:
     """
     if not raw_name or raw_name.lower() in ("unknown", "nan", ""):
         return raw_name
-    n = _norm(raw_name)
+    # First clean ligatures and parentheticals
+    cleaned = _clean_uni_name(raw_name)
+    n = _norm(cleaned)
     # direct alias
     alias_target = _ALIAS_NORM.get(n)
     if alias_target:
-        # find the best matching original CSV key for display name
         for csv_norm, url in logo_map.items():
             if _norm(csv_norm) == alias_target or alias_target in _norm(csv_norm):
-                # return proper-case name from logo_map key
                 return csv_norm.title()
     # fuzzy match to CSV keys
-    best, best_name = 0.0, raw_name
+    best, best_name = 0.0, cleaned
     for csv_n in logo_map:
         s = SequenceMatcher(None, n, _norm(csv_n)).ratio()
         if s > best:
             best, best_name = s, csv_n
     if best >= 0.80:
         return best_name.title()
-    return raw_name
+    return cleaned
 
 
 # ── Logo lookup ───────────────────────────────────────────────────────────────
@@ -199,7 +223,8 @@ def load_logo_map(csv_path):
 def find_logo(uni_name, logo_map):
     if not uni_name:
         return ""
-    n = _norm(uni_name)
+    cleaned = _clean_uni_name(uni_name)
+    n = _norm(cleaned)
     if n in logo_map:
         return logo_map[n]
     alias_target = _ALIAS_NORM.get(n)

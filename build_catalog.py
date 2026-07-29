@@ -190,14 +190,37 @@ def load_logo_map(csv_path):
 _ALIAS_NORM = {_norm(k): _norm(v) for k, v in ALIASES.items()}
 
 
+# ── PDF ligature normalisation + uni name cleaning ───────────────────────────
+_LIGATURES = [
+    ("\ufb01", "fi"),  # Sheffield, Bluefield, etc.
+    ("\ufb02", "fl"),  # fl ligature
+    ("\ufb00", "ff"),  # ff ligature
+    ("\ufb03", "ffi"), # ffi ligature
+    ("\ufb04", "ffl"), # ffl ligature
+]
+
+def _clean_uni_name(name):
+    """Normalise ligatures, fix missing spaces, strip affiliation parentheticals."""
+    if not name:
+        return name
+    # 1. Fix PDF ligatures
+    for bad, good in _LIGATURES:
+        name = name.replace(bad, good)
+    # 2. Fix missing spaces e.g. "University ofWashington" -> "University of Washington"
+    name = re.sub(r"([a-z])([A-Z])", r"\1 \2", name)
+    # 3. Strip parenthetical affiliation: "College (Anna University)" -> "College"
+    #    Also handles abbreviated forms: (Anna Uni.) (Jawaharlal Nehru Technological Uni.)
+    name = re.sub(r"\s*\([^)]*(?:university|uni\.|univ\.)[^)]*\)\s*", " ", name, flags=re.IGNORECASE).strip()
+    # 4. Strip trailing location qualifiers after comma
+    name = re.sub(r",\s+[A-Z][a-zA-Z .]+$", "", name).strip()
+    return name.strip()
+
+
 def find_logo(uni_name, logo_map):
     if not uni_name or uni_name.lower() in ("unknown", "nan", ""):
         return ""
 
-    # Strip parenthetical affiliation suffixes: "College X (Anna University)" -> "College X"
-    clean_name = re.sub(r"\s*\([^)]*university[^)]*\)\s*", " ", uni_name, flags=re.IGNORECASE).strip()
-    # Also strip trailing location qualifiers like ", Mandore" if present after a college name
-    clean_name = re.sub(r",\s*[A-Z][a-z].*$", "", clean_name).strip()
+    clean_name = _clean_uni_name(uni_name)
 
     def _lookup(name):
         n = _norm(name)
@@ -223,7 +246,7 @@ def find_logo(uni_name, logo_map):
             return best_url
         return ""
 
-    # Try with cleaned name first, fall back to original
+    # Try cleaned name first, fall back to raw original
     result = _lookup(clean_name)
     if not result and clean_name != uni_name:
         result = _lookup(uni_name)
@@ -249,7 +272,7 @@ def extract_skills_description(course):
     return (course.get("skills") or "").strip()
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── Domain band lookup ───────────────────────────────────────────────────────────────
 def main():
     print(f"[*] Loading {INPUT_JSON}...")
     with open(INPUT_JSON, "r", encoding="utf-8") as f:
