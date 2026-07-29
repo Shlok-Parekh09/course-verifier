@@ -230,6 +230,9 @@ jobs:
     if: always()
 
     steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
       - name: Use Native System Python
         run: python3 --version
 
@@ -244,6 +247,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Install PyMuPDF for merging
+        shell: bash
         run: |
           uv venv --clear .venv
           uv pip install PyMuPDF
@@ -336,6 +340,78 @@ jobs:
               
           PYEOF
 
+      - name: Merge SQLite Databases
+        shell: bash
+        run: |
+          uv run python3 - <<'DBEOF'
+          import glob, sqlite3, os, shutil
+
+          db_files = glob.glob("chunk_artifacts/**/*.db", recursive=True)
+          if not db_files:
+              print("::warning::No SQLite .db files found in chunk artifacts.")
+          else:
+              print(f"Found {len(db_files)} SQLite database(s) to merge.")
+
+              # Use the first DB as the base
+              shutil.copy(db_files[0], "merged_run.db")
+              base_conn = sqlite3.connect("merged_run.db")
+              base_conn.row_factory = sqlite3.Row
+
+              for db_path in db_files[1:]:
+                  try:
+                      src = sqlite3.connect(db_path)
+                      src.row_factory = sqlite3.Row
+
+                      # --- affiliations ---
+                      for row in src.execute("SELECT * FROM affiliations"):
+                          try:
+                              base_conn.execute(
+                                  "INSERT OR REPLACE INTO affiliations (course_name, university, affiliated_uni) VALUES (?,?,?)",
+                                  (row["course_name"], row["university"], row["affiliated_uni"])
+                              )
+                          except Exception:
+                              pass
+
+                      # --- university_abbreviations ---
+                      for row in src.execute("SELECT * FROM university_abbreviations"):
+                          try:
+                              base_conn.execute(
+                                  "INSERT OR IGNORE INTO university_abbreviations (abbreviation, full_name) VALUES (?,?)",
+                                  (row["abbreviation"], row["full_name"])
+                              )
+                          except Exception:
+                              pass
+
+                      # --- qs_ranking ---
+                      for row in src.execute("SELECT university FROM qs_ranking"):
+                          try:
+                              base_conn.execute(
+                                  "INSERT OR IGNORE INTO qs_ranking (university) VALUES (?)",
+                                  (row["university"],)
+                              )
+                          except Exception:
+                              pass
+
+                      # --- nirf_ranking ---
+                      for row in src.execute("SELECT university FROM nirf_ranking"):
+                          try:
+                              base_conn.execute(
+                                  "INSERT OR IGNORE INTO nirf_ranking (university) VALUES (?)",
+                                  (row["university"],)
+                              )
+                          except Exception:
+                              pass
+
+                      src.close()
+                      print(f"  + Merged {os.path.basename(db_path)}")
+                  except Exception as e:
+                      print(f"  [!] Error merging {db_path}: {e}")
+
+              base_conn.commit()
+              base_conn.close()
+              print("[OK] Merged SQLite databases -> merged_run.db")
+          DBEOF
+
       - name: Upload Merged Results
         uses: actions/upload-artifact@v4
         with:
@@ -343,3 +419,4 @@ jobs:
           path: |
             merged_run.json
             merged_run.pdf
+            merged_run.db
