@@ -28,6 +28,55 @@ function getDomainLabel(id) {
 }
 
 
+// ── Motivational lines ───────────────────────────────────────────────────────
+const MOTIVATIONAL_LINES = [
+    "Every solved course brings Panvel closer.",
+    "Small fixes today, clean catalog tomorrow.",
+    "One course at a time. You've got this.",
+    "Verify today, celebrate in Panvel.",
+    "Consistency beats intensity — keep solving.",
+    "Kal nikalna hai, aaj solve karo.",
+    "Each click makes the data cleaner.",
+    "Progress, not perfection.",
+    "Clear the queue, own the day.",
+    "One verified course is one problem less.",
+];
+
+const TOAST_MOTIVATIONS = [
+    "Onward to Panvel!",
+    "Keep the streak alive.",
+    "Verified like a pro.",
+    "Another one bites the dust.",
+    "Small win, big catalog.",
+    "Data gets cleaner with every click.",
+];
+
+let motivationIndex = 0;
+let motivationTimer = null;
+
+function rotateMotivation() {
+    const el = document.getElementById('motivation');
+    if (!el) return;
+    el.classList.add('fade');
+    setTimeout(() => {
+        motivationIndex = (motivationIndex + 1) % MOTIVATIONAL_LINES.length;
+        el.textContent = MOTIVATIONAL_LINES[motivationIndex];
+        el.classList.remove('fade');
+    }, 400);
+}
+
+function startMotivationRotation() {
+    const el = document.getElementById('motivation');
+    if (!el) return;
+    el.textContent = MOTIVATIONAL_LINES[0];
+    if (motivationTimer) clearInterval(motivationTimer);
+    motivationTimer = setInterval(rotateMotivation, 8000);
+}
+
+function randomToastMotivation() {
+    return TOAST_MOTIVATIONS[Math.floor(Math.random() * TOAST_MOTIVATIONS.length)];
+}
+
 // ── Fees Link Lookup ──────────────────────────────────────────────────────────
 // Maps "institute_name|||course_name" (ASCII-normalised, lowercased) → fee page URL
 // Generated from backend/fees.xlsx  (804 entries)
@@ -108,6 +157,7 @@ function getFeesLink(university, courseName) {
 let allCourses = [];           // All documents from MongoDB (loaded once)
 let domainChart = null;
 let statusChart = null;
+let correctionsChart = null;
 
 let vfPage = 1;                // Verification tab pagination
 let cfPage = 1;                // All Courses tab pagination
@@ -382,6 +432,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         initSorting();
         initTopbarExtras();
         initSuggestions();
+        startMotivationRotation();
 
         // Render every tab. Each is isolated so one failing renderer
         // (charts, lists, etc.) doesn't abort the rest of the page.
@@ -612,6 +663,7 @@ function renderDashboard() {
     renderStatusDonut(verified, disc, err);
     renderCountryList();
     renderRecentSolved();
+    renderCorrectionsChart();
 }
 
 function renderRecentSolved() {
@@ -635,7 +687,7 @@ function renderRecentSolved() {
     }
 
     if (!solved.length) {
-        tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No solved courses yet.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No solved courses yet. Start the streak — Panvel awaits!</td></tr>';
         return;
     }
 
@@ -661,7 +713,9 @@ function renderDomainChart() {
     DOMAIN_RANGES.forEach(r => { counts[r.label] = 0; });
     allCourses.forEach(c => {
         const lbl = getDomainLabel(c.id);
-        counts[lbl] = (counts[lbl] || 0) + 1;
+        if (c.status !== 'Verified') {
+            counts[lbl] = (counts[lbl] || 0) + 1;
+        }
     });
 
     const labels = Object.keys(counts);
@@ -679,16 +733,16 @@ function renderDomainChart() {
             labels,
             datasets: [{
                 data,
-                backgroundColor: 'rgba(0,229,255,0.75)',
-                borderColor: 'rgba(0,229,255,1)',
+                backgroundColor: 'rgba(239,68,68,0.75)',
+                borderColor: 'rgba(239,68,68,1)',
                 borderWidth: 0,
                 borderRadius: 6,
-                hoverBackgroundColor: 'rgba(0,229,255,0.95)',
+                hoverBackgroundColor: 'rgba(239,68,68,0.95)',
             }],
         },
         options: {
             responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ` ${ctx.raw.toLocaleString()} courses` } } },
+            plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ` ${ctx.raw.toLocaleString()} left` } } },
             scales: {
                 x: { ticks: { color: textCol, font: { size: 11 } }, grid: { color: gridCol } },
                 y: { ticks: { color: textCol, font: { size: 11 } }, grid: { color: gridCol }, beginAtZero: true },
@@ -743,6 +797,59 @@ function renderStatusDonut(verified, disc, err) {
             </div>
         `).join('');
     }
+}
+
+function renderCorrectionsChart() {
+    if (typeof Chart === 'undefined') return;
+    const ctxEl = document.getElementById('correctionsChart');
+    if (!ctxEl) return;
+
+    // Group solved courses by date
+    const counts = {};
+    allCourses.forEach(c => {
+        if (!c.solved_ts) return;
+        const d = new Date(c.solved_ts);
+        if (isNaN(d.getTime())) return;
+        const key = d.toISOString().slice(0, 10);
+        counts[key] = (counts[key] || 0) + 1;
+    });
+
+    const labels = Object.keys(counts).sort();
+    const data = labels.map(k => counts[k]);
+
+    const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+    const textCol = isDark ? '#94a3b8' : '#64748b';
+    const gridCol = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+
+    if (correctionsChart) correctionsChart.destroy();
+
+    correctionsChart = new Chart(ctxEl.getContext('2d'), {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [{
+                label: 'Corrections',
+                data,
+                backgroundColor: 'rgba(34,197,94,0.75)',
+                borderColor: 'rgba(34,197,94,1)',
+                borderWidth: 0,
+                borderRadius: 5,
+                hoverBackgroundColor: 'rgba(34,197,94,0.95)',
+            }],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: { callbacks: { label: ctx => ` ${ctx.raw.toLocaleString()} corrected` } },
+            },
+            scales: {
+                x: { ticks: { color: textCol, font: { size: 11 } }, grid: { color: gridCol } },
+                y: { ticks: { color: textCol, font: { size: 11 } }, grid: { color: gridCol }, beginAtZero: true },
+            },
+        },
+    });
 }
 
 function renderCountryList() {
@@ -800,7 +907,7 @@ function renderVerificationTab() {
     // Table
     const tbody = document.getElementById('vf-tbody');
     if (!slice.length) {
-        tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No courses match the current filters.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No courses match the current filters. All caught up — time for chai (or Panvel prep).</td></tr>';
     } else {
         tbody.innerHTML = slice.map((c, i) => `
             <tr onclick="openModal('${c.id}')">
@@ -888,7 +995,7 @@ function renderSolvedTab() {
     tbody.innerHTML = '';
     
     if (pageData.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="9" class="empty-state">No solved courses yet!</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9" class="empty-state">No solved courses yet! Every fix is a step closer to a clean catalog.</td></tr>`;
         return;
     }
     
@@ -934,7 +1041,7 @@ function renderCoursesTab() {
 
     const tbody = document.getElementById('cf-tbody');
     if (!slice.length) {
-        tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No courses match the current filters.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No courses match the current filters. All caught up — time for chai (or Panvel prep).</td></tr>';
     } else {
         tbody.innerHTML = slice.map((c, i) => `
             <tr onclick="openModal('${c.id}')">
@@ -1086,6 +1193,8 @@ function refreshKPIs() {
     if (typeof renderStatusDonut === 'function') {
         renderStatusDonut(verified, disc, err);
     }
+    if (typeof renderDomainChart === 'function') renderDomainChart();
+    if (typeof renderCorrectionsChart === 'function') renderCorrectionsChart();
 }
 
 async function solveAttr(courseId, attr, isSolved) {
@@ -1143,7 +1252,7 @@ async function solveAttr(courseId, attr, isSolved) {
 
     try {
         await mongoUpdateCourse(courseId, update);
-        showToast('Issue resolved', `“${escHtml(attr)}” updated successfully.`, 'success');
+        showToast('Issue resolved', `“${escHtml(attr)}” updated successfully. ${randomToastMotivation()}`, 'success');
     } catch (err) {
         // Revert optimistic update on failure
         Object.assign(c, originalState);
@@ -1211,7 +1320,7 @@ async function solveAll() {
         await mongoUpdateCourse(c.id, update);
         showToast(
             allSolved ? 'Course restored' : 'All issues resolved',
-            allSolved ? 'Course returned to original state.' : 'All mismatched attributes marked as resolved.',
+            allSolved ? `Course returned to original state. ${randomToastMotivation()}` : `All mismatched attributes marked as resolved. ${randomToastMotivation()}`,
             'success'
         );
     } catch (err) {
@@ -1483,7 +1592,7 @@ function renderFeesTab() {
 
     const tbody = document.getElementById('fees-tbody');
     if (!slice.length) {
-        tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No results match your search.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No results match your search. Try another keyword and keep the momentum going.</td></tr>';
     } else {
         tbody.innerHTML = slice.map((r, i) => `
             <tr onclick="window.open(\'${escHtml(r.fees_link)}\', \'_blank\')" style="cursor: pointer;" class="fee-row-hover">

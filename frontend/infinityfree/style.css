@@ -211,6 +211,27 @@ button { cursor: pointer; font-family: inherit; }
 .nav-tab.active .nav-icon { opacity: 1; }
 
 .sidebar-foot { display: flex; flex-direction: column; gap: 8px; padding: 0 8px; }
+
+.urgency-box {
+    margin: 0 4px;
+    padding: 14px 16px;
+    background: linear-gradient(135deg, #dc2626, #ef4444);
+    color: #fff;
+    font-size: 0.82rem;
+    font-weight: 700;
+    line-height: 1.4;
+    text-align: center;
+    text-transform: lowercase;
+    border-radius: var(--radius-sm);
+    box-shadow: 0 0 18px rgba(239, 68, 68, 0.35);
+    animation: pulse-red 2s infinite;
+}
+
+@keyframes pulse-red {
+    0% { box-shadow: 0 0 18px rgba(239, 68, 68, 0.35); }
+    50% { box-shadow: 0 0 26px rgba(239, 68, 68, 0.55); }
+    100% { box-shadow: 0 0 18px rgba(239, 68, 68, 0.35); }
+}
 .sidebar-foot-row { display: flex; align-items: center; gap: 10px; }
 .status-dot {
     width: 8px; height: 8px; border-radius: 50%;
@@ -246,6 +267,18 @@ button { cursor: pointer; font-family: inherit; }
 .topbar-left { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .page-title { font-size: 1.35rem; font-weight: 700; white-space: nowrap; }
 .page-sub { font-size: 0.8rem; color: var(--text-muted); }
+
+.motivation {
+    font-size: 0.72rem;
+    color: var(--accent);
+    font-weight: 500;
+    font-style: italic;
+    margin-top: 2px;
+    min-height: 1em;
+    opacity: 0.85;
+    transition: opacity 0.4s ease;
+}
+.motivation.fade { opacity: 0; }
 
 .topbar-right { display: flex; align-items: center; gap: 12px; }
 
@@ -397,17 +430,18 @@ button { cursor: pointer; font-family: inherit; }
     grid-template-columns: repeat(3, 1fr);
     gap: 20px;
 }
-.panel-domain    { grid-column: span 2; }
-.panel-countries { grid-column: span 1; }
-.panel-donut     { grid-column: span 1; }
-.panel-recent    { grid-column: span 2; }
+.panel-domain       { grid-column: span 2; }
+.panel-countries    { grid-column: span 1; }
+.panel-donut        { grid-column: span 1; }
+.panel-recent       { grid-column: span 2; }
+.panel-corrections  { grid-column: span 2; }
 @media (max-width: 1100px) {
     .dash-grid { grid-template-columns: 1fr 1fr; }
-    .panel-domain, .panel-recent { grid-column: span 2; }
+    .panel-domain, .panel-recent, .panel-corrections { grid-column: span 2; }
 }
 @media (max-width: 760px) {
     .dash-grid { grid-template-columns: 1fr; }
-    .panel-domain, .panel-countries, .panel-donut, .panel-recent { grid-column: span 1; }
+    .panel-domain, .panel-countries, .panel-donut, .panel-recent, .panel-corrections { grid-column: span 1; }
 }
 
 .chart-wrap { position: relative; width: 100%; }

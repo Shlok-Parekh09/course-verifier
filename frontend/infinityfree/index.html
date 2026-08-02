@@ -7,7 +7,7 @@
     <meta name="description" content="Course verification dashboard — live data from MongoDB Atlas">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=5">
+    <link rel="stylesheet" href="style.css?v=6">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
@@ -17,7 +17,7 @@
     <div class="loader-wrap">
         <div class="loader-spinner"></div>
         <div class="loader-title">CourseVerify</div>
-        <div class="loader-sub" id="loader-sub">Connecting to serverless API…</div>
+        <div class="loader-sub" id="loader-sub">Connecting to serverless API… Kal Panvel nikalna hai, aaj data saaf karo.</div>
     </div>
 </div>
 
@@ -59,6 +59,10 @@
             </a>
         </nav>
 
+        <div class="urgency-box" title="Team reminder">
+            jaldi karo kal panvel nikalna hai
+        </div>
+
         <div class="sidebar-foot">
             <div class="sidebar-foot-row">
                 <div class="status-dot" id="conn-dot" title="Connecting…"></div>
@@ -76,6 +80,7 @@
             <div class="topbar-left">
                 <h2 class="page-title" id="page-title">Dashboard</h2>
                 <span class="page-sub" id="page-sub">Real-time verification overview</span>
+                <span class="motivation" id="motivation"></span>
             </div>
             <div class="topbar-right">
                 <div class="search-wrap">
@@ -150,12 +155,12 @@
 
                     <!-- Main Grid -->
                     <div class="dash-grid">
-                        <!-- Domain Bar Chart (span 2) -->
+                        <!-- Remaining by Domain Bar Chart (span 2) -->
                         <div class="panel panel-domain">
                             <div class="panel-hdr">
                                 <div>
-                                    <div class="panel-title">Course Breakdown by Domain</div>
-                                    <div class="panel-sub">Number of courses per domain category</div>
+                                    <div class="panel-title">Remaining by Domain</div>
+                                    <div class="panel-sub">Courses left to verify per domain category</div>
                                 </div>
                             </div>
                             <div class="chart-wrap" style="height:320px;">
@@ -213,6 +218,19 @@
                                         <tr><td colspan="4" class="empty-state">Loading…</td></tr>
                                     </tbody>
                                 </table>
+                            </div>
+                        </div>
+
+                        <!-- Corrections per Day (span 2) -->
+                        <div class="panel panel-corrections">
+                            <div class="panel-hdr">
+                                <div>
+                                    <div class="panel-title">Corrections per Day</div>
+                                    <div class="panel-sub">Number of courses resolved on each date</div>
+                                </div>
+                            </div>
+                            <div class="chart-wrap" style="height:280px;">
+                                <canvas id="correctionsChart"></canvas>
                             </div>
                         </div>
                     </div>
@@ -521,6 +539,6 @@
     </div>
 </div>
 
-<script src="app.js?v=14"></script>
+<script src="app.js?v=15"></script>
 </body>
 </html>
