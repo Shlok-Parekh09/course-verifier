@@ -804,18 +804,50 @@ function renderCorrectionsChart() {
     const ctxEl = document.getElementById('correctionsChart');
     if (!ctxEl) return;
 
+    // Helper: local YYYY-MM-DD so late-night India solves don't show as "yesterday"
+    function localDateKey(d) {
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+
+    function parseLocalDate(key) {
+        const [y, m, d] = key.split('-').map(Number);
+        return new Date(y, m - 1, d);
+    }
+
     // Group solved courses by date
     const counts = {};
     allCourses.forEach(c => {
         if (!c.solved_ts) return;
         const d = new Date(c.solved_ts);
         if (isNaN(d.getTime())) return;
-        const key = d.toISOString().slice(0, 10);
+        const key = localDateKey(d);
         counts[key] = (counts[key] || 0) + 1;
     });
 
-    const labels = Object.keys(counts).sort();
-    const data = labels.map(k => counts[k]);
+    // Build a contiguous calendar range ending today
+    const today = new Date();
+    const todayKey = localDateKey(today);
+    const solvedKeys = Object.keys(counts);
+    let startKey = todayKey;
+    if (solvedKeys.length) {
+        const earliest = solvedKeys.sort()[0];
+        if (earliest < startKey) startKey = earliest;
+    }
+
+    const labels = [];
+    const data = [];
+    const bgColors = [];
+    const start = parseLocalDate(startKey);
+    const end = parseLocalDate(todayKey);
+    for (let cur = new Date(start); cur <= end; cur.setDate(cur.getDate() + 1)) {
+        const key = localDateKey(cur);
+        const count = counts[key] || 0;
+        labels.push(key.slice(5));          // show MM-DD on the axis
+        data.push(count);
+        bgColors.push(key === todayKey
+            ? 'rgba(0,229,255,0.85)'        // highlight today
+            : 'rgba(34,197,94,0.75)');
+    }
 
     const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
     const textCol = isDark ? '#94a3b8' : '#64748b';
@@ -830,11 +862,11 @@ function renderCorrectionsChart() {
             datasets: [{
                 label: 'Corrections',
                 data,
-                backgroundColor: 'rgba(34,197,94,0.75)',
-                borderColor: 'rgba(34,197,94,1)',
+                backgroundColor: bgColors,
+                borderColor: bgColors.map(c => c.replace('0.75', '1').replace('0.85', '1')),
                 borderWidth: 0,
                 borderRadius: 5,
-                hoverBackgroundColor: 'rgba(34,197,94,0.95)',
+                hoverBackgroundColor: bgColors.map(c => c.replace('0.75', '0.95').replace('0.85', '1')),
             }],
         },
         options: {
@@ -842,7 +874,16 @@ function renderCorrectionsChart() {
             maintainAspectRatio: false,
             plugins: {
                 legend: { display: false },
-                tooltip: { callbacks: { label: ctx => ` ${ctx.raw.toLocaleString()} corrected` } },
+                tooltip: {
+                    callbacks: {
+                        title: items => {
+                            const idx = items[0].dataIndex;
+                            const baseYear = labels[idx].startsWith(todayKey.slice(0, 4)) ? todayKey.slice(0, 5) : String(today.getFullYear() - 1) + '-';
+                            return baseYear + labels[idx];
+                        },
+                        label: ctx => ` ${ctx.raw.toLocaleString()} corrected`,
+                    },
+                },
             },
             scales: {
                 x: { ticks: { color: textCol, font: { size: 11 } }, grid: { color: gridCol } },
