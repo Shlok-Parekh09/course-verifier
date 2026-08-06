@@ -89,8 +89,8 @@ pipeline {
                                         export CI="true"
                                         
                                         # Copy environment file to backend if it exists on the host
-                                        if [ -n "$ENV_FILE" ]; then
-                                            echo "$ENV_FILE" > backend/.env
+                                        if [[ -n "\$ENV_FILE" ]]; then
+                                            echo "\$ENV_FILE" > backend/.env
                                         fi
 
                                         # Start virtual frame buffer for Chrome
@@ -102,7 +102,9 @@ pipeline {
                                         # Rename artifacts so they can be securely archived and merged
                                         mv autonomous_verified_link_compile.pdf.json "autonomous_verified_${start}_to_${end}_link_compile.json" || true
                                         mv local_database.db "local_database_${start}_to_${end}.db" || true
-                                        mv link_compile_AUTONOMOUS_VERIFIED.pdf "verification-results-${start}-to-${end}-dummy.pdf" || true
+                                        mv Autonomous_Course_Verification_Report.pdf "verification-results-${start}-to-${end}-dummy.pdf" || true
+                                        
+                                        exit 0
                                     """
                                 }
                             }
