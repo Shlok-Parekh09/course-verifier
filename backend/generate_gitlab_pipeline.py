@@ -70,6 +70,7 @@ for idx, chunk in enumerate(chunks):
         "    - uv cache clean || true",
         "    - uv venv .venv",
         "    - uv pip install -r requirements.txt python-dotenv gdown",
+        "    - if [ -n \"$ENV_FILE\" ]; then echo \"$ENV_FILE\" > backend/.env; fi",
         "    - if [ \"$(uname)\" == \"Linux\" ]; then Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset & sleep 3; fi",
         "    - cd backend && uv run python autonomous_course_verifier.py link_compile.pdf || echo 'Verifier exited with non-zero status'",
         "    - rm -f backend/link_compile.pdf backend/ndu.pdf",
