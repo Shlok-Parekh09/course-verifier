@@ -49,7 +49,7 @@ pipeline {
                         export PATH="$HOME/.local/bin:$PATH"
                         uv cache clean || true
                         uv venv --clear .venv
-                        uv pip install -r backend/requirements.txt python-dotenv PyMuPDF
+                        uv pip install -r requirements.txt python-dotenv PyMuPDF
                         mkdir -p backend
                         
                         echo "Downloading PDF from URL..."
