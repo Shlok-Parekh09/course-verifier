@@ -42,7 +42,7 @@ generate-matrix:
   script:
     - if [ "$RUNNER_TYPE" == "saas-linux-small-amd64" ]; then apt-get update && apt-get install -y curl; fi
     - curl -LsSf https://astral.sh/uv/install.sh | sh || true
-    - export PATH="$HOME/.cargo/bin:$PATH"
+    - export PATH="$HOME/.local/bin:$PATH"
     - uv cache clean || true
     - uv venv --clear .venv
     - uv pip install PyMuPDF gdown
