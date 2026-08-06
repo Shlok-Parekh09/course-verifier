@@ -137,7 +137,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y tesseract-ocr libtesseract-dev xvfb x11-utils libgl1
           wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-          sudo apt-get install -y ./google-chrome-stable_current_amd64.deb
+          sudo apt-get install -y ./google-chrome-stable_current_amd64.deb || true
+
+      - name: Install System Dependencies & 30GB Swap (Self-Hosted Kali)
+        if: github.event.inputs.runner_type == 'self-hosted'
+        run: |
+          echo "Setting up massive 30GB Swap for local Kali runner..."
+          sudo fallocate -l 30G /swapfile_extra || sudo dd if=/dev/zero of=/swapfile_extra bs=1M count=30720
+          sudo chmod 600 /swapfile_extra
+          sudo mkswap /swapfile_extra || true
+          sudo swapon /swapfile_extra || true
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr libtesseract-dev xvfb x11-utils libgl1
+          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo apt-get install -y ./google-chrome-stable_current_amd64.deb || true
 
       - name: Verify & Clean System Dependencies
         shell: bash

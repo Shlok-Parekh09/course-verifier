@@ -1,0 +1,64 @@
+variables:
+  START_PAGE:
+    value: ""
+    description: "Start Page Number (Leave blank to run from page 1)"
+  END_PAGE:
+    value: ""
+    description: "End Page Number (Leave blank to run to the end)"
+  CHUNK_SIZE:
+    value: "30"
+    description: "Pages per chunk"
+  GDRIVE_ID:
+    value: "1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd"
+    description: "Google Drive File ID for the PDF (optional)"
+  GDRIVE_ID_NDU:
+    value: ""
+    description: "Google Drive File ID for NDU Screenshots PDF (optional)"
+  LLM_BACKEND:
+    value: "api"
+    options:
+      - "api"
+      - "local_ollama"
+      - "cloud_ollama"
+    description: "LLM Backend to use"
+  RUNNER_TYPE:
+    value: "self-hosted"
+    options:
+      - "self-hosted"
+      - "saas-linux-small-amd64"
+    description: "Where to run this workflow (self-hosted = Kali Linux, saas-linux-small-amd64 = GitLab Free Cloud)"
+
+stages:
+  - generate
+  - run-chunks
+
+generate-matrix:
+  stage: generate
+  # If using the GitLab cloud runner, we need a python image.
+  # The self-hosted runner will just run this on the host directly if it's an shell executor.
+  image: python:3.12
+  tags:
+    - $RUNNER_TYPE
+  script:
+    - if [ "$RUNNER_TYPE" == "saas-linux-small-amd64" ]; then apt-get update && apt-get install -y curl; fi
+    - curl -LsSf https://astral.sh/uv/install.sh | sh || true
+    - export PATH="$HOME/.cargo/bin:$PATH"
+    - uv cache clean || true
+    - uv venv --clear .venv
+    - uv pip install PyMuPDF gdown
+    - mkdir -p backend
+    - uv run gdown "${GDRIVE_ID:-1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd}" -O backend/link_compile.pdf
+    - uv run python backend/generate_gitlab_pipeline.py
+  artifacts:
+    paths:
+      - backend/link_compile.pdf
+      - child-pipeline.yml
+    expire_in: 1 day
+
+trigger-chunks:
+  stage: run-chunks
+  trigger:
+    include:
+      - artifact: child-pipeline.yml
+        job: generate-matrix
+    strategy: depend
