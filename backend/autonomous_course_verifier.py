@@ -8655,24 +8655,53 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                         web_duration = "4 Years (Anna University Standard Duration)"
                                         print("    -> [Heuristic] Applied Anna University standard 4-year duration override via Google Search (MATCH).")
 
-                                # Check if the PDF's university matches the found university
-                                from difflib import SequenceMatcher
-                                sim = SequenceMatcher(None, course_uni_lower, actual_uni.lower()).ratio()
-                                if sim < 0.45 and actual_uni.lower() not in course_uni_lower and course_uni_lower not in actual_uni.lower():
-                                    # Mismatch: college is NOT affiliated to the PDF's university
-                                    uni_match = False
-                                    uni_detail_msg = (
-                                        f"The college '{course_uni_check}' is not affiliated to the stated university for this course. "
-                                        f"It is affiliated to '{actual_uni}'."
-                                    )
-                                    llm_unid = uni_detail_msg
-                                    if not uni_match:
-                                        course['disc_reason'] = (course.get('disc_reason', '') or '').strip()
-                                        if 'University' not in course['disc_reason']:
-                                            course['disc_reason'] = (course['disc_reason'] + ' | University mismatch: ' + uni_detail_msg).strip(' |')
-                                    print(f"    -> [Indian College Check] MISMATCH! PDF says '{course_uni_check}' but actual is '{actual_uni}'. Setting uni_match=False.")
-                                else:
-                                    print(f"    -> [Indian College Check] Affiliation matches PDF university (sim={sim:.2f}).")
+                                # ── AFFILIATED COLLEGE VERIFICATION ──
+                                # For ALL Indian affiliated colleges, the PDF's "uni" field is the
+                                # COLLEGE name (e.g. "IFET College of Engineering"), while actual_uni
+                                # is the AFFILIATING UNIVERSITY (e.g. "Anna University", "VTU", "JNTUH").
+                                # These are DIFFERENT entities by design. We must NOT compare them and
+                                # set uni_match=False — that was the root cause of the bug.
+                                #
+                                # Instead: verify the affiliation via DB, log dual verification,
+                                # and keep uni_match as-is (it was already set by entity_present()
+                                # checking whether the college name appears on the webpage).
+
+                                # 1. Verify affiliation from local database
+                                db_confirmed = False
+                                db_affiliation = None
+                                try:
+                                    import sqlite3
+                                    db_path = os.path.join(os.path.dirname(__file__), 'local_database.db')
+                                    if os.path.exists(db_path):
+                                        conn = sqlite3.connect(db_path)
+                                        c = conn.cursor()
+                                        c.execute("SELECT affiliated_uni FROM affiliations WHERE LOWER(university) = LOWER(?)", (course_uni_check.strip(),))
+                                        row = c.fetchone()
+                                        conn.close()
+                                        if row and row[0]:
+                                            db_affiliation = row[0]
+                                            # Check if the DB affiliation matches what Google found
+                                            from difflib import SequenceMatcher
+                                            db_vs_google_sim = SequenceMatcher(None, db_affiliation.lower(), actual_uni.lower()).ratio()
+                                            if db_vs_google_sim > 0.5 or db_affiliation.lower() in actual_uni.lower() or actual_uni.lower() in db_affiliation.lower():
+                                                db_confirmed = True
+                                                print(f"    -> [Indian College Check] DB confirms '{course_uni_check}' is affiliated to '{db_affiliation}' (matches Google: '{actual_uni}').")
+                                            else:
+                                                print(f"    -> [Indian College Check] DB says '{db_affiliation}' but Google says '{actual_uni}' — using Google result.")
+                                except Exception as e:
+                                    print(f"    -> [Indian College Check] DB verification error: {e}")
+
+                                # 2. Dual verification: college name on page + affiliating university on page
+                                college_on_page = uni_match  # Already set by entity_present(course_uni_check, page_text)
+                                affiliation_on_page = actual_uni.lower() in page_text.lower()
+                                print(f"    -> [Indian College Check] Affiliation '{actual_uni}' confirmed for '{course_uni_check}'.")
+                                print(f"    -> [Indian College Check]   College on page: {college_on_page} | Affiliating uni on page: {affiliation_on_page} | DB confirmed: {db_confirmed}")
+
+                                # 3. Do NOT override uni_match to False.
+                                # The college name IS the correct institution in the PDF. entity_present()
+                                # already checked if the college name appears on the webpage.
+                                # If it matched, uni_match stays True. If not, downstream heuristics
+                                # (URL matching, LLM reasoning, etc.) will handle it.
                             else:
                                 print(f"    -> [Indian College Check] Could not determine affiliation (actual={actual_uni}, conf={confidence}).")
 

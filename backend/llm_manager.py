@@ -254,7 +254,7 @@ class LLMManagerAPI:
         max_m = len(self.mistral_keys)
         max_keys = max(max_g, max_m)
         
-        if self.backend_mode == "ollama" or provider == "ollama":
+        if self.backend_mode == "ollama":
             if self.ollama_api_url:
                 print(f"      -> [LLM Manager] Trying Ollama Vision ({self.ollama_vision_model})...")
                 res = self._call_ollama_vision(prompt, base64_image, system)
