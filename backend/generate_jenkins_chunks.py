@@ -7,9 +7,8 @@ def main():
     if not os.path.exists(pdf_path):
         print(f"Error: {pdf_path} not found.")
         # Fallback to 1 chunk if no PDF found (shouldn't happen in pipeline)
-        chunks = [{"start": 1, "end": 1}]
-        with open("chunks.json", "w") as f:
-            json.dump(chunks, f)
+        with open("chunks.txt", "w") as f:
+            f.write("1,1\n")
         return
 
     doc = fitz.open(pdf_path)
@@ -36,8 +35,9 @@ def main():
 
     print(f"Generated {len(chunks)} chunks from page {start_page} to {end_page}.")
     
-    with open("chunks.json", "w") as f:
-        json.dump(chunks, f, indent=2)
+    with open("chunks.txt", "w") as f:
+        for c in chunks:
+            f.write(f"{c['start']},{c['end']}\n")
 
 if __name__ == "__main__":
     main()

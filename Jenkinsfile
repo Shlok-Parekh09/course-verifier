@@ -61,13 +61,17 @@ pipeline {
         stage('Verify (Parallel)') {
             steps {
                 script {
-                    def chunks = readJSON file: 'chunks.json'
+                    def chunksText = readFile('chunks.txt').trim()
+                    def lines = chunksText.split('\n')
                     def parallelBranches = [:]
 
-                    for (int i = 0; i < chunks.size(); i++) {
-                        def chunk = chunks[i]
-                        def start = chunk.start
-                        def end = chunk.end
+                    for (int i = 0; i < lines.length; i++) {
+                        def line = lines[i].trim()
+                        if (!line) continue
+                        
+                        def parts = line.split(',')
+                        def start = parts[0]
+                        def end = parts[1]
                         def branchName = "Verify ${start}-${end}"
                         
                         parallelBranches[branchName] = {
