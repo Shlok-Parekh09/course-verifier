@@ -5,8 +5,7 @@ pipeline {
         string(name: 'START_PAGE', defaultValue: '', description: 'Start Page Number (Leave blank to run from page 1)')
         string(name: 'END_PAGE', defaultValue: '', description: 'End Page Number (Leave blank to run to the end)')
         string(name: 'CHUNK_SIZE', defaultValue: '30', description: 'Pages per chunk')
-        string(name: 'GDRIVE_ID', defaultValue: '1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd', description: 'Google Drive File ID for the PDF (optional)')
-        string(name: 'GDRIVE_ID_NDU', defaultValue: '', description: 'Google Drive File ID for NDU Screenshots PDF (optional)')
+        string(name: 'PDF_URL', defaultValue: 'https://filebin.net/example/link_compile.pdf', description: 'Direct download URL for the PDF (e.g. from Filebin or Transfer.sh). Google Drive links are NOT supported due to their automated virus scan blockers.')
         choice(name: 'LLM_BACKEND', choices: ['api', 'local_ollama', 'cloud_ollama'], description: 'LLM Backend to use')
         string(name: 'MAX_CONCURRENT_CHUNKS', defaultValue: '1', description: 'Max chunks to run at the exact same time (lower this if CPU maxes out)')
         text(name: 'ENV_FILE', defaultValue: '', description: 'Paste your complete .env file contents here')
@@ -50,9 +49,12 @@ pipeline {
                         export PATH="$HOME/.local/bin:$PATH"
                         uv cache clean || true
                         uv venv --clear .venv
-                        uv pip install PyMuPDF gdown
+                        uv pip install -r backend/requirements.txt python-dotenv PyMuPDF
                         mkdir -p backend
-                        uv run gdown "${GDRIVE_ID}" -O backend/link_compile.pdf
+                        
+                        echo "Downloading PDF from URL..."
+                        curl -L "${PDF_URL}" -o backend/link_compile.pdf
+                        
                         uv run python backend/generate_jenkins_chunks.py
                     '''
                 }
@@ -94,9 +96,6 @@ pipeline {
                                         # Start virtual frame buffer for Chrome
                                         if [ "\$(uname)" == "Linux" ]; then Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset & sleep 3; fi
                                         
-                                        uv venv .venv
-                                        uv pip install -r requirements.txt python-dotenv gdown
-                                        
                                         echo "Running chunk ${start} to ${end}"
                                         cd backend && uv run python autonomous_course_verifier.py link_compile.pdf
                                         
@@ -121,8 +120,6 @@ pipeline {
                 script {
                     sh '''#!/bin/bash
                         export PATH="$HOME/.local/bin:$PATH"
-                        uv venv --clear .venv
-                        uv pip install PyMuPDF
                         
                         uv run python3 - <<'PYEOF'
 import os, json, glob, sqlite3, shutil, fitz, re
