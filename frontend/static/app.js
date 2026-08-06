@@ -1571,7 +1571,7 @@ function renderEdxCards() {
         <article class="clean-course-card ${saved ? 'saved' : ''}" style="animation: fadeStagger 0.4s ease ${i * 0.04}s both;" onclick="showCourseModal('${c.id}')" data-course-id="${c.id}">
             <div class="card-header-bar">
                 <div class="univ-badge">
-                    <span class="univ-avatar">${escHtml(initials)}</span>
+                    ${c.logo_url ? `<img src="${escHtml(c.logo_url)}" alt="${escHtml(initials)}" class="univ-avatar" onerror="this.outerHTML='<span class=\\'univ-avatar\\'>${escHtml(initials)}</span>'">` : `<span class="univ-avatar">${escHtml(initials)}</span>`}
                     <span class="univ-name">${escHtml(c.university || '—')}</span>
                 </div>
                 <div class="card-actions">

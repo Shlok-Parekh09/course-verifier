@@ -21,15 +21,25 @@ load_dotenv()
 R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID")
 R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID")
 R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY")
-R2_BUCKET_NAME = os.environ.get("R2_BUCKET_NAME")
+R2_BUCKET_NAME = os.environ.get("R2_BUCKET_NAME", "logos")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGOS_DIR = os.path.join(BASE_DIR, "logos")
 
 def main():
-    if not all([R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME]):
-        print("[ERROR] Missing R2 credentials in .env file.")
-        print("Please add R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and R2_BUCKET_NAME.")
+    global R2_ACCOUNT_ID
+    if not R2_ACCESS_KEY_ID or not R2_SECRET_ACCESS_KEY:
+        print("[ERROR] Missing R2_ACCESS_KEY_ID or R2_SECRET_ACCESS_KEY in .env file.")
+        return
+        
+    if not R2_ACCOUNT_ID:
+        print("\n[!] R2_ACCOUNT_ID is missing from .env.")
+        print("You can find your Account ID in the URL of your Cloudflare dashboard:")
+        print("https://dash.cloudflare.com/<YOUR_ACCOUNT_ID>/r2/overview")
+        R2_ACCOUNT_ID = input("Please paste your 32-character Account ID here: ").strip()
+        
+    if not R2_ACCOUNT_ID:
+        print("[ERROR] Account ID is required.")
         return
 
     print(f"[*] Connecting to Cloudflare R2 bucket: {R2_BUCKET_NAME}")
@@ -55,7 +65,8 @@ def main():
         if not os.path.isfile(filepath):
             continue
             
-        print(f"  [{i}/{len(files_to_upload)}] Uploading {filename}...")
+        safe_filename = filename.encode("ascii", errors="replace").decode("ascii")
+        print(f"  [{i}/{len(files_to_upload)}] Uploading {safe_filename}...")
         try:
             # Determine correct content type so browsers display the image correctly
             content_type = 'image/png'

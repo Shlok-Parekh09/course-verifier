@@ -23,8 +23,14 @@ import csv
 import json
 import time
 import sqlite3
+import re
 import argparse
 from difflib import SequenceMatcher
+
+def sanitize_filename(name):
+    """Remove non-alphanumeric characters, replace spaces with underscores, convert to lowercase."""
+    safe_name = "".join([c if c.isalnum() else "_" for c in name.lower()])
+    return re.sub(r'_+', '_', safe_name).strip('_')
 
 # ── Optional deps ─────────────────────────────────────────────────────────────
 try:
@@ -51,7 +57,7 @@ except ImportError:
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 CSV_PATH   = os.path.join(BASE_DIR, "Untitled spreadsheet - Sheet1.csv")
-DB_PATH    = os.path.join(BASE_DIR, "local_database.db")
+DB_PATH    = os.path.join(BASE_DIR, "backend", "local_database.db")
 OUTPUT     = os.path.join(BASE_DIR, "extracted_catalog.json")
 ENV_PATH   = os.path.join(BASE_DIR, ".env")
 
@@ -67,6 +73,7 @@ def _load_env(path):
                 os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 _load_env(ENV_PATH)
+R2_PUBLIC_URL = os.environ.get("R2_PUBLIC_URL", "").rstrip("/")
 
 # ── Domain Bands ──────────────────────────────────────────────────────────────
 DOMAIN_RANGES = [
@@ -210,40 +217,134 @@ def resolve_university_name(raw_name: str, logo_map: dict) -> str:
 
 
 # ── Logo lookup ───────────────────────────────────────────────────────────────
+def _get_extension(url):
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    ext = os.path.splitext(parsed.path)[1].lower()
+    if not ext or ext not in ['.png', '.jpg', '.jpeg', '.svg', '.gif', '.webp']:
+        return '.png'
+    return ext
+
 def load_logo_map(csv_path):
     logo_map = {}
+    
+    # 1. Try to load from the logos directory directly
+    logos_dir = os.path.join(BASE_DIR, "logos")
+    if os.path.exists(logos_dir):
+        for f in os.listdir(logos_dir):
+            if "." in f:
+                base = os.path.splitext(f)[0]
+                logo_map[_norm(base.replace("_", " "))] = f
+                
+    # 2. Then try to load from CSV (overrides directory if present, ensuring precise mapping)
     try:
         with open(csv_path, newline="", encoding="utf-8") as f:
             reader = csv.reader(f)
             next(reader)
             for row in reader:
                 if len(row) >= 2 and row[0].strip() and row[1].strip():
-                    logo_map[_norm(row[0].strip())] = row[1].strip()
+                    uni = row[0].strip()
+                    url = row[1].strip()
+                    safe_name = "".join([c if c.isalnum() else "_" for c in uni.lower()])
+                    safe_name = re.sub(r'_+', '_', safe_name).strip('_')
+                    filename = safe_name + _get_extension(url)
+                    logo_map[_norm(_clean_brackets(uni))] = filename
     except FileNotFoundError:
-        print(f"[WARN] Logo CSV not found at {csv_path}")
+        pass
+        
     return logo_map
 
+
+_TOKEN_MAP = {
+    'inst': 'institute',
+    'tech': 'technology',
+    'engg': 'engineering',
+    'uni': 'university',
+    'univ': 'university',
+    'mgmt': 'management',
+    'sci': 'science',
+    'national': 'natl',
+}
+
+_GENERIC = {'university', 'institute', 'college', 'school', 'engineering', 'technology', 'management', 'science', 'sciences', 'centre', 'center', 'academy', 'education'}
+
+def _clean_brackets(s):
+    return re.sub(r"\(.*?\)", "", s).strip()
+
+def _get_tokens(s):
+    words = [w for w in re.split(r'[^a-z0-9]', s.lower()) if len(w) > 2 and w not in ('the', 'and', 'for', 'of', 'at')]
+    normalized = set()
+    for w in words:
+        normalized.add(_TOKEN_MAP.get(w, w))
+    return normalized
+
+def _is_valid_match(uni, base):
+    uni_clean = _clean_brackets(uni)
+    sanitized_uni = _norm(_clean_uni_name(uni_clean))
+    
+    if sanitized_uni == base:
+        return True
+        
+    stripped_uni = re.sub(r"[^a-z0-9]", "", uni_clean.lower())
+    stripped_base = re.sub(r"[^a-z0-9]", "", base.lower())
+    
+    if len(stripped_base) > 8 and stripped_base in stripped_uni:
+        return True
+        
+    uni_tokens = _get_tokens(uni_clean)
+    base_tokens = _get_tokens(base)
+    inter = uni_tokens.intersection(base_tokens)
+    
+    non_generic = inter - _GENERIC
+    if len(non_generic) > 0:
+        m = max(len(uni_tokens), len(base_tokens))
+        if m > 0 and len(inter) / m >= 0.75:
+            return True
+            
+    ratio = SequenceMatcher(None, stripped_uni, stripped_base).ratio()
+    if ratio >= 0.85:
+        return True
+            
+    return False
 
 def find_logo(uni_name, logo_map):
     if not uni_name:
         return ""
-    cleaned = _clean_uni_name(uni_name)
+        
+    uni_clean = _clean_brackets(uni_name)
+    cleaned = _clean_uni_name(uni_clean)
     n = _norm(cleaned)
     if n in logo_map:
         return logo_map[n]
+        
     alias_target = _ALIAS_NORM.get(n)
     if alias_target and alias_target in logo_map:
         return logo_map[alias_target]
+        
     for alias_n, target_n in _ALIAS_NORM.items():
         if alias_n in n:
             if target_n in logo_map:
                 return logo_map[target_n]
-    best, best_url = 0.0, ""
+                
+    best_score = 0
+    best_match = None
+    stripped_uni = re.sub(r"[^a-z0-9]", "", uni_clean.lower())
+    
+    valid_candidates = []
     for csv_n, url in logo_map.items():
-        s = SequenceMatcher(None, n, csv_n).ratio()
-        if s > best:
-            best, best_url = s, url
-    return best_url if best >= 0.72 else ""
+        if _is_valid_match(uni_name, csv_n):
+            valid_candidates.append((csv_n, url))
+            
+    if valid_candidates:
+        for csv_n, url in valid_candidates:
+            stripped_base = re.sub(r"[^a-z0-9]", "", csv_n.lower())
+            ratio = SequenceMatcher(None, stripped_uni, stripped_base).ratio()
+            if ratio > best_score:
+                best_score = ratio
+                best_match = url
+        return best_match
+            
+    return ""
 
 
 # ── Database ──────────────────────────────────────────────────────────────────
@@ -261,16 +362,22 @@ def get_affiliated_uni_from_db(course_name: str, university: str) -> str:
             (course_name.strip(), university.strip())
         )
         row = cur.fetchone()
-        if row:
+        if row and row["affiliated_uni"] and "not found" not in row["affiliated_uni"].lower():
+            conn.close()
             return row["affiliated_uni"]
+            
         # Fallback: university-only match
         cur.execute(
             "SELECT affiliated_uni FROM affiliations WHERE LOWER(university)=LOWER(?)",
             (university.strip(),)
         )
         row = cur.fetchone()
+        if row and row["affiliated_uni"] and "not found" not in row["affiliated_uni"].lower():
+            conn.close()
+            return row["affiliated_uni"]
+            
         conn.close()
-        return row["affiliated_uni"] if row else ""
+        return ""
     except Exception as e:
         return ""
 
@@ -345,6 +452,76 @@ def fetch_page_text(url: str) -> str:
         return text[:8000]
     except Exception:
         return ""
+
+_global_driver = None
+
+def get_driver():
+    global _global_driver
+    if not SELENIUM_OK: return None
+    if _global_driver is None:
+        try:
+            options = uc.ChromeOptions()
+            options.add_argument('--headless')
+            options.add_argument('--no-sandbox')
+            options.add_argument('--disable-dev-shm-usage')
+            options.add_argument('--window-size=1920,1080')
+            _global_driver = uc.Chrome(options=options)
+            _global_driver.set_page_load_timeout(30)
+        except Exception as e:
+            print(f"[WARN] Failed to start undetected_chromedriver: {e}")
+            _global_driver = None
+    return _global_driver
+
+def close_driver():
+    global _global_driver
+    if _global_driver:
+        try:
+            _global_driver.quit()
+        except Exception:
+            pass
+        _global_driver = None
+
+def fetch_page_text_selenium(url: str) -> str:
+    """Fetch course page text using Selenium, clicking syllabus if present."""
+    if not url or url == "Unknown": return ""
+    driver = get_driver()
+    if not driver:
+        return fetch_page_text(url) # fallback to requests
+    try:
+        driver.get(url)
+        time.sleep(3)
+        body = driver.find_element(By.TAG_NAME, 'body')
+        page_text = body.text
+        
+        # Check for syllabus
+        try:
+            links = driver.find_elements(By.TAG_NAME, 'a')
+            for link in links:
+                if link.is_displayed():
+                    text = link.text.lower()
+                    if 'syllabus' in text or 'curriculum' in text:
+                        href = link.get_attribute('href')
+                        if href and href.startswith('http'):
+                            driver.execute_script("window.open('');")
+                            driver.switch_to.window(driver.window_handles[-1])
+                            driver.get(href)
+                            time.sleep(3)
+                            syllabus_text = driver.find_element(By.TAG_NAME, 'body').text
+                            page_text += "\n\n--- SYLLABUS ---\n" + syllabus_text
+                            driver.close()
+                            driver.switch_to.window(driver.window_handles[0])
+                        else:
+                            driver.execute_script("arguments[0].click();", link)
+                            time.sleep(3)
+                            page_text = driver.find_element(By.TAG_NAME, 'body').text
+                        break
+        except Exception:
+            pass
+            
+        return page_text[:12000]
+    except Exception as e:
+        print(f"[WARN] Selenium fetch failed for {url}: {e}")
+        return fetch_page_text(url)
 
 
 # ── PDF Extraction ─────────────────────────────────────────────────────────────
@@ -484,6 +661,7 @@ def extract_courses_from_pdf(pdf_path: str, start_page: int = 1, end_page: int =
             skills   = field(r"Skills:\s*(.*?)(?=\s*(?:Cost:|Duration:|Language:|Mode:|Country:|Link to|$))")
             cost     = field(r"Cost:\s*(.*?)(?=\s*(?:Duration:|Language:|Mode:|Skills:|Country:|Link to|$))")
             duration = field(r"Duration:\s*(.*?)(?=\s*(?:Cost:|Language:|Mode:|Skills:|Country:|Link to|$))")
+            language = field(r"Language:\s*(.*?)(?=\s*(?:Cost:|Duration:|Mode:|Skills:|Country:|Link to|$))")
             mode     = field(r"Mode:\s*(.*?)(?=\s*(?:Cost:|Duration:|Language:|Skills:|Country:|Link to|$))")
             country  = field(r"Country:\s*(.*?)(?=\s*(?:Cost:|Duration:|Language:|Mode:|Skills:|Link to|$))")
             mode = mode.replace("Offl\uFB02ine", "Offline").replace("Of\uFB02ine", "Offline")
@@ -518,6 +696,7 @@ def extract_courses_from_pdf(pdf_path: str, start_page: int = 1, end_page: int =
                 "course_type_raw":   global_course_type,
                 "cost":              cost,
                 "duration":          duration,
+                "language":          language,
                 "mode":              mode,
                 "country":           country,
                 "skills_raw":        skills,
@@ -550,7 +729,7 @@ def main():
     logo_map = load_logo_map(CSV_PATH)
     raw_courses = extract_courses_from_pdf(args.pdf, args.start, args.end)
 
-    catalog = []
+    grouped_catalog = {}
     for idx, c in enumerate(raw_courses, 1):
         print(f"  [{idx}/{len(raw_courses)}] Processing: {c['name'][:60]}")
 
@@ -577,45 +756,82 @@ def main():
             course_type = course_type_raw if course_type_raw else "Unknown"
 
         has_free = domain_band in {"Free", "Free to Audit"}
+        
+        # Determine Logo URL
         logo_url = find_logo(uni_canonical, logo_map)
+        if R2_PUBLIC_URL:
+            if logo_url:
+                if not logo_url.startswith("http"):
+                    logo_url = f"{R2_PUBLIC_URL}/{logo_url.lstrip('/')}"
+            else:
+                # Find the actual logo file in the logos/ directory if it exists
+                sanitized = sanitize_filename(uni_canonical)
+                matched_file = None
+                logos_dir = os.path.join(BASE_DIR, "logos")
+                if os.path.exists(logos_dir):
+                    for f in os.listdir(logos_dir):
+                        if f.startswith(sanitized + ".") or f == sanitized:
+                            matched_file = f
+                            break
+                if matched_file:
+                    logo_url = f"{R2_PUBLIC_URL}/logos/{matched_file}"
+                else:
+                    logo_url = ""
 
         # Fetch page & generate description
         page_text = ""
         skills_description = c.get("skills_raw", "")
         if c.get("url") and c["url"] not in ("Unknown", ""):
-            page_text = fetch_page_text(c["url"])
+            page_text = fetch_page_text_selenium(c["url"])
             if page_text and not args.no_llm:
                 time.sleep(0.3)  # polite delay
                 llm_desc = ask_llm_for_description(c["name"], uni_canonical, page_text)
                 if llm_desc:
                     skills_description = llm_desc
 
-        entry = {
-            "id":                 c["_id"],
-            "name":               c["name"],
-            "university":         uni_canonical,
-            "affiliated_uni":     affiliated_uni,
-            "logo_url":           logo_url,
-            "domain":             domain_band,
-            "course_type":        course_type,
-            "country":            c.get("country", ""),
-            "cost":               c.get("cost", ""),
-            "duration":           c.get("duration", ""),
-            "mode":               c.get("mode", ""),
-            "url":                c.get("url", ""),
-            "skills_description": skills_description,
-            "has_qs_badge":       c.get("has_qs_badge", False),
-            "has_nirf_badge":     c.get("has_nirf_badge", False),
-            "has_scholarship":    c.get("has_scholarship", False),
-            "has_free":           has_free,
-        }
-        catalog.append(entry)
+        course_name = c["name"].strip()
+        uni_name_key = uni_canonical.strip().lower()
+        course_key = (course_name.lower(), uni_name_key)
 
+        if course_key not in grouped_catalog:
+            entry = {
+                "id":                 [c["_id"]],
+                "name":               course_name,
+                "university":         uni_canonical,
+                "affiliated_uni":     affiliated_uni,
+                "logo_url":           logo_url,
+                "domains":            [domain_band] if domain_band else [],
+                "course_type":        course_type,
+                "country":            c.get("country", ""),
+                "cost":               c.get("cost", ""),
+                "duration":           c.get("duration", ""),
+                "language":           c.get("language", ""),
+                "mode":               c.get("mode", ""),
+                "url":                c.get("url", ""),
+                "skills_description": skills_description,
+                "has_qs_badge":       c.get("has_qs_badge", False),
+                "has_nirf_badge":     c.get("has_nirf_badge", False),
+                "has_scholarship":    c.get("has_scholarship", False),
+                "has_free":           has_free,
+            }
+            grouped_catalog[course_key] = entry
+        else:
+            if c["_id"] not in grouped_catalog[course_key]["id"]:
+                grouped_catalog[course_key]["id"].append(c["_id"])
+            if domain_band and domain_band not in grouped_catalog[course_key]["domains"]:
+                grouped_catalog[course_key]["domains"].append(domain_band)
+            if course_type == "Certificate":
+                grouped_catalog[course_key]["course_type"] = "Certificate"
+            if has_free:
+                grouped_catalog[course_key]["has_free"] = True
+
+    catalog = list(grouped_catalog.values())
     out_path = args.output
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(catalog, f, ensure_ascii=False, indent=2)
 
-    print(f"\n[OK] Wrote {len(catalog)} courses -> {out_path}")
+    print(f"\n[OK] Wrote {len(catalog)} deduplicated courses -> {out_path}")
+    close_driver()
 
 
 if __name__ == "__main__":
