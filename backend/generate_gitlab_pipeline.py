@@ -71,13 +71,14 @@ for idx, chunk in enumerate(chunks):
         "      uv cache clean || true",
         "      uv venv .venv",
         "      uv pip install -r requirements.txt python-dotenv gdown",
+        "      mkdir -p backend",
+        "      uv run gdown \"${GDRIVE_ID:-1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd}\" -O backend/link_compile.pdf",
         "      if [ -n \"$ENV_FILE\" ]; then echo \"$ENV_FILE\" > backend/.env; fi",
         "      if [ \"$(uname)\" == \"Linux\" ]; then Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset & sleep 3; fi",
         "      cd backend && uv run python autonomous_course_verifier.py link_compile.pdf || echo 'Verifier exited with non-zero status'",
         "      rm -f link_compile.pdf ndu.pdf",
         "  artifacts:",
         "    paths:",
-        "      - backend/*.pdf",
         "      - backend/autonomous_verified_*.json",
         "      - backend/local_database.db",
         "    expire_in: 1 day"
@@ -162,8 +163,8 @@ yaml_lines.extend([
     "  artifacts:",
     "    paths:",
     "      - merged_run.json",
-    "      - merged_run.pdf",
-    "      - merged_run.db"
+    "      - merged_run.db",
+    "    expire_in: 1 day"
 ])
 
 with open("child-pipeline.yml", "w") as f:

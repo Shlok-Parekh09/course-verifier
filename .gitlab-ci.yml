@@ -51,7 +51,6 @@ generate-matrix:
     - uv run python backend/generate_gitlab_pipeline.py
   artifacts:
     paths:
-      - backend/link_compile.pdf
       - child-pipeline.yml
     expire_in: 1 day
 
