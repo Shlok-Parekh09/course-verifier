@@ -84,6 +84,7 @@ pipeline {
                                         export PATH="\$HOME/.local/bin:\$PATH"
                                         export START_PAGE="${start}"
                                         export END_PAGE="${end}"
+                                        export CI="true"
                                         
                                         # Copy environment file to backend if it exists on the host
                                         if [ -n "$ENV_FILE" ]; then
@@ -97,7 +98,7 @@ pipeline {
                                         uv pip install -r requirements.txt python-dotenv gdown
                                         
                                         echo "Running chunk ${start} to ${end}"
-                                        cd backend && uv run python autonomous_course_verifier.py link_compile.pdf || echo 'Verifier exited with non-zero status'
+                                        cd backend && uv run python autonomous_course_verifier.py link_compile.pdf
                                         
                                         # Rename artifacts so they can be securely archived and merged
                                         mv autonomous_verified_link_compile.pdf.json "autonomous_verified_${start}_to_${end}_link_compile.json" || true
