@@ -6970,9 +6970,10 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         except Exception: pass # May already exist from previous retry
                         
                         # NO user_multi_procs since we have our own isolated binary!
-                        driver = uc.Chrome(options=options, user_data_dir=fresh_profile, driver_executable_path=local_driver_path)
+                        driver = uc.Chrome(options=options, user_data_dir=fresh_profile, driver_executable_path=local_driver_path, version_main=get_chrome_main_version())
                     else:
                         driver = uc.Chrome(options=options, user_data_dir=fresh_profile, version_main=get_chrome_main_version(), user_multi_procs=True)
+
                 try:
                     driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {"latitude": 28.6139, "longitude": 77.2090, "accuracy": 100})
                 except: pass
