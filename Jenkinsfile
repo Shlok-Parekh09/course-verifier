@@ -90,7 +90,7 @@ pipeline {
                                         
                                         # Copy environment file to backend if it exists on the host
                                         if [[ -n "\$ENV_FILE" ]]; then
-                                            echo "\$ENV_FILE" > backend/.env
+                                            echo "\$ENV_FILE" > .env
                                         fi
 
                                         # Start virtual frame buffer for Chrome
