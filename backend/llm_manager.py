@@ -61,10 +61,11 @@ class LLMManagerAPI:
         self.last_call = {}
         self.lock = threading.Lock()
 
-        # ΓöÇΓöÇ Diagnostic logging ΓöÇΓöÇ
+        # ── Diagnostic logging ──
         print(f"[LLM Manager] Keys loaded: Mistral={len(self.mistral_keys)}, NVIDIA={len(self.nvidia_keys)}, "
               f"Gemini={len(self.gemini_keys)}, GitHub={len(self.github_keys)}, "
-              f"Groq={len(self.groq_keys)}, HF_Ollama={len(self.hf_urls)}")
+              f"Groq={len(self.groq_keys)}, HF_Ollama={len(self.hf_urls)}, "
+              f"Cloud_Ollama={'yes' if self.ollama_api_url else 'no'} (mode={self.backend_mode})")
         if not any([self.mistral_keys, self.nvidia_keys, self.gemini_keys, self.github_keys, self.groq_keys, self.ollama_api_url, self.hf_urls]):
             print("[LLM Manager] ⚠ WARNING: No text-generation API keys or Ollama URL found! All LLM calls will return None.")
 
@@ -131,9 +132,15 @@ class LLMManagerAPI:
             # Build the ordered provider list for this specific call.
             # Each provider entry is (name, keys_list, rate_interval, call_fn)
             provider_pool = []
-            if self.backend_mode == "ollama" and self.hf_urls:
-                # Use ALL URLs for text to maximize concurrency and achieve API-like speeds
-                provider_pool.append(("Local Ollama (HF)", self.hf_urls, 1.0, "local_ollama"))
+            if self.backend_mode == "ollama":
+                # Cloud Ollama (ollama.com with API key) — PRIMARY when OLLAMA_API_URL is set
+                if self.ollama_api_url:
+                    # Wrap URL in a list so it integrates with the round-robin pool structure.
+                    # The _call_ollama method will be called with the URL as the "key".
+                    provider_pool.append(("Cloud Ollama", [self.ollama_api_url], 1.0, "cloud_ollama"))
+                # HF Ollama Spaces — additional capacity
+                if self.hf_urls:
+                    provider_pool.append(("Local Ollama (HF)", self.hf_urls, 1.0, "local_ollama"))
 
             # STRICT ISOLATION: Do not add API keys if the user specifically requested Local Ollama
             if self.backend_mode != "ollama" and provider != "ollama":
@@ -145,6 +152,9 @@ class LLMManagerAPI:
                     provider_pool.append(("Groq (Llama 3.3 70B)", self.groq_keys, 4.0, "groq"))
                 if self.nvidia_keys:
                     provider_pool.append(("NVIDIA (Mistral Medium 3.5 128B)", self.nvidia_keys, 1.0, "nvidia"))
+                # Cloud Ollama as additional provider in API mode (when OLLAMA_API_URL is configured)
+                if self.ollama_api_url:
+                    provider_pool.append(("Cloud Ollama", [self.ollama_api_url], 1.0, "cloud_ollama"))
 
             if not provider_pool:
                 print(f"      -> [LLM Manager] Worker {worker_id+1}: No API keys available!")
@@ -170,6 +180,8 @@ class LLMManagerAPI:
                         res = self._call_groq(p_keys[idx], prompt, system, format, 0.0)
                     elif p_tag == "nvidia":
                         res = self._call_nvidia(p_keys[idx], prompt, system, format, 0.0, timeout=timeout)
+                    elif p_tag == "cloud_ollama":
+                        res = self._call_ollama(prompt, system, format, 0.0, url=p_keys[idx], timeout=timeout)
                     elif p_tag == "local_ollama":
                         res = self._call_local_ollama(p_keys[idx], prompt, system, format, 0.0, is_vision=False)
                     else:
