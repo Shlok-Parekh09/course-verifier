@@ -22,10 +22,10 @@ variables:
       - "cloud_ollama"
     description: "LLM Backend to use"
   RUNNER_TYPE:
-    value: "self-hosted"
+    value: "saas-linux-small-amd64"
     options:
-      - "self-hosted"
       - "saas-linux-small-amd64"
+      - "self-hosted"
     description: "Where to run this workflow (self-hosted = Kali Linux, saas-linux-small-amd64 = GitLab Free Cloud)"
 
 stages:
