@@ -8,6 +8,7 @@ pipeline {
         string(name: 'GDRIVE_ID', defaultValue: '1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd', description: 'Google Drive File ID for the PDF (optional)')
         string(name: 'GDRIVE_ID_NDU', defaultValue: '', description: 'Google Drive File ID for NDU Screenshots PDF (optional)')
         choice(name: 'LLM_BACKEND', choices: ['api', 'local_ollama', 'cloud_ollama'], description: 'LLM Backend to use')
+        string(name: 'MAX_CONCURRENT_CHUNKS', defaultValue: '1', description: 'Max chunks to run at the exact same time (lower this if CPU maxes out)')
         text(name: 'ENV_FILE', defaultValue: '', description: 'Paste your complete .env file contents here')
     }
 
@@ -63,47 +64,53 @@ pipeline {
                 script {
                     def chunksText = readFile('chunks.txt').trim()
                     def lines = chunksText.split('\n')
-                    def parallelBranches = [:]
+                    def batchSize = env.MAX_CONCURRENT_CHUNKS ? env.MAX_CONCURRENT_CHUNKS.toInteger() : 2
 
-                    for (int i = 0; i < lines.length; i++) {
-                        def line = lines[i].trim()
-                        if (!line) continue
+                    for (int i = 0; i < lines.length; i += batchSize) {
+                        def parallelBranches = [:]
                         
-                        def parts = line.split(',')
-                        def start = parts[0]
-                        def end = parts[1]
-                        def branchName = "Verify ${start}-${end}"
-                        
-                        parallelBranches[branchName] = {
-                            stage(branchName) {
-                                sh """#!/bin/bash
-                                    export PATH="\$HOME/.local/bin:\$PATH"
-                                    export START_PAGE="${start}"
-                                    export END_PAGE="${end}"
-                                    
-                                    # Copy environment file to backend if it exists on the host
-                                    if [ -n "$ENV_FILE" ]; then
-                                        echo "$ENV_FILE" > backend/.env
-                                    fi
+                        for (int j = 0; j < batchSize && (i + j) < lines.length; j++) {
+                            def line = lines[i + j].trim()
+                            if (!line) continue
+                            
+                            def parts = line.split(',')
+                            def start = parts[0]
+                            def end = parts[1]
+                            def branchName = "Verify ${start}-${end}"
+                            
+                            parallelBranches[branchName] = {
+                                stage(branchName) {
+                                    sh """#!/bin/bash
+                                        export PATH="\$HOME/.local/bin:\$PATH"
+                                        export START_PAGE="${start}"
+                                        export END_PAGE="${end}"
+                                        
+                                        # Copy environment file to backend if it exists on the host
+                                        if [ -n "$ENV_FILE" ]; then
+                                            echo "$ENV_FILE" > backend/.env
+                                        fi
 
-                                    # Start virtual frame buffer for Chrome
-                                    if [ "\$(uname)" == "Linux" ]; then Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset & sleep 3; fi
-                                    
-                                    uv venv .venv
-                                    uv pip install -r requirements.txt python-dotenv gdown
-                                    
-                                    echo "Running chunk ${start} to ${end}"
-                                    cd backend && uv run python autonomous_course_verifier.py link_compile.pdf || echo 'Verifier exited with non-zero status'
-                                    
-                                    # Rename artifacts so they can be securely archived and merged
-                                    mv autonomous_verified_link_compile.pdf.json "autonomous_verified_${start}_to_${end}_link_compile.json" || true
-                                    mv local_database.db "local_database_${start}_to_${end}.db" || true
-                                    mv link_compile_AUTONOMOUS_VERIFIED.pdf "verification-results-${start}-to-${end}-dummy.pdf" || true
-                                """
+                                        # Start virtual frame buffer for Chrome
+                                        if [ "\$(uname)" == "Linux" ]; then Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset & sleep 3; fi
+                                        
+                                        uv venv .venv
+                                        uv pip install -r requirements.txt python-dotenv gdown
+                                        
+                                        echo "Running chunk ${start} to ${end}"
+                                        cd backend && uv run python autonomous_course_verifier.py link_compile.pdf || echo 'Verifier exited with non-zero status'
+                                        
+                                        # Rename artifacts so they can be securely archived and merged
+                                        mv autonomous_verified_link_compile.pdf.json "autonomous_verified_${start}_to_${end}_link_compile.json" || true
+                                        mv local_database.db "local_database_${start}_to_${end}.db" || true
+                                        mv link_compile_AUTONOMOUS_VERIFIED.pdf "verification-results-${start}-to-${end}-dummy.pdf" || true
+                                    """
+                                }
                             }
                         }
+                        
+                        // Execute this batch before starting the next batch
+                        parallel parallelBranches
                     }
-                    parallel parallelBranches
                 }
             }
         }

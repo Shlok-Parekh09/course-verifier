@@ -6969,10 +6969,13 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                         try: shutil.copy2(resolved_driver_path, local_driver_path)
                         except Exception: pass # May already exist from previous retry
                         
+                        browser_exec = '/usr/bin/google-chrome' if sys.platform.startswith('linux') and os.path.exists('/usr/bin/google-chrome') else None
+                        
                         # NO user_multi_procs since we have our own isolated binary!
-                        driver = uc.Chrome(options=options, user_data_dir=fresh_profile, driver_executable_path=local_driver_path, version_main=get_chrome_main_version())
+                        driver = uc.Chrome(options=options, user_data_dir=fresh_profile, driver_executable_path=local_driver_path, version_main=get_chrome_main_version(), browser_executable_path=browser_exec)
                     else:
-                        driver = uc.Chrome(options=options, user_data_dir=fresh_profile, version_main=get_chrome_main_version(), user_multi_procs=True)
+                        browser_exec = '/usr/bin/google-chrome' if sys.platform.startswith('linux') and os.path.exists('/usr/bin/google-chrome') else None
+                        driver = uc.Chrome(options=options, user_data_dir=fresh_profile, version_main=get_chrome_main_version(), user_multi_procs=True, browser_executable_path=browser_exec)
 
                 try:
                     driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {"latitude": 28.6139, "longitude": 77.2090, "accuracy": 100})
@@ -7003,9 +7006,11 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             try: shutil.copy2(resolved_driver_path, local_driver_path2)
                             except Exception: pass
                             
-                            driver = uc.Chrome(options=options2, user_data_dir=fresh_profile2, driver_executable_path=local_driver_path2, version_main=get_chrome_main_version())
+                            browser_exec = '/usr/bin/google-chrome' if sys.platform.startswith('linux') and os.path.exists('/usr/bin/google-chrome') else None
+                            driver = uc.Chrome(options=options2, user_data_dir=fresh_profile2, driver_executable_path=local_driver_path2, version_main=get_chrome_main_version(), browser_executable_path=browser_exec)
                         else:
-                            driver = uc.Chrome(options=options2, user_data_dir=fresh_profile2, version_main=get_chrome_main_version(), user_multi_procs=True)
+                            browser_exec = '/usr/bin/google-chrome' if sys.platform.startswith('linux') and os.path.exists('/usr/bin/google-chrome') else None
+                            driver = uc.Chrome(options=options2, user_data_dir=fresh_profile2, version_main=get_chrome_main_version(), user_multi_procs=True, browser_executable_path=browser_exec)
                     try:
                         driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {"latitude": 28.6139, "longitude": 77.2090, "accuracy": 100})
                     except: pass
