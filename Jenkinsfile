@@ -46,15 +46,15 @@ pipeline {
         stage('Generate Chunks') {
             steps {
                 script {
-                    sh """#!/bin/bash
-                        export PATH="\$HOME/.local/bin:\$PATH"
+                    sh '''#!/bin/bash
+                        export PATH="$HOME/.local/bin:$PATH"
                         uv cache clean || true
                         uv venv --clear .venv
                         uv pip install PyMuPDF gdown
                         mkdir -p backend
                         uv run gdown "${GDRIVE_ID}" -O backend/link_compile.pdf
                         uv run python backend/generate_jenkins_chunks.py
-                    """
+                    '''
                 }
             }
         }
