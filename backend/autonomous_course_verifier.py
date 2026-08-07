@@ -3793,6 +3793,11 @@ CRITICAL RULES:
                         'cloud computing and security', 'system security', 'it security', 
                         'information technology security', 'cyber defense', 'scada security',
                         'industrial control system security', 'secure software',
+                        'biometric security', 'access control', 'identity management', 
+                        'privilege escalation', 'social engineering', 'phishing', 
+                        'insider threat', 'risk management', 'compliance', 'audit',
+                        'governance risk and compliance', 'grc', 'information assurance',
+                        'data privacy', 'data protection', 'disaster recovery', 'business continuity',
                         'fee', 'tuition', 'cost', 'charge', 'amount', 'price'
                     ]
                     
