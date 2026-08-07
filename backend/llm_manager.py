@@ -17,9 +17,9 @@ class LLMManagerAPI:
         if plural_env:
             keys = [k.strip() for k in plural_env.split(",") if k.strip()]
         if not keys:
-            keys = [os.environ.get(f"{prefix}_API_KEY_{i}") for i in range(1, 91) if os.environ.get(f"{prefix}_API_KEY_{i}")]
+            keys = [os.environ.get(f"{prefix}_API_KEY_{i}") for i in range(1, 133) if os.environ.get(f"{prefix}_API_KEY_{i}")]
         if not keys:
-            keys = [os.environ.get(f"{prefix}_KEY_{i}") for i in range(1, 91) if os.environ.get(f"{prefix}_KEY_{i}")]
+            keys = [os.environ.get(f"{prefix}_KEY_{i}") for i in range(1, 133) if os.environ.get(f"{prefix}_KEY_{i}")]
         if not keys:
             singular = os.environ.get(f"{prefix}_API_KEY") or os.environ.get(f"{prefix}_KEY")
             if singular:

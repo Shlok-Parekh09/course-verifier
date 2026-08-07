@@ -2905,6 +2905,16 @@ class AutonomousCourseVerifier:
         name = re.sub(r'\bMgmt\b\.?', 'Management', name, flags=re.IGNORECASE)
         name = re.sub(r'\bUni\b\.?', 'University', name, flags=re.IGNORECASE)
         
+        # Premier Institute Expansions (To match DB and Excel correctly)
+        name = re.sub(r'\bIIT\b', 'Indian Institute of Technology', name, flags=re.IGNORECASE)
+        name = re.sub(r'\bNIT\b', 'National Institute of Technology', name, flags=re.IGNORECASE)
+        name = re.sub(r'\bIIM\b', 'Indian Institute of Management', name, flags=re.IGNORECASE)
+        name = re.sub(r'\bIIIT\b', 'Indian Institute of Information Technology', name, flags=re.IGNORECASE)
+        name = re.sub(r'\bIISER\b', 'Indian Institute of Science Education and Research', name, flags=re.IGNORECASE)
+        name = re.sub(r'\bNIFT\b', 'National Institute of Fashion Technology', name, flags=re.IGNORECASE)
+        name = re.sub(r'\bNID\b', 'National Institute of Design', name, flags=re.IGNORECASE)
+        
+        
         # Specific University Expansions
         name_lower = name.lower()
         
@@ -3288,7 +3298,7 @@ CRITICAL RULES:
                     
             print(f"    Checking rankings for: {uni}")
 
-            def check_ranking_via_search(ranking_type):
+            def check_ranking_via_database(ranking_type):
                 pass # removed local import re
                 uni_lower = uni.lower()
                 is_college = any(word in uni_lower for word in ['college', 'institute', 'school', 'academy', 'technology', 'engineering', 'svcet', 'saet', 's.a.', 'tech', 'campus'])
@@ -3428,12 +3438,12 @@ CRITICAL RULES:
                     return "Not Ranked"
 
             # ── QS World + Regional ──
-            qs_found = check_ranking_via_search("QS")
+            qs_found = check_ranking_via_database("QS")
             qs_results[uni] = qs_found
             if qs_found != "Not Ranked":
                 print(f"      QS match confirmed for {uni}: {qs_found}")
             # ── NIRF ──
-            nirf_found = check_ranking_via_search("NIRF")
+            nirf_found = check_ranking_via_database("NIRF")
             nirf_results[uni] = nirf_found
             if nirf_found != "Not Ranked":
                 print(f"      NIRF match confirmed for {uni}: {nirf_found}")
@@ -3571,7 +3581,8 @@ CRITICAL RULES:
                             c_lower = course_name.lower().replace('computer science and engineering', 'cse').replace('information technology', 'it').replace('b.e.', 'be').replace('b.e -', 'be').replace('b.e ', 'be ').replace('b.tech.', 'btech').replace('b.tech -', 'btech').replace('b.tech ', 'btech ')
                             
                             u_words = [w for w in normalize(u_lower).split() if len(w) > 2]
-                            c_words = [w for w in normalize(c_lower).split() if len(w) > 2]
+                            filler_words = ['specialization', 'specialisation', 'in', 'and', 'with', 'hons', 'honours', 'degree', 'program', 'programme']
+                            c_words = [w for w in normalize(c_lower).split() if len(w) > 2 and w not in filler_words]
                             
                             inst_match_exact = (normalize(u_lower) == normalize(inst_val_lower))
                             course_match_exact = (normalize(c_lower) == normalize(course_val_lower))
@@ -3579,17 +3590,28 @@ CRITICAL RULES:
                             inst_score = 0
                             if inst_match_exact: inst_score = 10
                             elif fuzzy_match(u_lower, inst_val_lower, 0.90)[0]: inst_score = 5
-                            elif u_lower in inst_val_lower or inst_val_lower in u_lower: inst_score = 2
-                            elif (u_words and all(w in inst_val_lower for w in u_words)): inst_score = 1
+                            elif u_lower in inst_val_lower or inst_val_lower in u_lower: inst_score = 3
+                            elif (u_words and all(w in inst_val_lower for w in u_words)): inst_score = 2
+                            elif u_words and any(w in inst_val_lower for w in u_words if len(w) > 4):
+                                # Partial word overlap — count matching long words
+                                matched_words = [w for w in u_words if w in inst_val_lower and len(w) > 4]
+                                if len(matched_words) >= max(1, len(u_words) // 2):
+                                    inst_score = 1
                             
                             course_score = 0
                             if course_match_exact: course_score = 10
                             elif fuzzy_match(c_lower, course_val_lower, 0.85)[0]: course_score = 5
-                            elif c_lower in course_val_lower or course_val_lower in c_lower: course_score = 2
-                            elif (c_words and all(w in course_val_lower for w in c_words)): course_score = 1
+                            elif c_lower in course_val_lower or course_val_lower in c_lower: course_score = 3
+                            elif (c_words and all(w in course_val_lower for w in c_words)): course_score = 2
+                            elif c_words:
+                                # Partial course word overlap
+                                matched_c = [w for w in c_words if w in course_val_lower and len(w) > 3]
+                                if len(matched_c) >= max(1, len(c_words) * 2 // 3):
+                                    course_score = 1
                             
                             score = inst_score + course_score
-                            if inst_score > 0 and course_score > 0: # MUST have some match on BOTH!
+                            # Threshold: inst must have at least partial match (>=1) AND course must have at least weak match (>=1)
+                            if inst_score >= 1 and course_score >= 1:
                                 cell_f = ws_f.cell(row=row, column=fee_link_col)
                                 cell_d = ws_d.cell(row=row, column=fee_link_col)
                                 
@@ -3598,9 +3620,11 @@ CRITICAL RULES:
                                 if extracted_link and score > best_score:
                                     best_score = score
                                     links['fees'] = extracted_link
+                                    links['_fees_row'] = row
                     
                     if 'fees' in links:
-                        print(f"      -> [fees.xlsx] Found fee link for '{uni_name}' / '{course_name}' (Score: {best_score}): {links['fees']}")
+                        print(f"      -> [fees.xlsx] Found fee link for '{uni_name}' / '{course_name}' (Score: {best_score}, Row: {links.get('_fees_row','?')}): {links['fees']}")
+                        links.pop('_fees_row', None)
             except Exception as e:
                 print(f"      -> fees.xlsx extraction failed: {e}")
 
@@ -3645,14 +3669,15 @@ CRITICAL RULES:
                 cell_course = ws_data.cell(row=row, column=course_col)
                 
                 if cell_inst.value and type(cell_inst.value) == str and cell_course.value and type(cell_course.value) == str:
-                    inst_val_lower = cell_inst.value.lower()
+                    inst_val_lower = self._expand_abbreviations(cell_inst.value).lower()
                     course_val_lower = cell_course.value.lower().replace('computer science and engineering', 'cse').replace('information technology', 'it').replace('b.e.', 'be').replace('b.e -', 'be').replace('b.e ', 'be ').replace('b.tech.', 'btech').replace('b.tech -', 'btech').replace('b.tech ', 'btech ')
                     
-                    u_lower = uni_name.lower()
+                    u_lower = self._expand_abbreviations(uni_name).lower()
                     c_lower = course_name.lower().replace('computer science and engineering', 'cse').replace('information technology', 'it').replace('b.e.', 'be').replace('b.e -', 'be').replace('b.e ', 'be ').replace('b.tech.', 'btech').replace('b.tech -', 'btech').replace('b.tech ', 'btech ')
                     
                     u_words = [w for w in normalize(u_lower).split() if len(w) > 2]
-                    c_words = [w for w in normalize(c_lower).split() if len(w) > 2]
+                    filler_words = ['specialization', 'specialisation', 'in', 'and', 'with', 'hons', 'honours', 'degree', 'program', 'programme']
+                    c_words = [w for w in normalize(c_lower).split() if len(w) > 2 and w not in filler_words]
                     
                     inst_match_exact = (normalize(u_lower) == normalize(inst_val_lower))
                     course_match_exact = (normalize(c_lower) == normalize(course_val_lower))
@@ -3660,20 +3685,28 @@ CRITICAL RULES:
                     inst_score = 0
                     if inst_match_exact: inst_score = 10
                     elif fuzzy_match(u_lower, inst_val_lower, 0.90)[0]: inst_score = 5
-                    elif u_lower in inst_val_lower or inst_val_lower in u_lower: inst_score = 2
-                    elif (u_words and all(w in inst_val_lower for w in u_words)): inst_score = 1
+                    elif u_lower in inst_val_lower or inst_val_lower in u_lower: inst_score = 3
+                    elif (u_words and all(w in inst_val_lower for w in u_words)): inst_score = 2
+                    elif u_words:
+                        matched_words = [w for w in u_words if w in inst_val_lower and len(w) > 4]
+                        if len(matched_words) >= max(1, len(u_words) // 2):
+                            inst_score = 1
                     
                     course_score = 0
                     if course_match_exact: course_score = 10
                     elif fuzzy_match(c_lower, course_val_lower, 0.85)[0]: course_score = 5
-                    elif c_lower in course_val_lower or course_val_lower in c_lower: course_score = 2
-                    elif (c_words and all(w in course_val_lower for w in c_words)): course_score = 1
+                    elif c_lower in course_val_lower or course_val_lower in c_lower: course_score = 3
+                    elif (c_words and all(w in course_val_lower for w in c_words)): course_score = 2
+                    elif c_words:
+                        matched_c = [w for w in c_words if w in course_val_lower and len(w) > 3]
+                        if len(matched_c) >= max(1, len(c_words) * 2 // 3):
+                            course_score = 1
                     
                     score = inst_score + course_score
-                    if inst_score > 0 and course_score > 0:
+                    if inst_score >= 1 and course_score >= 1:
                         if score > best_score:
                             best_score = score
-                            current_links = {}
+                            current_links = {'_match_row': row}
                             if link_col:
                                 url = extract_url(ws.cell(row=row, column=link_col), ws_data.cell(row=row, column=link_col))
                                 if url: current_links['main_link'] = url
@@ -3689,6 +3722,9 @@ CRITICAL RULES:
                             if current_links:
                                 best_links = current_links
             
+            if best_links:
+                row_num = best_links.pop('_match_row', '?')
+                print(f"      -> [CombinedWork.xlsx] Found links for '{uni_name}' / '{course_name}' (Score: {best_score}, Row: {row_num}): fees={best_links.get('fees','N/A')}, syllabus={best_links.get('syllabus','N/A')}")
             for k, v in best_links.items():
                 if k not in links: links[k] = v
             return links
@@ -3811,11 +3847,10 @@ CRITICAL RULES:
                         text = page.get_text("text") or ""
                         text_lower = text.lower()
                         
-                        if len(doc) <= 20:
+                        # Strict keyword matching: only parse pages that actually contain the relevant keywords!
+                        # (Fallback to all pages only if the PDF is extremely small, e.g. 1-2 pages)
+                        if len(doc) <= 3 or any(term in text_lower for term in target_keywords):
                             target_pages.append(p_num)
-                        else:
-                            if any(term in text_lower for term in target_keywords):
-                                target_pages.append(p_num)
                     doc.close()
                     
                     # Strictly cap to 10 pages to prevent memory leaks and crashes with pdfplumber
@@ -4338,12 +4373,13 @@ CRITICAL RULES:
         aff_uni_lower = str(course.get('affiliated_uni', '')).lower()
         fee_url_lower = str(course.get('fee_url', '')).lower()
         page_text_lower = page_text_limited[:10000].lower()
+        course_url_lower = str(course.get('url', course.get('web_url', ''))).lower()
         
         # Strictly only use provided text values for Anna Univ, ignoring Management Quota (85k/87k).
         if 'anna ' in uni_name_lower or any(kw in uni_name_lower for kw in ['tamil nadu', 'tamilnadu', 'chennai', 'thiruvallur']) or 'anna ' in aff_uni_lower:
             anna_univ_rule = '- ANNA UNIVERSITY EXCEPTION: NEVER use or extract "Management Quota" fees (which are typically 85,000 or 87,000 per year). If you see 85,000 or 87,000, you MUST entirely IGNORE THEM. ONLY use the exact non-management fee values provided in the text (such as Government Quota). Furthermore, the standard regulated Government Quota fee for Anna University affiliated private engineering colleges is 50,000 to 55,000 per year (totaling 2,00,000 or 2,20,000 for 4 years). If the Original Cost is exactly 2,00,000 or 2,20,000, you MUST output MATCH for Cost, even if the website does not explicitly state the fees.'
             
-        complex_fee_rule = '- COMPLEX FEE TABLES: If the text contains per-semester or per-year fees (common for Graphic Era, Asansol, Girideepam, etc.), you MUST calculate the total fee for the entire duration of the course (e.g., sum all 8 semesters for a 4-year course, or sum all 1st, 2nd, 3rd, 4th year payments). If your calculated total matches the Original Cost (or is within 5% of it), you MUST output MATCH for Cost.'
+        complex_fee_rule = '- COMPLEX FEE TABLES: If the text contains per-semester or per-year fees (common for Graphic Era, Asansol, Girideepam, etc.), you MUST calculate the total fee for the entire duration of the course (e.g., sum all 8 semesters for a 4-year course, or sum all 1st, 2nd, 3rd, 4th year payments). If your calculated total matches the Original Cost (or is within 10% of it), you MUST output MATCH for Cost.'
         karnataka_rule = ""
         # Karnataka cities / state keywords
         if any(kw in uni_name_lower or kw in aff_uni_lower for kw in ['karnataka', 'bangalore', 'bengaluru', 'belgaum', 'mysore', 'mangalore', 'hubli', 'dharwad', 'vtu', 'visvesvaraya', 't.john', 't. john']):
@@ -4352,7 +4388,8 @@ CRITICAL RULES:
   * Private Unaided / Minority Colleges: Rs. 1,12,410 or Rs. 1,21,410
   If the college is in Karnataka, determine its type from the text (Government vs Private). If the Original Cost exactly matches these baselines (e.g. 44200, 112410, 121410) OR their 4-year totals (e.g. 4,49,640), you MUST explicitly output a MATCH for Cost. 
   CRITICAL: If you see higher fees (like 8,00,000 or 10,50,000) on the website, they are typically for Management Quota. You MUST IGNORE Management Quota fees and STILL output a MATCH for the 4,49,640 CET baseline!"""
-        
+
+        coursera_rule = ""
         prompt = f"""
 Strictly verify the course details against the webpage text. Output ONLY valid JSON.
 
@@ -4371,22 +4408,24 @@ Text:
 Rules:
 1. COST:
    - Compare Original Cost against both Total fees and Tuition fees from the text. Give a MATCH if the numbers match or are semantically equivalent (e.g., "Rs. 8,000" matches "8000/-", or "$8,900" matches "$8,900*").
-    - CRITICAL CURRENCY RULE: You MUST strictly verify that the currency symbols/types match. If the Original Cost is in US Dollars ($) but the website states Euros (€ or "EUR"), Pounds (£), or Hong Kong Dollars (HK$), you MUST mark cost_match as FALSE. A number match alone is NEVER enough if the currency is different!
-    - The fee is often mentioned right at the top of the page. You MUST carefully scan the beginning of the text for ANY mention of costs or fees, paying close attention to foreign currencies (e.g., HKD, USD, CAD).
-   - CRITICAL CALCULATION: If the total fee is ALREADY explicitly stated in the text (e.g., "Total Fee: 4,91,800"), DO NOT attempt to re-calculate it from sub-components—just match it! ONLY calculate the total if the fee is ONLY given per semester/year (e.g., "Rs. 2,02,500 per semester" and duration is 4 years -> "2,02,500 * 8 = 16,20,000") OR if given as "Cost Per Credit" multiplied by "Total Credits" (e.g., "$750 per credit" and "12 credits" -> "750 * 12 = 9000"). If you see "Cost Per Credit" and "Total Credits" anywhere on the page, you MUST ASSUME they apply to the course and perform the calculation! If this calculated total EXACTLY MATCHES the Original Cost (allowing only for minor point decimal round-off errors), mark it as a MATCH. If there is a larger discrepancy, you MUST mark it as FALSE. You MUST output this calculation in the cost_description
-   - For all universities NOT located in India, you MUST ONLY consider International/Overseas costs IF multiple fee tiers (e.g. domestic vs international) are explicitly listed. If only a single standard fee is listed without distinction (such as in online bootcamps), use that standard fee. Explicitly state the fee type in the description.
+   - CRITICAL CURRENCY RULE: You MUST strictly verify that the currency symbols/types match. If the Original Cost is in US Dollars ($) but the website states Euros (EUR), Pounds, or Hong Kong Dollars (HK$), you MUST mark cost_match as FALSE. A number match alone is NEVER enough if the currency is different!
+   - The fee is often mentioned right at the top of the page. You MUST carefully scan the beginning of the text for ANY mention of costs or fees, paying close attention to foreign currencies (e.g., HKD, USD, CAD).
+   - CRITICAL DEVIATION RULE: A deviation of +/- 5% between the Original Cost and the calculated or found cost on the website/PDF is COMPLETELY ACCEPTABLE. If the found cost is within 5% of the Original Cost (e.g. minor tax differences, different academic year fees, rounding), you MUST mark cost_match as TRUE! Do not mark it false if it is within 5%.
+   - CRITICAL CALCULATION: If the total fee is ALREADY explicitly stated in the text (e.g., "Total Fee: 4,91,800"), DO NOT attempt to re-calculate it from sub-components, just match it! ONLY calculate the total if the fee is ONLY given per semester/year (e.g., "Rs. 2,02,500 per semester" and duration is 4 years -> "2,02,500 * 8 = 16,20,000") OR if given as "Cost Per Credit" multiplied by "Total Credits" (e.g., "$750 per credit" and "12 credits" -> "750 * 12 = 9000"). If you see "Cost Per Credit" and "Total Credits" anywhere on the page, you MUST ASSUME they apply to the course and perform the calculation! If this calculated total is within +/- 5% of the Original Cost, mark it as a MATCH. You MUST output this calculation in the cost_description.
+   - DOMESTIC VS INTERNATIONAL: If the Country is NOT India (e.g. USA, UK, Canada, Australia, etc.), you MUST ALWAYS compare the Original Cost against the INTERNATIONAL fee if both domestic and international fees are listed. If the Country is India, ALWAYS compare against the DOMESTIC/IN-STATE fee FIRST, unless the Original Cost clearly matches only the international fee.
    - "Free" Exception: If Original Cost is "Free", do NOT match generic terms (e.g., "toll free", "free box"). Must mean "Free Course Tuition". If a Paid Certificate track exists, cost_match = FALSE.
    - SWAYAM EXCEPTION: Swayam courses are free to audit but have a standard fee of Rs. 1000 for the certificate. If the Original Cost is "Rs. 1000" (or similar) and the platform is Swayam/NPTEL, you MUST ALWAYS mark cost_match as TRUE.
    - MANAGEMENT QUOTA STRICT BAN: NEVER use or extract "Management Quota", "NRI Quota", or "Direct Admission" fees under ANY circumstances. You MUST ALWAYS use "Government Quota", "Merit Quota", "Counselling", or standard tuition fees. If both Government and Management quotas are present in the text, you MUST COMPLETELY IGNORE the Management Quota fees. If the Original Cost matches the Government/Merit Quota fee, you MUST output a MATCH for Cost.
    - CRITICAL EXTRACTION: If you cannot find the exact Original Cost, you MUST scan the page text comprehensively.
    - Must be 1-2 short sentences. Include exact math calculations if performed.
-   - NEVER use quotation marks (") inside descriptions.
-   - NEVER output "N/A" or "Not Found". ALWAYS give a perfect, confident description. If exact text is missing, explicitly infer it using the logical defaults above.
+   - NEVER use quotation marks inside descriptions.
+   - NEVER output N/A or Not Found. ALWAYS give a perfect, confident description. If exact text is missing, explicitly infer it using the logical defaults above.
    - If the exact Original Cost amount (e.g. 48,000 or 60,000) appears ANYWHERE in the provided text, YOU MUST MATCH IT and output it! Do NOT say it's not listed if the number is right there!
-   - If cost_match is FALSE because the price is different, you MUST explicitly state the ACTUAL cost you found on the website in your cost_description. Also populate found_cost with the actual cost you found, or 'Not Found'.
+   - If cost_match is FALSE because the price is different, you MUST explicitly state the ACTUAL cost you found on the website in your cost_description. Also populate found_cost with the actual cost you found, or Not Found.
    {anna_univ_rule}
    {karnataka_rule}
    {complex_fee_rule}
+   {coursera_rule}
 2. DURATION:
    - DURATION OPTIONS RULE: If the Original Duration specifies multiple options (e.g., "1/3/6 M" or "3/6/9 Months"), this implies a choice was available. If the website no longer offers those choices and only lists a single duration (e.g., "4 weeks" or "1 month"), you MUST mark duration_match as FALSE because the exact multi-duration offering is no longer available. Explicitly state the single option you found.
    - If not stated in text, do NOT output "not found". You MUST logically infer and describe it: B.E./B.Tech = 4 Years, M.E./M.Tech = 2 Years, B.Sc/BCA = 3 Years, M.Sc/MCA = 2 Years (e.g., "B.Tech programs in India typically last 4 years.").
@@ -4905,6 +4944,8 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
                 if any(k in det_lower for k in ['blended', 'hybrid', 'blend']):
                     print(f"    -> [Sanity] mode_match corrected to TRUE (hybrid/blended confirmed in description).")
                     mode_match = True
+        
+        # (Coursera sanity override removed per user request - purely relies on DOM extraction now)
         
         return (cost_match, sk_match, sk_detail, duration_match, duration_detail, mode_match, mode_detail, lang_match, lang_detail, cost_detail, country_match, country_detail, uni_match_llm, uni_detail)
 
@@ -7596,47 +7637,103 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                     if not skip_dom_extraction and not is_nielit:
                         # Coursera Specific Logic: Click 'Enroll' to reveal pricing modal
                         if 'coursera.org' in url.lower():
-                            print("    -> [Coursera] Attempting to click 'Enroll' button to reveal pricing modal...")
+                            print("    -> [Coursera] Attempting native Selenium click on 'Enroll' button to expose pricing modal...")
                             try:
-                                js_click_enroll = """
-                                    let callback = arguments[arguments.length - 1];
-                                    if (!document || !document.querySelectorAll) return callback(false);
-                                    let btns = Array.from(document.querySelectorAll('button[data-track-component="enroll_button"], button[data-e2e="enroll-button"], button, a, [role="button"]') || []);
-                                    async function run() {
-                                        for (let b of btns) {
-                                            let t = (b.innerText || b.textContent || '').toLowerCase().trim();
-                                            let e2e = b.getAttribute('data-e2e');
-                                            let track = b.getAttribute('data-track-component');
-                                            if (e2e === 'enroll-button' || track === 'enroll_button' || t.includes('enroll for free') || t === 'enroll now' || (t.includes('enroll') && b.tagName === 'BUTTON' && !t.includes('already'))) {
-                                                if (window.moveBeautifulCursorToElement) window.moveBeautifulCursorToElement(b);
-                                                else b.scrollIntoView({behavior: 'instant', block: 'center'});
-                                                await new Promise(r => setTimeout(r, 600));
-                                                b.click();
-                                                return callback(true);
-                                            }
-                                        }
-                                        callback(false);
-                                    }
-                                    run();
-                                """
-                                driver.set_script_timeout(10)
-                                clicked = driver.execute_async_script(js_click_enroll)
-                                if clicked:
-                                    print("      -> Clicked Enroll. Waiting for modal...")
-                                    time.sleep(3)
+                                # Wait for any dynamic content to settle
+                                time.sleep(2.5)
+                                self._dismiss_popups(driver)
+                                
+                                # Try all known Coursera enroll button selectors in priority order
+                                coursera_enroll_selectors = [
+                                    '[data-e2e="enroll-button"]',
+                                    '[data-track-component="enroll_button"]',
+                                    'button[data-e2e*="enroll"]',
+                                    'a[data-e2e*="enroll"]',
+                                ]
+                                enroll_btn = None
+                                for sel in coursera_enroll_selectors:
                                     try:
-                                        js_extract_modal = """
-                                            let modal = document.querySelector('[role="dialog"], .ReactModalPortal, .rc-MetagenModal, .css-1xy8ceb, div[data-e2e="course-enroll-modal"], div[aria-modal="true"]');
-                                            return modal ? modal.textContent : '';
-                                        """
-                                        modal_text = driver.execute_script(js_extract_modal)
-                                        if modal_text and len(modal_text) > 10:
-                                            page_text += "\n\n=== COURSERA ENROLL MODAL DATA (ONLY USE THE SPECIFIC COURSE FEE LISTED HERE. IGNORE ANY SUBSCRIPTION FEE OR COURSERA PLUS FEE) ===\n" + modal_text + "\n=======================\n\n"
-                                            print(f"      -> Extracted {len(modal_text)} characters from pricing modal.")
-                                    except Exception as e:
-                                        print(f"      -> Failed to extract modal text: {e}")
+                                        btns = driver.find_elements(By.CSS_SELECTOR, sel)
+                                        for b in btns:
+                                            if b.is_displayed():
+                                                enroll_btn = b
+                                                break
+                                        if enroll_btn:
+                                            break
+                                    except Exception:
+                                        pass
+                                
+                                # Fallback: find any visible button/link with 'enroll' text
+                                if not enroll_btn:
+                                    try:
+                                        all_btns = driver.find_elements(By.XPATH,
+                                            '//button[contains(translate(normalize-space(text()),"ABCDEFGHIJKLMNOPQRSTUVWXYZ","abcdefghijklmnopqrstuvwxyz"),"enroll")]'
+                                            '| //a[contains(translate(normalize-space(text()),"ABCDEFGHIJKLMNOPQRSTUVWXYZ","abcdefghijklmnopqrstuvwxyz"),"enroll")]')
+                                        for b in all_btns:
+                                            txt = (b.text or '').strip().lower()
+                                            if b.is_displayed() and 'enroll' in txt and 'already' not in txt:
+                                                enroll_btn = b
+                                                break
+                                    except Exception:
+                                        pass
+                                
+                                if enroll_btn:
+                                    btn_text = (enroll_btn.text or '').strip()
+                                    print(f"      -> [Coursera] Found enroll button: '{btn_text}'. Scrolling and clicking...")
+                                    driver.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'});", enroll_btn)
+                                    time.sleep(0.8)
+                                    try:
+                                        enroll_btn.click()
+                                    except Exception:
+                                        driver.execute_script("arguments[0].click();", enroll_btn)
+                                    print("      -> [Coursera] Clicked! Waiting for pricing modal to appear...")
+                                    time.sleep(3.5)
+                                    
+                                    # Extract modal text with multiple selectors
+                                    modal_text = ""
+                                    modal_selectors = [
+                                        '[role="dialog"]',
+                                        '[aria-modal="true"]',
+                                        '.ReactModalPortal',
+                                        '[data-e2e="course-enroll-modal"]',
+                                        '.rc-MetagenModal',
+                                        '.css-1xy8ceb',
+                                        '.product-card-cta',
+                                    ]
+                                    for msel in modal_selectors:
+                                        try:
+                                            modal_els = driver.find_elements(By.CSS_SELECTOR, msel)
+                                            for mel in modal_els:
+                                                if mel.is_displayed():
+                                                    mt = mel.text or mel.get_attribute('innerText') or ''
+                                                    if len(mt.strip()) > 20:
+                                                        modal_text = mt
+                                                        print(f"      -> [Coursera] Got modal text ({len(modal_text)} chars) via '{msel}'")
+                                                        break
+                                            if modal_text:
+                                                break
+                                        except Exception:
+                                            pass
+                                    
+                                    if modal_text:
+                                        page_text += (
+                                            "\n\n=== COURSERA PRICING MODAL DATA (USE THIS TO MATCH THE COURSE FEE) ===\n"
+                                            + modal_text[:6000]
+                                            + "\n=======================\n\n"
+                                        )
+                                    else:
+                                        # Modal may not have appeared — get full page text after click
+                                        print("      -> [Coursera] No modal dialog found; extracting full page text after click.")
+                                        try:
+                                            post_click_text = self._extract_page_text(driver)
+                                            if post_click_text:
+                                                page_text += "\n--- COURSERA PAGE POST-ENROLL-CLICK ---\n" + post_click_text[:8000]
+                                        except Exception:
+                                            pass
+                                else:
+                                    print("      -> [Coursera] No visible 'Enroll' button found on this page.")
                             except Exception as e:
-                                print(f"      -> Failed to click Enroll: {e}")
+                                print(f"      -> [Coursera] Enroll click failed: {e}")
                         
                         # PRIMARY: Extract text from DOM (body, JSON-LD, meta, data-*, hidden price elements)
                         print(f"    -> Extracting text from website via DOM (primary)...")
@@ -7784,39 +7881,66 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             except Exception as e:
                                 pass
                         if 'coursera.org' in current_url_lower:
-                            print(f"    -> [Coursera] Auto-clicking 'Enroll' button to expose pricing modal...")
-                            js_coursera_enroll = """
-                                let callback = arguments[arguments.length - 1];
-                                async function run_coursera() {
-                                    let buttons = document.querySelectorAll('button[data-track-component="enroll_button"], button[data-e2e="enroll-button"], button, a');
-                                    let limit = Math.min(buttons.length, 1000);
-                                    for (let i = 0; i < limit; i++) {
-                                        let b = buttons[i];
-                                        let txt = (b.innerText || b.textContent || '').toLowerCase().trim();
-                                        let e2e = b.getAttribute('data-e2e');
-                                        let track = b.getAttribute('data-track-component');
-                                        if (e2e === 'enroll-button' || track === 'enroll_button' || txt.includes('enroll for free') || txt === 'enroll' || txt.includes('enroll now')) {
-                                            try { 
-                                                b.scrollIntoView({behavior: 'instant', block: 'center'});
-                                                b.click(); 
-                                                await new Promise(r => setTimeout(r, 2000)); 
-                                            } catch(e) {}
-                                            break;
-                                        }
-                                    }
-                                    callback();
-                                }
-                                run_coursera();
-                            """
+                            print(f"    -> [Coursera] Auto-clicking 'Enroll' button to expose pricing modal (phase 2)...")
                             try:
-                                driver.set_script_timeout(10)
-                                driver.execute_async_script(js_coursera_enroll)
                                 time.sleep(2.0)
-                                extra_text = self._extract_page_text(driver)
-                                if extra_text:
-                                    page_text += "\\n" + extra_text
+                                self._dismiss_popups(driver)
+                                
+                                enroll_btn2 = None
+                                for sel2 in ['[data-e2e="enroll-button"]', '[data-track-component="enroll_button"]', 'button[data-e2e*="enroll"]', 'a[data-e2e*="enroll"]']:
+                                    try:
+                                        for b in driver.find_elements(By.CSS_SELECTOR, sel2):
+                                            if b.is_displayed():
+                                                enroll_btn2 = b; break
+                                        if enroll_btn2: break
+                                    except Exception: pass
+                                
+                                if not enroll_btn2:
+                                    try:
+                                        for b in driver.find_elements(By.XPATH, '//button[contains(translate(normalize-space(.),"ABCDEFGHIJKLMNOPQRSTUVWXYZ","abcdefghijklmnopqrstuvwxyz"),"enroll")] | //a[contains(translate(normalize-space(.),"ABCDEFGHIJKLMNOPQRSTUVWXYZ","abcdefghijklmnopqrstuvwxyz"),"enroll")]'):
+                                            txt2 = (b.text or '').strip().lower()
+                                            if b.is_displayed() and 'enroll' in txt2 and 'already' not in txt2:
+                                                enroll_btn2 = b; break
+                                    except Exception: pass
+                                
+                                if enroll_btn2:
+                                    print(f"    -> [Coursera] Clicking enroll btn: '{(enroll_btn2.text or '').strip()}'")
+                                    driver.execute_script("arguments[0].scrollIntoView({block:'center',behavior:'instant'});", enroll_btn2)
+                                    time.sleep(0.5)
+                                    try:
+                                        enroll_btn2.click()
+                                    except Exception:
+                                        driver.execute_script("arguments[0].click();", enroll_btn2)
+                                    time.sleep(3.5)
+                                    
+                                    # Modal extraction
+                                    modal_text2 = ""
+                                    for msel2 in ['[role="dialog"]', '[aria-modal="true"]', '.ReactModalPortal', '[data-e2e="course-enroll-modal"]', '.rc-MetagenModal', '.css-1xy8ceb']:
+                                        try:
+                                            for mel2 in driver.find_elements(By.CSS_SELECTOR, msel2):
+                                                if mel2.is_displayed():
+                                                    mt2 = mel2.text or mel2.get_attribute('innerText') or ''
+                                                    if len(mt2.strip()) > 20:
+                                                        modal_text2 = mt2
+                                                        print(f"    -> [Coursera] Got phase-2 modal ({len(modal_text2)} chars) via '{msel2}'")
+                                                        break
+                                            if modal_text2: break
+                                        except Exception: pass
+                                    
+                                    if modal_text2:
+                                        page_text += (
+                                            "\n\n=== COURSERA PRICING MODAL DATA (USE THIS TO MATCH THE COURSE FEE) ===\n"
+                                            + modal_text2[:6000]
+                                            + "\n=======================\n\n"
+                                        )
+                                    else:
+                                        extra_text = self._extract_page_text(driver)
+                                        if extra_text:
+                                            page_text += "\n--- COURSERA PAGE AFTER ENROLL CLICK ---\n" + extra_text[:8000]
+                                else:
+                                    print("    -> [Coursera] Phase-2: No enroll button found.")
                             except Exception as e:
-                                pass
+                                print(f"    -> [Coursera] Phase-2 enroll click failed: {e}")
                         
                         is_upes = "upesonline.ac.in" in str(course.get('url', '')).lower() or "upesonline.ac.in" in current_url_lower
                         is_dypatil = 'dypatil' in current_url_lower or 'dpu.edu' in current_url_lower
@@ -8993,28 +9117,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             sk_detail = f"General {course.get('name')} syllabus typically includes: {trunc_sk}"
 
                     # --- QS / NIRF RANK DETECTION FROM SCRAPED PAGE TEXT ---
-                    # The DB-based check in verify_rankings() only matches university names.
-                    # Many course pages mention the rank explicitly (e.g. "QS World Rank #45" or
-                    # "NIRF Ranking 2024: 12th in Engineering"). Use _extract_rank_from_text
-                    # to read those claims directly from the scraped page_text and upgrade the
-                    # ranking detail when the DB-only check returned "Not Ranked".
-                    try:
-                        if page_text and len(page_text) > 100:
-                            uni_for_rank = course.get('uni', '')
-                            if not course.get('qs_ranked') or course.get('qs_detail') in (None, '', 'Not Ranked'):
-                                handled, qs_rank_text = self._extract_rank_from_text(page_text, uni_for_rank, "QS")
-                                if handled and qs_rank_text and qs_rank_text != "Not Ranked":
-                                    course['qs_detail'] = qs_rank_text
-                                    course['qs_ranked'] = True
-                                    print(f"    -> [Ranking] QS rank detected from page text: {qs_rank_text}")
-                            if not course.get('nirf_ranked') or course.get('nirf_detail') in (None, '', 'Not Ranked'):
-                                handled, nirf_rank_text = self._extract_rank_from_text(page_text, uni_for_rank, "NIRF")
-                                if handled and nirf_rank_text and nirf_rank_text != "Not Ranked":
-                                    course['nirf_detail'] = nirf_rank_text
-                                    course['nirf_ranked'] = True
-                                    print(f"    -> [Ranking] NIRF rank detected from page text: {nirf_rank_text}")
-                    except Exception as _rank_e:
-                        print(f"    -> [Ranking] Page-text rank detection failed: {_rank_e}")
+                    # (Removed per strict database-only ranking requirement)
 
                     # New fields for duration, mode, lang
                     course['country_verified'] = web_country
