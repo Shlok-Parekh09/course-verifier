@@ -91,10 +91,8 @@ class LLMManagerAPI:
     def _get_key_sequence(self, worker_id: int, num_keys: int, num_workers: int = 0) -> list[int]:
         """Return the ordered list of key indices this worker should try.
         
-        Uses a SPREAD pattern so each worker gets keys from opposite ends of the
-        list (e.g. 6 keys, 3 workers → worker 0: [0,5], worker 1: [1,4], worker 2: [2,3]).
-        This maximises the gap between consecutive calls on the same key, naturally
-        avoiding rate-limit collisions without explicit sleeping.
+        Assigns keys using a strict modulo stride so each worker gets a dedicated subset of keys.
+        e.g., 6 keys, 3 workers -> worker 0: [0, 3], worker 1: [1, 4], worker 2: [2, 5].
         """
         if num_keys == 0:
             return []
@@ -109,14 +107,11 @@ class LLMManagerAPI:
 
         w = worker_id % num_workers
         keys = []
-        # Assign keys from the front and mirrored from the back for this worker
+        # Assign keys strictly by stride offset
         for offset in range(0, num_keys, num_workers):
-            front_idx = offset + w
-            back_idx  = num_keys - 1 - offset - w
-            if front_idx < num_keys:
-                keys.append(front_idx)
-            if back_idx >= 0 and back_idx != front_idx and back_idx not in keys:
-                keys.append(back_idx)
+            idx = offset + w
+            if idx < num_keys:
+                keys.append(idx)
         return keys if keys else [w % num_keys]
 
     def _check_token_error(self, text: str) -> bool:

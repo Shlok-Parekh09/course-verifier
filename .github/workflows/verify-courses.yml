@@ -1,142 +1,458 @@
-name: Autonomous Course Verifier
+name: Cloud Course Verifier
 
 on:
   workflow_dispatch:
     inputs:
-      pdf:
-        description: 'PDF filename in repo to verify (basename only, e.g. link_compile_trimmed.pdf or 421-499.pdf)'
-        required: true
-        default: '688-965_compressed.pdf'
       start_page:
-        description: 'Start PDF page (original page numbering)'
-        required: true
-        default: '688'
+        description: "Start Page Number (Leave blank to run from page 1)"
+        required: false
+        default: ""
       end_page:
-        description: 'End PDF page (original page numbering)'
+        description: "End Page Number (Leave blank to run to the end)"
+        required: false
+        default: ""
+      pdf_url:
+        description: "Direct download URL for the Input PDF (e.g. Filebin)"
+        required: false
+        default: "https://filebin.net/example/link_compile.pdf"
+      ndu_pdf_url:
+        description: "Direct download URL for NDU Screenshots PDF (optional)"
+        required: false
+        default: ""
+      chunk_size:
+        description: "Pages per chunk (Max 250 chunks per run)"
+        required: false
+        default: "30"
+      llm_backend:
+        description: "LLM Backend to use (api or cloud_ollama)"
         required: true
-        default: '965'
-      page_offset:
-        description: 'Original page = cropped page + offset (171 if PDF starts at original p.172)'
-        required: false
-        default: '688'
-      start_idx:
-        description: 'Report course numbering starts here (e.g. 602 if first course is original idx 602). Blank = 1-based position.'
-        required: false
-        default: '2635'
-      browsers:
-        description: 'Number of parallel browsers'
+        default: "api"
+        type: choice
+        options:
+          - api
+          - cloud_ollama
+      runner_type:
+        description: "Where to run this workflow"
         required: true
-        default: '3'
-      http_first:
-        description: 'Enable HTTP-first extraction (skip browser for static pages) - 1/0'
-        required: false
-        default: '1'
-      llm_text_budget:
-        description: 'Max chars of page text sent to the LLM (default 25000)'
-        required: false
-        default: '25000'
+        default: "self-hosted"
+        type: choice
+        options:
+          - self-hosted
+          - ubuntu-latest
 
 jobs:
-  verify:
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
+  setup:
+    name: "Calculate PDF Chunks"
+    runs-on: ${{ github.event.inputs.runner_type }}
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Use Native System Python
+        run: python3 --version
+      
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Setup Chrome
-        uses: browser-actions/setup-chrome@v1
-        with:
-          chrome-version: stable
-          install-dependencies: true
-
-      - name: Increase Swap Space
-        uses: pierotofy/set-swap-space@master
-        with:
-          swap-size-gb: 10
-
-      - name: Install system deps
+      - name: Install PyMuPDF
+        shell: bash
         run: |
+          uv venv --clear .venv
+          uv pip install PyMuPDF
+
+      - name: Download Main PDF
+        shell: bash
+        run: curl -sL "${{ github.event.inputs.pdf_url || 'https://filebin.net/example/link_compile.pdf' }}" -o link_compile.pdf
+
+      - name: Generate Matrix
+        id: set-matrix
+        run: |
+          uv run python3 - <<'EOF'
+          import os, fitz, json
+          doc = fitz.open("link_compile.pdf")
+          
+          # Use provided bounds or default to PDF length
+          in_start = "${{ github.event.inputs.start_page }}".strip()
+          in_end = "${{ github.event.inputs.end_page }}".strip()
+          
+          start_page = int(in_start) if in_start.isdigit() else 1
+          end_page = int(in_end) if in_end.isdigit() else len(doc)
+          
+          # Validate bounds
+          if start_page < 1: start_page = 1
+          if end_page > len(doc): end_page = len(doc)
+          if start_page > end_page: start_page = end_page
+          
+          chunk_size = int("${{ github.event.inputs.chunk_size || 30 }}")
+          
+          matrix = []
+          idx = 0
+          for i in range(start_page, end_page + 1, chunk_size):
+              start = i
+              end = min(i + chunk_size - 1, end_page)
+              matrix.append({"index": idx, "start": start, "end": end})
+              idx += 1
+              
+          print(f"Generated matrix from page {start_page} to {end_page} into {len(matrix)} chunks.")
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"matrix={json.dumps(matrix)}\\n")
+          EOF
+
+  verify:
+    name: "Verify Pages ${{ matrix.chunk.start }} to ${{ matrix.chunk.end }}"
+    needs: setup
+    runs-on: ${{ github.event.inputs.runner_type }}
+    permissions:
+      contents: write
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        chunk: ${{ fromJson(needs.setup.outputs.matrix) }}
+
+    env:
+      CI: true
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Load and Partition Mistral API Keys
+        shell: bash
+        env:
+          ENV_FILE: ${{ secrets.ENV_FILE }}
+          CHUNK_INDEX: ${{ matrix.chunk.index }}
+        run: |
+          python3 - <<'EOF'
+          import os, re
+          env_content = os.environ.get('ENV_FILE', '')
+          chunk_index = int(os.environ.get('CHUNK_INDEX', 0))
+          keys_per_chunk = 6
+          
+          mistral_keys = []
+          for line in env_content.splitlines():
+              match = re.match(r'MISTRAL_API_KEY_\d+\s*=\s*(.+)', line)
+              if match:
+                  mistral_keys.append(match.group(1).strip())
+                  
+          start_idx = chunk_index * keys_per_chunk
+          end_idx = start_idx + keys_per_chunk
+          selected_keys = mistral_keys[start_idx:end_idx]
+          
+          if len(selected_keys) < keys_per_chunk and len(mistral_keys) > 0:
+              selected_keys = []
+              for i in range(keys_per_chunk):
+                  selected_keys.append(mistral_keys[(start_idx + i) % len(mistral_keys)])
+                  
+          with open('.env', 'w') as f:
+              for i, key in enumerate(selected_keys, 1):
+                  f.write(f"MISTRAL_API_KEY_{i}={key}\n")
+              for line in env_content.splitlines():
+                  if not line.startswith('MISTRAL_API_KEY_'):
+                      f.write(line + '\n')
+          EOF
+
+      - name: Use Native System Python
+        run: python3 --version
+
+      - name: Install System Dependencies & 10GB Swap (Cloud Only)
+        if: github.event.inputs.runner_type == 'ubuntu-latest'
+        run: |
+          echo "Setting up extra Swap to prevent OOM Kills..."
+          sudo fallocate -l 10G /swapfile_extra || sudo dd if=/dev/zero of=/swapfile_extra bs=1M count=10240
+          sudo chmod 600 /swapfile_extra
+          sudo mkswap /swapfile_extra || true
+          sudo swapon /swapfile_extra || true
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            fonts-liberation libglib2.0-0t64 libnss3 \
-            libfontconfig1 libxss1 libatk-bridge2.0-0t64 \
-            libgtk-3-0t64 libxcomposite1 libxcursor1 libxdamage1 libxi6 libxtst6 \
-            libxrandr2 libasound2t64 libpangocairo-1.0-0 libatspi2.0-0t64 libcups2t64 \
-            libdrm2 libgbm1 libxkbcommon0 tesseract-ocr tesseract-ocr-eng \
-            unzip curl
+          sudo apt-get install -y tesseract-ocr libtesseract-dev xvfb x11-utils libgl1
+          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo apt-get install -y ./google-chrome-stable_current_amd64.deb || true
 
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ hashFiles('requirements.txt') }}
-
-      - name: Install Python deps
+      - name: Install System Dependencies & 30GB Swap (Self-Hosted Kali)
+        if: github.event.inputs.runner_type == 'self-hosted'
         run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
-          playwright install chromium || true
+          echo "Setting up massive 30GB Swap for local Kali runner..."
+          sudo fallocate -l 30G /swapfile_extra || sudo dd if=/dev/zero of=/swapfile_extra bs=1M count=30720
+          sudo chmod 600 /swapfile_extra
+          sudo mkswap /swapfile_extra || true
+          sudo swapon /swapfile_extra || true
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr libtesseract-dev xvfb x11-utils libgl1
+          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo apt-get install -y ./google-chrome-stable_current_amd64.deb || true
 
-      - name: Run verifier
-        id: verifier
+      - name: Verify & Clean System Dependencies
+        shell: bash
+        run: |
+          echo "Aggressively cleaning lingering processes to free memory..."
+          pkill -9 -f chrome || true
+          pkill -9 -f chromedriver || true
+          pkill -9 -f Xvfb || true
+          pkill -9 -f "autonomous_course_verifier" || true
+          google-chrome --version || echo "::warning::Google Chrome not found! Make sure to install it."
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python Dependencies
+        shell: bash
+        run: |
+          echo "Removing old .venv completely to clear memory footprint..."
+          rm -rf .venv
+          uv cache clean || true
+          uv venv --clear .venv
+          uv pip install -r requirements.txt python-dotenv
+
+      - name: Download Main PDF
+        shell: bash
+        run: curl -sL "${{ github.event.inputs.pdf_url || 'https://filebin.net/example/link_compile.pdf' }}" -o backend/link_compile.pdf
+
+      - name: Download NDU PDF
+        shell: bash
+        if: ${{ github.event.inputs.ndu_pdf_url != '' }}
+        run: |
+          echo "Downloading NDU PDF..."
+          curl -sL "${{ github.event.inputs.ndu_pdf_url }}" -o backend/ndu.pdf
+
+      - name: Run Verification (Virtual Display)
+        shell: bash
         env:
+          START_PAGE: ${{ matrix.chunk.start }}
+          END_PAGE: ${{ matrix.chunk.end }}
+          LLM_BACKEND: ${{ github.event.inputs.llm_backend }}
+          PDF_NAME: autonomous_verified_report
+          DISPLAY: ":99"
+          CI: true
+          VERIFIER_NUM_BROWSERS: "3"
           VERIFIER_NO_FORCE_EXIT: true
-          VERIFIER_HTTP_FIRST: ${{ inputs.http_first }}
-          VERIFIER_LLM_TEXT_BUDGET: ${{ inputs.llm_text_budget }}
-          VERIFIER_NUM_BROWSERS: ${{ inputs.browsers }}
-          OPENROUTER_KEY_1: ${{ secrets.OPENROUTER_KEY_1 }}
-          GEMINI_KEY_1: ${{ secrets.GEMINI_KEY_1 }}
-          OLLAMA_API_URL: ${{ secrets.OLLAMA_API_URL }}
-          OLLAMA_MODEL: ${{ secrets.OLLAMA_MODEL }}
-          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+          MISTRAL_API_KEYS: ${{ github.event.inputs.llm_backend == 'api' && secrets.MISTRAL_API_KEYS || '' }}
+          GEMINI_API_KEYS: ${{ github.event.inputs.llm_backend == 'api' && secrets.GEMINI_API_KEYS || '' }}
+          GROQ_API_KEYS: ${{ github.event.inputs.llm_backend == 'api' && secrets.GROQ_API_KEYS || '' }}
+          GITHUB_API_KEYS: ${{ github.event.inputs.llm_backend == 'api' && secrets.GITHUB_API_KEYS || '' }}
+          NVIDIA_API_KEYS: ${{ github.event.inputs.llm_backend == 'api' && secrets.NVIDIA_API_KEYS || '' }}
+          PUTER_API_KEYS: ${{ github.event.inputs.llm_backend == 'api' && secrets.PUTER_API_KEYS || '' }}
+          OLLAMA_API_KEY: ${{ github.event.inputs.llm_backend == 'cloud_ollama' && secrets.OLLAMA_API_KEY || '' }}
+          OLLAMA_API_URL: ${{ github.event.inputs.llm_backend == 'cloud_ollama' && secrets.OLLAMA_API_URL || '' }}
+          OLLAMA_MODEL: ${{ github.event.inputs.llm_backend == 'cloud_ollama' && secrets.OLLAMA_MODEL || '' }}
         run: |
-          START_IDX_FLAG=""
-          if [ -n "${{ inputs.start_idx }}" ]; then
-            START_IDX_FLAG="--start-idx ${{ inputs.start_idx }}"
+          if [ "$(uname)" == "Linux" ]; then
+            Xvfb :99 -screen 0 1280x1024x24 -ac +extension RANDR +extension GLX +render -noreset &
+            sleep 3
           fi
-          cd backend && python run_verifier_pages.py ${{ inputs.pdf }} --pages ${{ inputs.start_page }} ${{ inputs.end_page }} --fresh --page-offset ${{ inputs.page_offset }} $START_IDX_FLAG --no-email
+          cd backend && uv run python autonomous_course_verifier.py link_compile.pdf || echo "::warning::Verifier exited with non-zero status"
+          echo "Taking a 5-minute cooldown break..."
+          sleep 300
 
-      - name: Upload PDF report
+      - name: Remove input PDF before upload
+        if: always()
+        shell: bash
+        run: |
+          rm -f backend/link_compile.pdf
+          rm -f backend/ndu.pdf
+
+      - name: Upload Results Archive
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: report-pdf
-          path: Verification_Report_Pages_*.pdf
-          retention-days: 30
-          if-no-files-found: error
+          name: verification-results-${{ matrix.chunk.start }}-to-${{ matrix.chunk.end }}
+          path: |
+            backend/*.pdf
+            backend/autonomous_verified_*.json
+            backend/local_database.db
 
-      - name: Upload checkpoint
-        if: always()
+  merge-json:
+    name: "Merge All Chunk JSONs -> merged_run.json"
+    needs: verify
+    runs-on: ${{ github.event.inputs.runner_type }}
+    if: always()
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Use Native System Python
+        run: python3 --version
+
+      - name: Download All Chunk Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: verification-results-*
+          path: chunk_artifacts
+          merge-multiple: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install PyMuPDF for merging
+        shell: bash
+        run: |
+          uv venv --clear .venv
+          uv pip install PyMuPDF
+
+      - name: Merge JSON Files
+        run: |
+          uv run python3 - <<'PYEOF'
+          import os, json, glob
+
+          merged = []
+          seen_keys = set()
+
+          json_files = sorted(glob.glob("chunk_artifacts/**/*link_compile*.json", recursive=True))
+
+          if not json_files:
+              print("::warning::No JSON files found in downloaded artifacts!")
+          else:
+              print(f"Found {len(json_files)} JSON file(s) across all chunks.")
+
+          merged_dict = {}
+
+          for jf in json_files:
+              try:
+                  with open(jf, encoding="utf-8") as f:
+                      data = json.load(f)
+                  if not isinstance(data, list):
+                      print(f"  [!] Skipping {jf} (not a JSON array)")
+                      continue
+                  added = 0
+                  updated = 0
+                  for course in data:
+                      key = (
+                          str(course.get("name", "")).strip().lower(),
+                          str(course.get("uni",  "")).strip().lower(),
+                          course.get("page_num"),
+                          course.get("box_index"),
+                      )
+                      
+                      if key not in merged_dict:
+                          merged_dict[key] = course
+                          added += 1
+                      else:
+                          is_processed = course.get("processed_this_run") or course.get("reason", "") != ""
+                          old_is_processed = merged_dict[key].get("processed_this_run") or merged_dict[key].get("reason", "") != ""
+                          
+                          if is_processed and not old_is_processed:
+                              merged_dict[key] = course
+                              updated += 1
+
+                  print(f"  + {os.path.basename(jf)}: {len(data)} entries, {added} new, {updated} updated")
+              except Exception as e:
+                  print(f"  [!] Error reading {jf}: {e}")
+
+          merged = list(merged_dict.values())
+          merged.sort(key=lambda c: (c.get("page_num", 0), c.get("box_index", 0)))
+
+          out = "merged_run.json"
+          with open(out, "w", encoding="utf-8") as f:
+              json.dump(merged, f, indent=2, ensure_ascii=False)
+
+          print(f"\n[OK] Merged {len(merged)} total courses -> {out}")
+          
+          # --- Merge PDFs ---
+          import fitz
+          import re
+
+          def get_chunk_start(filepath):
+              match = re.search(r'verification-results-(\d+)-to-', filepath)
+              if match:
+                  return int(match.group(1))
+              return 0
+
+          pdf_files = sorted(glob.glob("chunk_artifacts/**/*.pdf", recursive=True), key=get_chunk_start)
+          if pdf_files:
+              print(f"\nFound {len(pdf_files)} PDF files to merge.")
+              merged_pdf = fitz.open()
+              for pdf in pdf_files:
+                  try:
+                      doc = fitz.open(pdf)
+                      merged_pdf.insert_pdf(doc)
+                      doc.close()
+                  except Exception as e:
+                      print(f"  [!] Error merging {pdf}: {e}")
+              out_pdf = "merged_run.pdf"
+              merged_pdf.save(out_pdf)
+              merged_pdf.close()
+              print(f"[OK] Merged PDFs into {out_pdf}")
+          else:
+              print("\nNo PDF files found to merge.")
+              
+          PYEOF
+
+      - name: Merge SQLite Databases
+        shell: bash
+        run: |
+          uv run python3 - <<'DBEOF'
+          import glob, sqlite3, os, shutil
+
+          db_files = glob.glob("chunk_artifacts/**/*.db", recursive=True)
+          if not db_files:
+              print("::warning::No SQLite .db files found in chunk artifacts.")
+          else:
+              print(f"Found {len(db_files)} SQLite database(s) to merge.")
+
+              # Use the first DB as the base
+              shutil.copy(db_files[0], "merged_run.db")
+              base_conn = sqlite3.connect("merged_run.db")
+              base_conn.row_factory = sqlite3.Row
+
+              for db_path in db_files[1:]:
+                  try:
+                      src = sqlite3.connect(db_path)
+                      src.row_factory = sqlite3.Row
+
+                      # --- affiliations ---
+                      for row in src.execute("SELECT * FROM affiliations"):
+                          try:
+                              base_conn.execute(
+                                  "INSERT OR REPLACE INTO affiliations (course_name, university, affiliated_uni) VALUES (?,?,?)",
+                                  (row["course_name"], row["university"], row["affiliated_uni"])
+                              )
+                          except Exception:
+                              pass
+
+                      # --- university_abbreviations ---
+                      for row in src.execute("SELECT * FROM university_abbreviations"):
+                          try:
+                              base_conn.execute(
+                                  "INSERT OR IGNORE INTO university_abbreviations (abbreviation, full_name) VALUES (?,?)",
+                                  (row["abbreviation"], row["full_name"])
+                              )
+                          except Exception:
+                              pass
+
+                      # --- qs_ranking ---
+                      for row in src.execute("SELECT university FROM qs_ranking"):
+                          try:
+                              base_conn.execute(
+                                  "INSERT OR IGNORE INTO qs_ranking (university) VALUES (?)",
+                                  (row["university"],)
+                              )
+                          except Exception:
+                              pass
+
+                      # --- nirf_ranking ---
+                      for row in src.execute("SELECT university FROM nirf_ranking"):
+                          try:
+                              base_conn.execute(
+                                  "INSERT OR IGNORE INTO nirf_ranking (university) VALUES (?)",
+                                  (row["university"],)
+                              )
+                          except Exception:
+                              pass
+
+                      src.close()
+                      print(f"  + Merged {os.path.basename(db_path)}")
+                  except Exception as e:
+                      print(f"  [!] Error merging {db_path}: {e}")
+
+              base_conn.commit()
+              base_conn.close()
+              print("[OK] Merged SQLite databases -> merged_run.db")
+          DBEOF
+
+      - name: Upload Merged Results
         uses: actions/upload-artifact@v4
         with:
-          name: verifier-checkpoint
-          path: autonomous_verified_${{ inputs.pdf }}.json
-          retention-days: 30
-          if-no-files-found: warn
-
-      - name: Upload screenshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: screenshots
-          path: verification_screenshots/**
-          retention-days: 14
-          if-no-files-found: warn
-
-      - name: Send email notification
-        if: always()
-        continue-on-error: true
-        env:
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASS: ${{ secrets.SMTP_PASS }}
-          SMTP_FROM: ${{ secrets.SMTP_FROM }}
-          SMTP_TO: ${{ secrets.SMTP_TO }}
-        run: python3 .github/scripts/send_email.py
+          name: merged-run-results
+          path: |
+            merged_run.json
+            merged_run.pdf
+            merged_run.db
