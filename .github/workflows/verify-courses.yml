@@ -1,4 +1,4 @@
-name: Cloud Course Verifier
+name: Cloud Course Verifier Pro
 
 on:
   workflow_dispatch:
