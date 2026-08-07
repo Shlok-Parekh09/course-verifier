@@ -29,7 +29,6 @@ class LLMManagerAPI:
     def __init__(self):
         self.github_keys = self._parse_keys("GITHUB")
         self.nvidia_keys = self._parse_keys("NVIDIA")
-        self.hf_urls = [os.environ.get(f"HF_OLLAMA_URL_{i}") for i in range(1, 51) if os.environ.get(f"HF_OLLAMA_URL_{i}")]
         self._hf_clients = {}
         self.groq_keys = self._parse_keys("GROQ")
         self.mistral_keys = self._parse_keys("MISTRAL")
@@ -64,11 +63,11 @@ class LLMManagerAPI:
         # ── Diagnostic logging ──
         print(f"[LLM Manager] Keys loaded: Mistral={len(self.mistral_keys)}, NVIDIA={len(self.nvidia_keys)}, "
               f"Gemini={len(self.gemini_keys)}, GitHub={len(self.github_keys)}, "
-              f"Groq={len(self.groq_keys)}, HF_Ollama={len(self.hf_urls)}, "
+              f"Groq={len(self.groq_keys)}, "
               f"Cloud_Ollama={'yes' if self.ollama_api_url else 'no'} (mode={self.backend_mode})")
         if "ollama" in self.backend_mode and not self.ollama_api_url:
             print("[LLM Manager] ⚠ CRITICAL WARNING: You selected Ollama mode but did NOT provide an OLLAMA_API_URL or OLLAMA_API_KEY in your .env! Ollama calls will silently fail.")
-        elif not any([self.mistral_keys, self.nvidia_keys, self.gemini_keys, self.github_keys, self.groq_keys, self.ollama_api_url, self.hf_urls]):
+        elif not any([self.mistral_keys, self.nvidia_keys, self.gemini_keys, self.github_keys, self.groq_keys, self.ollama_api_url]):
             print("[LLM Manager] ⚠ WARNING: No text-generation API keys or Ollama URL found! All LLM calls will return None.")
 
     def _rate_limit(self, key_identifier: str, min_interval: float = 4.29):
@@ -134,18 +133,15 @@ class LLMManagerAPI:
             # Build the ordered provider list for this specific call.
             # Each provider entry is (name, keys_list, rate_interval, call_fn)
             provider_pool = []
-            if self.backend_mode == "ollama":
+            if "ollama" in self.backend_mode:
                 # Cloud Ollama (ollama.com with API key) — PRIMARY when OLLAMA_API_URL is set
                 if self.ollama_api_url:
                     # Wrap URL in a list so it integrates with the round-robin pool structure.
                     # The _call_ollama method will be called with the URL as the "key".
                     provider_pool.append(("Cloud Ollama", [self.ollama_api_url], 1.0, "cloud_ollama"))
-                # HF Ollama Spaces — additional capacity
-                if self.hf_urls:
-                    provider_pool.append(("Local Ollama (HF)", self.hf_urls, 1.0, "local_ollama"))
 
-            # STRICT ISOLATION: Do not add API keys if the user specifically requested Local Ollama
-            if self.backend_mode != "ollama" and provider != "ollama":
+            # STRICT ISOLATION: Do not add API keys if the user specifically requested Local/Cloud Ollama
+            if "ollama" not in self.backend_mode and provider != "ollama":
                 if self.mistral_keys:
                     # Append Mistral FIRST to heavily prioritize it as requested
                     provider_pool.insert(0, ("Mistral", self.mistral_keys, 1.0, "mistral"))
@@ -174,7 +170,8 @@ class LLMManagerAPI:
                 p_name, p_keys, p_rate, p_tag = provider_pool[(start + offset) % len(provider_pool)]
                 for idx in self._get_key_sequence(worker_id, len(p_keys)):
                     key_id = f"{p_tag}_{idx}"
-                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying {p_name} Key {idx+1}...")
+                    key_label = "Server" if "ollama" in p_tag else "Key"
+                    print(f"      -> [LLM Manager] Worker {worker_id+1} trying {p_name} {key_label} {idx+1}...")
                     self._rate_limit(key_id, min_interval=p_rate)
                     if p_tag == "mistral":
                         res = self._call_mistral(p_keys[idx], prompt, system, format, 0.0)
@@ -268,19 +265,12 @@ class LLMManagerAPI:
         max_m = len(self.mistral_keys)
         max_keys = max(max_g, max_m)
         
-        if self.backend_mode == "ollama":
+        if "ollama" in self.backend_mode:
             if self.ollama_api_url:
                 print(f"      -> [LLM Manager] Trying Ollama Vision ({self.ollama_vision_model})...")
                 res = self._call_ollama_vision(prompt, base64_image, system)
                 if res: return res
-                print("      -> [LLM Manager] Ollama Vision failed. Failing over to HF Spaces...")
-                
-            if self.hf_urls:
-                print(f"      -> [LLM Manager] Trying Local Ollama Vision (Qwen) via Dedicated HF Space...")
-                for v_url in reversed(self.hf_urls):
-                    res = self._call_local_ollama(v_url, prompt, system, "text", 0.0, is_vision=True, base64_image=base64_image)
-                    if res: return res
-                print("      -> [LLM Manager] Local Ollama Vision failed.")
+                print("      -> [LLM Manager] Ollama Vision failed.")
                 
             print("      -> [LLM Manager] Local Ollama Vision exhausted (APIs disabled). Returning None.")
             return None
@@ -318,48 +308,7 @@ class LLMManagerAPI:
         return None
         
 
-    def _call_local_ollama(self, api_url, prompt, system, format, temperature, is_vision=False, base64_image=None):
-        """Calls the Hugging Face ZeroGPU Gradio endpoint via gradio_client."""
-        model = "qwen3.5:9b" if is_vision else "granite4.1:8b"
-        
-        messages = [{"role": "system", "content": system}, {"role": "user", "content": prompt}] if system else [{"role": "user", "content": prompt}]
-        
-        try:
-            from gradio_client import Client
-            import json
-            
-            clean_url = api_url.replace('/api/predict', '').rstrip('/')
-            
-            with self.lock:
-                if clean_url not in self._hf_clients:
-                    print(f"      -> [LLM Manager] Initializing Gradio Client for {clean_url}...")
-                    self._hf_clients[clean_url] = Client(clean_url)
-                client = self._hf_clients[clean_url]
-            
-            try:
-                result = client.predict(
-                    model,
-                    json.dumps(messages),
-                    base64_image if base64_image else "",
-                    api_name="/chat"
-                )
-            except Exception as inner_e:
-                if "Cannot find a function" in str(inner_e):
-                    result = client.predict(
-                        model,
-                        json.dumps(messages),
-                        base64_image if base64_image else "",
-                        api_name="/predict"
-                    )
-                else:
-                    raise inner_e
-            return str(result).strip()
-        except ImportError:
-            print("      -> [LLM Manager] CRITICAL ERROR: gradio_client is not installed! Run `uv pip install gradio_client`")
-            return None
-        except Exception as e:
-            print(f"      -> [LLM Manager] Local Ollama Exception: {e}")
-            return None
+
 
     def _call_ollama(self, prompt: str, system: Optional[str], format: str, temperature: float, *, url: Optional[str] = None, model: Optional[str] = None, timeout: int = 120) -> Optional[str]:
         url = (url or self.ollama_api_url).rstrip('/')
