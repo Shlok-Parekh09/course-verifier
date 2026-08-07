@@ -24,13 +24,12 @@ on:
         required: false
         default: "30"
       llm_backend:
-        description: "LLM Backend to use (api, local_ollama, or cloud_ollama)"
+        description: "LLM Backend to use (api or cloud_ollama)"
         required: true
         default: "api"
         type: choice
         options:
           - api
-          - local_ollama
           - cloud_ollama
       runner_type:
         description: "Where to run this workflow"
@@ -206,7 +205,6 @@ jobs:
           GITHUB_API_KEYS: ${{ github.event.inputs.llm_backend == 'api' && secrets.GITHUB_API_KEYS || '' }}
           NVIDIA_API_KEYS: ${{ github.event.inputs.llm_backend == 'api' && secrets.NVIDIA_API_KEYS || '' }}
           PUTER_API_KEYS: ${{ github.event.inputs.llm_backend == 'api' && secrets.PUTER_API_KEYS || '' }}
-          HF_OLLAMA_URLS: ${{ github.event.inputs.llm_backend == 'local_ollama' && secrets.HF_OLLAMA_URLS || '' }}
           OLLAMA_API_KEY: ${{ github.event.inputs.llm_backend == 'cloud_ollama' && secrets.OLLAMA_API_KEY || '' }}
           OLLAMA_API_URL: ${{ github.event.inputs.llm_backend == 'cloud_ollama' && secrets.OLLAMA_API_URL || '' }}
           OLLAMA_MODEL: ${{ github.event.inputs.llm_backend == 'cloud_ollama' && secrets.OLLAMA_MODEL || '' }}

@@ -66,7 +66,9 @@ class LLMManagerAPI:
               f"Gemini={len(self.gemini_keys)}, GitHub={len(self.github_keys)}, "
               f"Groq={len(self.groq_keys)}, HF_Ollama={len(self.hf_urls)}, "
               f"Cloud_Ollama={'yes' if self.ollama_api_url else 'no'} (mode={self.backend_mode})")
-        if not any([self.mistral_keys, self.nvidia_keys, self.gemini_keys, self.github_keys, self.groq_keys, self.ollama_api_url, self.hf_urls]):
+        if "ollama" in self.backend_mode and not self.ollama_api_url:
+            print("[LLM Manager] ⚠ CRITICAL WARNING: You selected Ollama mode but did NOT provide an OLLAMA_API_URL or OLLAMA_API_KEY in your .env! Ollama calls will silently fail.")
+        elif not any([self.mistral_keys, self.nvidia_keys, self.gemini_keys, self.github_keys, self.groq_keys, self.ollama_api_url, self.hf_urls]):
             print("[LLM Manager] ⚠ WARNING: No text-generation API keys or Ollama URL found! All LLM calls will return None.")
 
     def _rate_limit(self, key_identifier: str, min_interval: float = 4.29):
@@ -209,9 +211,9 @@ class LLMManagerAPI:
             if result: return result
             print(f"      -> [LLM Manager] Ollama failed. Failing over...")
             
-        # STRICT ISOLATION: Do not proceed to APIs if Local Ollama was requested
-        if self.backend_mode == "ollama" or provider == "ollama":
-            print("      -> [LLM Manager] Local Ollama exhausted (APIs disabled). Returning None.")
+        # STRICT ISOLATION: Do not proceed to APIs if Local/Cloud Ollama was requested
+        if "ollama" in self.backend_mode or provider == "ollama":
+            print("      -> [LLM Manager] Ollama exhausted or URL missing (APIs disabled). Returning None.")
             return None
 
         # Provider 0: MISTRAL

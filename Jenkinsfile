@@ -6,7 +6,7 @@ pipeline {
         string(name: 'END_PAGE', defaultValue: '', description: 'End Page Number (Leave blank to run to the end)')
         string(name: 'CHUNK_SIZE', defaultValue: '30', description: 'Pages per chunk')
         string(name: 'PDF_URL', defaultValue: 'https://filebin.net/example/link_compile.pdf', description: 'Direct download URL for the PDF (e.g. from Filebin or Transfer.sh). Google Drive links are NOT supported due to their automated virus scan blockers.')
-        choice(name: 'LLM_BACKEND', choices: ['api', 'local_ollama', 'cloud_ollama'], description: 'LLM Backend to use')
+        choice(name: 'LLM_BACKEND', choices: ['api', 'cloud_ollama'], description: 'LLM Backend to use')
         string(name: 'MAX_CONCURRENT_CHUNKS', defaultValue: '1', description: 'Max chunks to run at the exact same time (lower this if CPU maxes out)')
         text(name: 'ENV_FILE', defaultValue: '', description: 'Paste your complete .env file contents here')
     }
