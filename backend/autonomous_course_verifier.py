@@ -3720,25 +3720,31 @@ CRITICAL RULES:
             }
             import urllib3
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-            res = requests.get(url, headers=headers, timeout=(20, 20), verify=False, allow_redirects=True, cookies=cookies)
+            res = requests.get(url, headers=headers, timeout=(20, 20), verify=False, allow_redirects=True, cookies=cookies, stream=True)
             
             # Handle Google Drive confirmation redirect ("too large to scan for viruses")
             if 'text/html' in res.headers.get('Content-Type', '') and 'drive.google.com' in url:
-                confirm_match = re.search(r'confirm=([^&"]+)', res.text)
-                uuid_match = re.search(r'uuid=([^&"]+)', res.text)
+                # Read a small chunk to check for confirm redirect
+                head_text = ""
+                for chunk in res.iter_content(chunk_size=8192):
+                    head_text += chunk.decode('utf-8', errors='ignore')
+                    if len(head_text) > 100000: break
+                
+                confirm_match = re.search(r'confirm=([^&"]+)', head_text)
+                uuid_match = re.search(r'uuid=([^&"]+)', head_text)
                 if confirm_match or uuid_match:
                     new_url = url
                     if confirm_match:
                         new_url = re.sub(r'confirm=[^&]+', f'confirm={confirm_match.group(1)}', url)
                     if uuid_match:
                         new_url += f"&uuid={uuid_match.group(1)}"
-                    res = requests.get(new_url, headers=headers, timeout=(20, 20), verify=False, allow_redirects=True, cookies=cookies)
+                    res = requests.get(new_url, headers=headers, timeout=(20, 20), verify=False, allow_redirects=True, cookies=cookies, stream=True)
             
             if res.status_code in [403, 405, 406, 429, 500, 503]:
                 import cloudscraper
                 print(f"    -> [Fee Browser] HTTP Error {res.status_code}. Attempting to bypass advanced protection with cloudscraper...")
                 scraper = cloudscraper.create_scraper()
-                res = scraper.get(url, headers=headers, timeout=20, allow_redirects=True)
+                res = scraper.get(url, headers=headers, timeout=20, allow_redirects=True, stream=True)
                 if res.status_code in [403, 405, 406, 429, 500, 503]:
                     raise Exception(f"HTTP Error {res.status_code} - Website blocked direct request even with cloudscraper")
             
@@ -3748,26 +3754,67 @@ CRITICAL RULES:
             content_type = res.headers.get('Content-Type', '').lower()
             if 'application/pdf' in content_type or url.lower().split('?')[0].endswith('.pdf'):
                 is_pdf = True
-            elif res.content and res.content.startswith(b'%PDF'):
-                is_pdf = True
             elif 'image/' in content_type or any(url.lower().split('?')[0].endswith(ext) for ext in ['.png', '.jpg', '.jpeg']):
                 is_image = True
             elif 'spreadsheet' in content_type or 'excel' in content_type or any(url.lower().split('?')[0].endswith(ext) for ext in ['.xls', '.xlsx', '.csv']):
                 is_excel = True
 
             if is_pdf:
+                # True Disk Streaming: Writes directly to disk instead of RAM, allowing unlimited file sizes safely!
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_pdf:
-                    tmp_pdf.write(res.content)
+                    for chunk in res.iter_content(chunk_size=1024*1024):
+                        if chunk:
+                            tmp_pdf.write(chunk)
                     tmp_pdf_path = tmp_pdf.name
                     
                 pdf_text = ""
                 try:
-                    import pdfplumber
-                    with pdfplumber.open(tmp_pdf_path) as pdf_file:
-                        for p in pdf_file.pages:
-                            pdf_text += (p.extract_text() or "") + "\n"
+                    import fitz
+                    import time
+                    start_time = time.time()
+                    
+                    # Keywords: Comprehensive Security syllabus terms + Fee terms
+                    target_keywords = [
+                        'penetration testing', 'cyber forensics', 'forensic analysis', 
+                        'network security', 'information security', 'cybersecurity', 'infosec',
+                        'ethical hacking', 'cryptography', 'malware', 'incident response',
+                        'cyber law', 'mobile security', 'data security', 'offensive security', 
+                        'defensive security', 'os security', 'operating system security', 
+                        'database security', 'cloud security', 'application security', 
+                        'vulnerability assessment', 'threat intelligence', 'reverse engineering', 
+                        'digital forensics', 'soc', 'siem', 'identity and access management',
+                        'cyber technologies', 'cyber warfare', 'web security', 'wireless security',
+                        'iot security', 'physical security', 'endpoint security', 'network defense',
+                        'cyber operations', 'cyber threats', 'zero trust', 'security architecture',
+                        'web application security', 'malware analysis', 'red team', 'blue team', 
+                        'purple team', 'cyber threat hunting', 'cyber risk', 'cyber espionage',
+                        'cyber intelligence', 'hardware security', 'firmware security', 'api security', 
+                        'secure coding', 'software security', 'incident handling', 'cryptanalysis',
+                        'cloud computing and security', 'system security', 'it security', 
+                        'information technology security', 'cyber defense', 'scada security',
+                        'industrial control system security', 'secure software',
+                        'fee', 'tuition', 'cost', 'charge', 'amount', 'price'
+                    ]
+                    
+                    doc = fitz.open(tmp_pdf_path)
+                    for p_num in range(len(doc)):
+                        if time.time() - start_time > 15: # Safety net
+                            print(f"      -> Warning: PyMuPDF reached 15-second timeout. Truncating parsing.")
+                            break
+                        page = doc[p_num]
+                        text = page.get_text("text") or ""
+                        
+                        # If it's a massive catalog (>20 pages), STRICTLY filter for target pages to prevent context bloat
+                        if len(doc) > 20:
+                            text_lower = text.lower()
+                            if any(term in text_lower for term in target_keywords):
+                                pdf_text += text + "\n"
+                        else:
+                            # For short documents, keep everything so we don't lose context
+                            pdf_text += text + "\n"
+                    doc.close()
                 except Exception as e:
-                    print(f"      -> Warning: pdfplumber extraction failed: {e}")
+                    print(f"      -> Warning: PyMuPDF text extraction failed: {e}")
                 
                 pass # removed local import re
                 force_ocr = 'kannur' in url.lower()
