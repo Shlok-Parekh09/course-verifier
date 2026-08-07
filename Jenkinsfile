@@ -87,6 +87,8 @@ pipeline {
                                         export START_PAGE="${start}"
                                         export END_PAGE="${end}"
                                         export CI="true"
+                                        export VERIFIER_NUM_BROWSERS="1"
+                                        export OLLAMA_MAX_CONCURRENCY="1"
                                         
                                         # Copy environment file to backend if it exists on the host
                                         if [[ -n "\$ENV_FILE" ]]; then
