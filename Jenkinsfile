@@ -193,7 +193,7 @@ PYEOF
 
     post {
         always {
-            archiveArtifacts artifacts: 'merged_run.json, merged_run.db, merged_run.pdf', allowEmptyArchive: true
+            archiveArtifacts artifacts: 'merged_run.json, merged_run.db, merged_run.pdf, backend/verification-results-*.pdf, backend/autonomous_verified_*.json', allowEmptyArchive: true
             cleanWs()
         }
     }
