@@ -3801,27 +3801,45 @@ CRITICAL RULES:
                         'fee', 'tuition', 'cost', 'charge', 'amount', 'price'
                     ]
                     
+                    target_pages = []
                     doc = fitz.open(tmp_pdf_path)
                     for p_num in range(len(doc)):
-                        if time.time() - start_time > 15: # Safety net
-                            print(f"      -> Warning: PyMuPDF reached 15-second timeout. Truncating parsing.")
+                        if time.time() - start_time > 15: # PyMuPDF scout timeout
+                            print(f"      -> Warning: PyMuPDF scout reached 15-second timeout.")
                             break
                         page = doc[p_num]
                         text = page.get_text("text") or ""
+                        text_lower = text.lower()
                         
-                        # If it's a massive catalog (>20 pages), STRICTLY filter for target pages to prevent context bloat
-                        if len(doc) > 20:
-                            text_lower = text.lower()
-                            if any(term in text_lower for term in target_keywords):
-                                pdf_text += text + "\n"
+                        if len(doc) <= 20:
+                            target_pages.append(p_num)
                         else:
-                            # For short documents, keep everything so we don't lose context
-                            pdf_text += text + "\n"
-                            
-                        # Hard cap at 60,000 characters (~15k tokens) to prevent LLM context collapse / repetition loop
+                            if any(term in text_lower for term in target_keywords):
+                                target_pages.append(p_num)
+                    doc.close()
+                    
+                    # Strictly cap to 10 pages to prevent memory leaks and crashes with pdfplumber
+                    target_pages = target_pages[:10]
+                    
+                    if target_pages:
+                        print(f"      -> [Scout] PyMuPDF found {len(target_pages)} target pages. Firing pdfplumber for perfect layout extraction...")
+                        import pdfplumber
+                        with pdfplumber.open(tmp_pdf_path) as pdf:
+                            for p_num in target_pages:
+                                page = pdf.pages[p_num]
+                                text = page.extract_text(layout=True) or page.extract_text() or ""
+                                
+                                # SAFE SANITIZER: Strips ONLY hidden control characters (null bytes, etc) that break LLMs.
+                                # Leaves ALL normal text, numbers, punctuation, and CURRENCY SYMBOLS perfectly intact.
+                                import re
+                                clean_text = re.sub(r'[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\ufffd]', ' ', text)
+                                pdf_text += clean_text + "\n"
+                                
+                        # Hard cap at 60,000 characters (~15k tokens) to prevent LLM context collapse
                         if len(pdf_text) > 60000:
                             print(f"      -> Warning: PDF text extraction hit 60,000 char cap. Truncating to prevent LLM collapse.")
-                            break
+                            pdf_text = pdf_text[:60000]
+
 
                     doc.close()
                 except Exception as e:
