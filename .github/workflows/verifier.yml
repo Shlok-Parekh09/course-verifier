@@ -76,7 +76,7 @@ jobs:
       - name: Install Python Dependencies
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt python-dotenv gdown
+          pip install -r requirements.txt python-dotenv
 
       - name: Cache Input PDF
         id: cache-pdf
@@ -85,10 +85,10 @@ jobs:
           path: link_compile.pdf
           key: link-compile-pdf-1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd
 
-      - name: Download PDF from Google Drive
+      - name: Download PDF
         if: steps.cache-pdf.outputs.cache-hit != 'true'
         run: |
-          gdown "1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd" -O backend/link_compile.pdf
+          curl -sL "https://filebin.net/example/link_compile.pdf" -o backend/link_compile.pdf
 
       - name: Run Verification (Virtual Display)
         env:

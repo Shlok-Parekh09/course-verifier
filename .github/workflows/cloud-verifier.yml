@@ -11,12 +11,12 @@ on:
         description: "End Page Number (Leave blank to run to the end)"
         required: false
         default: ""
-      gdrive_id:
-        description: "Google Drive File ID for the PDF (optional)"
+      pdf_url:
+        description: "Direct download URL for the Input PDF (e.g. Filebin)"
         required: false
-        default: "1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd"
-      gdrive_id_ndu:
-        description: "Google Drive File ID for NDU Screenshots PDF (optional)"
+        default: "https://filebin.net/example/link_compile.pdf"
+      ndu_pdf_url:
+        description: "Direct download URL for NDU Screenshots PDF (optional)"
         required: false
         default: ""
       chunk_size:
@@ -53,15 +53,15 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Install PyMuPDF & gdown
+      - name: Install PyMuPDF
+        shell: bash
         run: |
-          uv cache clean || true
           uv venv --clear .venv
-          uv pip install PyMuPDF gdown
+          uv pip install PyMuPDF
 
       - name: Download Main PDF
-        run: |
-          uv run gdown "${{ github.event.inputs.gdrive_id || '1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd' }}" -O link_compile.pdf
+        shell: bash
+        run: curl -sL "${{ github.event.inputs.pdf_url || 'https://filebin.net/example/link_compile.pdf' }}" -o link_compile.pdf
 
       - name: Generate Matrix
         id: set-matrix
@@ -170,23 +170,19 @@ jobs:
           echo "Removing old .venv completely to clear memory footprint..."
           rm -rf .venv
           uv cache clean || true
-          uv venv .venv
-          uv pip install -r requirements.txt python-dotenv gdown
+          uv venv --clear .venv
+          uv pip install -r requirements.txt python-dotenv
 
       - name: Download Main PDF
         shell: bash
-        run: |
-          uv run gdown "${{ github.event.inputs.gdrive_id || '1UXA5HiTCRccVfbTvIz4aUEJqGb3M9rVd' }}" -O backend/link_compile.pdf
+        run: curl -sL "${{ github.event.inputs.pdf_url || 'https://filebin.net/example/link_compile.pdf' }}" -o backend/link_compile.pdf
 
-      - name: Download NDU Screenshots PDF
+      - name: Download NDU PDF
         shell: bash
+        if: ${{ github.event.inputs.ndu_pdf_url != '' }}
         run: |
-          if [ -n "${{ github.event.inputs.gdrive_id_ndu }}" ]; then
-            echo "Downloading NDU PDF..."
-            uv run gdown "${{ github.event.inputs.gdrive_id_ndu }}" -O backend/ndu.pdf
-          else
-            echo "No NDU Google Drive ID provided. Skipping NDU PDF download."
-          fi
+          echo "Downloading NDU PDF..."
+          curl -sL "${{ github.event.inputs.ndu_pdf_url }}" -o backend/ndu.pdf
 
       - name: Run Verification (Virtual Display)
         shell: bash
