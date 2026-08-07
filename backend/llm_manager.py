@@ -314,6 +314,9 @@ class LLMManagerAPI:
         url = (url or self.ollama_api_url).rstrip('/')
         if not url.endswith('/api/generate'): url += '/api/generate'
         if not model: model = self.ollama_model
+        if format == "json":
+            prompt += "\n\nYou MUST return ONLY a valid JSON object. Do not include any other text, markdown formatting, or explanations."
+            
         payload = {
             "model": model,
             "prompt": prompt,
@@ -331,11 +334,14 @@ class LLMManagerAPI:
             headers = {"Content-Type": "application/json"}
             if self.ollama_api_key:
                 headers["Authorization"] = f"Bearer {self.ollama_api_key}"
-            resp = requests.post(url, json=payload, headers=headers, timeout=30)
+            resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
             if resp.status_code == 200:
                 return resp.json().get("response")
+            else:
+                print(f"      -> [LLM Manager] Ollama Error {resp.status_code}: {resp.text[:200]}")
             return None
-        except Exception:
+        except Exception as e:
+            print(f"      -> [LLM Manager] Ollama Exception: {e}")
             return None
 
     def _call_github(self, api_key: Optional[str], prompt: str, system: Optional[str], format: str, temperature: float) -> Optional[str]:
