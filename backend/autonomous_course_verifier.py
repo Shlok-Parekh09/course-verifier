@@ -3813,13 +3813,10 @@ CRITICAL RULES:
                         if len(doc) > 20:
                             text_lower = text.lower()
                             if any(term in text_lower for term in target_keywords):
-                                # Sanitize extracted text to prevent LLM garbage generation (e.g. 'HHHH')
-                                clean_text = text.replace('\ufffd', '').replace('\x00', '')
-                                pdf_text += clean_text + "\n"
+                                pdf_text += text + "\n"
                         else:
                             # For short documents, keep everything so we don't lose context
-                            clean_text = text.replace('\ufffd', '').replace('\x00', '')
-                            pdf_text += clean_text + "\n"
+                            pdf_text += text + "\n"
                             
                         # Hard cap at 60,000 characters (~15k tokens) to prevent LLM context collapse / repetition loop
                         if len(pdf_text) > 60000:
@@ -4522,18 +4519,18 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
                 # Also strip bullet points if the LLM hallucinated them before braces
                 clean_str = re.sub(r'^[\s\*]*\{', '{', clean_str)
 
-                # Try to find a strict JSON block first
-                match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', clean_str, re.DOTALL)
-                if match:
-                    json_str = match.group(1)
-                else:
-                    # Look for a block containing our expected keys
-                    match = re.search(r'\{[^{}]*\"cost_match\"[^{}]*\}', clean_str, re.DOTALL)
-                    if match:
-                        json_str = match.group(0)
-                    else:
-                        match = re.search(r'\{.*\}', clean_str, re.DOTALL)
-                        json_str = match.group(0) if match else clean_str
+                # Use a strict brace-balancing parser to extract exactly the outermost JSON object.
+                # This guarantees that trailing garbage (e.g., '}}}' or 'HHHH') is completely ignored.
+                json_str = ""
+                start_idx = clean_str.find('{')
+                if start_idx != -1:
+                    brace_count = 0
+                    for i in range(start_idx, len(clean_str)):
+                        if clean_str[i] == '{': brace_count += 1
+                        elif clean_str[i] == '}': brace_count -= 1
+                        if brace_count == 0:
+                            json_str = clean_str[start_idx:i+1]
+                            break
 
                 if not json_str.strip():
                     raise ValueError("No JSON content found")
