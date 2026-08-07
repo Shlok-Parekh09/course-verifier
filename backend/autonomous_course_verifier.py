@@ -7525,17 +7525,18 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 js_click_enroll = """
                                     let callback = arguments[arguments.length - 1];
                                     if (!document || !document.querySelectorAll) return callback(false);
-                                    let btns = Array.from(document.querySelectorAll('button, a, [role="button"]') || []);
+                                    let btns = Array.from(document.querySelectorAll('button[data-track-component="enroll_button"], button[data-e2e="enroll-button"], button, a, [role="button"]') || []);
                                     async function run() {
                                         for (let b of btns) {
-                                            if (b.textContent) {
-                                                let t = b.textContent.toLowerCase();
-                                                if (t.includes('enroll for free') || t.includes('enroll now') || (t.includes('enroll') && b.tagName === 'BUTTON')) {
-                                                    if (window.moveBeautifulCursorToElement) window.moveBeautifulCursorToElement(b);
-                                                    await new Promise(r => setTimeout(r, 400));
-                                                    b.click();
-                                                    return callback(true);
-                                                }
+                                            let t = (b.innerText || b.textContent || '').toLowerCase().trim();
+                                            let e2e = b.getAttribute('data-e2e');
+                                            let track = b.getAttribute('data-track-component');
+                                            if (e2e === 'enroll-button' || track === 'enroll_button' || t.includes('enroll for free') || t === 'enroll now' || (t.includes('enroll') && b.tagName === 'BUTTON' && !t.includes('already'))) {
+                                                if (window.moveBeautifulCursorToElement) window.moveBeautifulCursorToElement(b);
+                                                else b.scrollIntoView({behavior: 'instant', block: 'center'});
+                                                await new Promise(r => setTimeout(r, 600));
+                                                b.click();
+                                                return callback(true);
                                             }
                                         }
                                         callback(false);
@@ -7711,13 +7712,19 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             js_coursera_enroll = """
                                 let callback = arguments[arguments.length - 1];
                                 async function run_coursera() {
-                                    let buttons = document.querySelectorAll('button, a');
+                                    let buttons = document.querySelectorAll('button[data-track-component="enroll_button"], button[data-e2e="enroll-button"], button, a');
                                     let limit = Math.min(buttons.length, 1000);
                                     for (let i = 0; i < limit; i++) {
                                         let b = buttons[i];
-                                        let txt = (b.textContent || '').toLowerCase().trim();
-                                        if (txt.includes('enroll for free') || txt === 'enroll' || txt.includes('enroll now')) {
-                                            try { b.click(); await new Promise(r => setTimeout(r, 2000)); } catch(e) {}
+                                        let txt = (b.innerText || b.textContent || '').toLowerCase().trim();
+                                        let e2e = b.getAttribute('data-e2e');
+                                        let track = b.getAttribute('data-track-component');
+                                        if (e2e === 'enroll-button' || track === 'enroll_button' || txt.includes('enroll for free') || txt === 'enroll' || txt.includes('enroll now')) {
+                                            try { 
+                                                b.scrollIntoView({behavior: 'instant', block: 'center'});
+                                                b.click(); 
+                                                await new Promise(r => setTimeout(r, 2000)); 
+                                            } catch(e) {}
                                             break;
                                         }
                                     }
