@@ -3732,7 +3732,7 @@ CRITICAL RULES:
             print(f"      -> CombinedWork.xlsx extraction failed: {e}")
             return links
 
-    def _fetch_url_robust(self, url, cookies=None):
+    def _fetch_url_robust(self, url, cookies=None, uni_name=""):
         pass # removed local import requests, tempfile, re
         
         # Intercept Google Drive PDF URLs and convert to direct download links
@@ -3881,7 +3881,7 @@ CRITICAL RULES:
                     print(f"      -> Warning: PyMuPDF text extraction failed: {e}")
                 
                 pass # removed local import re
-                force_ocr = 'kannur' in url.lower()
+                force_ocr = 'kannur' in url.lower() or 'kannur' in uni_name.lower()
                 if force_ocr or len(pdf_text.strip()) < 250 or len(re.findall(r'\d+', pdf_text)) < 5:
                     try:
                         import fitz, cv2, numpy as np
@@ -4887,7 +4887,8 @@ reasoning, found_cost, cost_description, cost_match, duration_description, durat
                     print(f"    -> [Sanity] country_match corrected to TRUE ('{pdf_country}' found in description).")
                     country_match = True
                     break
-            if not country_match and len(pdf_country) > 3 and pdf_country in det_lower:
+            forbidden_countries = ['english', 'french', 'german', 'spanish', 'online', 'hybrid', 'blended', 'distance', 'language', 'mode', 'certificate']
+            if not country_match and len(pdf_country) > 3 and pdf_country.lower() not in forbidden_countries and pdf_country in det_lower:
                 print(f"    -> [Sanity] country_match corrected to TRUE (substring '{pdf_country}' found in description).")
                 country_match = True
         
@@ -8340,7 +8341,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                                 for pdf_url in pdf_links:
                                     print(f"      -> [Auto-Syllabus Hunter] Found linked/embedded PDF: {pdf_url}")
                                     try:
-                                        pdf_text_extracted = self._fetch_url_robust(pdf_url)
+                                        pdf_text_extracted = self._fetch_url_robust(pdf_url, uni_name=course.get('uni', ''))
                                         if pdf_text_extracted:
                                             page_text += "\n" + pdf_text_extracted
                                     except Exception as e:
@@ -9181,7 +9182,7 @@ CRITICAL: YOU MUST RETURN ONLY THE RAW JSON OBJECT. DO NOT INCLUDE ANY CONVERSAT
                             fee_links = self._search_excel_for_links(course.get('uni', ''), course.get('name', ''))
                             if fee_links.get('fees'):
                                 print(f"    -> [!] Browser died: fetching fee document from fees.xlsx via HTTP: {fee_links['fees']}")
-                                fee_doc_text = self._fetch_url_robust(fee_links['fees'])
+                                fee_doc_text = self._fetch_url_robust(fee_links['fees'], uni_name=course.get('uni', ''))
                                 if fee_doc_text:
                                     if 'page_text' not in locals() or not isinstance(page_text, str):
                                         page_text = ""
