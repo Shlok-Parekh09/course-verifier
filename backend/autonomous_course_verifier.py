@@ -3813,10 +3813,19 @@ CRITICAL RULES:
                         if len(doc) > 20:
                             text_lower = text.lower()
                             if any(term in text_lower for term in target_keywords):
-                                pdf_text += text + "\n"
+                                # Sanitize extracted text to prevent LLM garbage generation (e.g. 'HHHH')
+                                clean_text = text.replace('\ufffd', '').replace('\x00', '')
+                                pdf_text += clean_text + "\n"
                         else:
                             # For short documents, keep everything so we don't lose context
-                            pdf_text += text + "\n"
+                            clean_text = text.replace('\ufffd', '').replace('\x00', '')
+                            pdf_text += clean_text + "\n"
+                            
+                        # Hard cap at 60,000 characters (~15k tokens) to prevent LLM context collapse / repetition loop
+                        if len(pdf_text) > 60000:
+                            print(f"      -> Warning: PDF text extraction hit 60,000 char cap. Truncating to prevent LLM collapse.")
+                            break
+
                     doc.close()
                 except Exception as e:
                     print(f"      -> Warning: PyMuPDF text extraction failed: {e}")
