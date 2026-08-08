@@ -574,7 +574,7 @@ function initSorting() {
 function populateFilters() {
     const countries = [...new Set(allCourses.map(c => c.country).filter(Boolean))].sort();
     const domains = DOMAIN_RANGES.map(r => r.label);
-    const courseTypes = [...new Set(allCourses.map(c => c.domain).filter(Boolean))].sort();
+    const courseTypes = [...new Set(allCourses.map(c => c.course_category || 'Uncategorised').filter(Boolean))].sort();
 
     ['vf-country', 'cf-country'].forEach(id => {
         const sel = document.getElementById(id);
@@ -973,7 +973,7 @@ function applyVfFilter(courses) {
         else if (status !== 'all') { if (c.status !== status) return false; }
         if (country !== 'all' && c.country !== country) return false;
         if (domain !== 'all' && getDomainLabel(c.id) !== domain) return false;
-        if (courseType && courseType !== 'all' && (c.domain || 'Uncategorised') !== courseType) return false;
+        if (courseType && courseType !== 'all' && (c.course_category || 'Uncategorised') !== courseType) return false;
         if (search) {
             if (/^\d+$/.test(search)) {
                 if (String(c.id) !== search) return false;
@@ -1029,7 +1029,7 @@ function applyCfFilter(courses) {
         if (status !== 'all' && c.status !== status) return false;
         if (country !== 'all' && c.country !== country) return false;
         if (domain !== 'all' && getDomainLabel(c.id) !== domain) return false;
-        if (courseType && courseType !== 'all' && (c.domain || 'Uncategorised') !== courseType) return false;
+        if (courseType && courseType !== 'all' && (c.course_category || 'Uncategorised') !== courseType) return false;
         if (qs === 'yes' && !c.has_qs_badge) return false;
         if (qs === 'no' && c.has_qs_badge) return false;
         if (search) {
@@ -1065,7 +1065,7 @@ function renderSolvedTab() {
     }
     
     if (sfFilter.courseType && sfFilter.courseType !== 'all') {
-        filtered = filtered.filter(c => c.domain === sfFilter.courseType);
+        filtered = filtered.filter(c => (c.course_category || 'Uncategorised') === sfFilter.courseType);
     }
     
     const total = filtered.length;
