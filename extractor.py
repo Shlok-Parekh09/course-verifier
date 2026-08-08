@@ -26,6 +26,9 @@ import sqlite3
 import re
 import argparse
 from difflib import SequenceMatcher
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def sanitize_filename(name):
     """Remove non-alphanumeric characters, replace spaces with underscores, convert to lowercase."""
@@ -420,7 +423,7 @@ def ask_llm_for_description(course_name: str, uni_name: str, page_text: str) -> 
         f"Course: '{course_name}' at '{uni_name}'.\n\n"
         f"Based on the following extracted page text, write a concise (2-4 sentence) "
         f"professional skills description covering what students will learn, key topics, "
-        f"and practical skills gained. Focus on cybersecurity-relevant content. "
+        f"and practical skills gained. Focus specifically on cybersecurity, digital forensics, privacy, or related IT security concepts covered in the course. "
         f"Do NOT mention verification, MATCH, or MISMATCH.\n\n"
         f"Page text:\n{page_text[:4000]}"
     )

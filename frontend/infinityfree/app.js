@@ -1687,7 +1687,7 @@ function renderFeesTab() {
         tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No results match your search. Try another keyword and keep the momentum going.</td></tr>';
     } else {
         tbody.innerHTML = slice.map((r, i) => `
-            <tr onclick="window.open(\'${escHtml(r.fees_link)}\', \'_blank\')" style="cursor: pointer;" class="fee-row-hover">
+            <tr class="fee-row-hover">
                 <td style="color:var(--text-dim);font-size:0.8rem;">${(feesPage-1)*FEES_PAGE_SIZE + i + 1}</td>
                 <td style="font-size:0.85rem;">${escHtml(r.institute || '—')}</td>
                 <td style="font-size:0.85rem;">${escHtml(r.course || '—')}</td>
@@ -1786,10 +1786,22 @@ function lsRemoveSolve(courseId) {
 function mergeCloudflaresolves(pendingFromServer) {
     const local = lsGetSolves();
     let changed = false;
+    const serverIds = new Set((pendingFromServer || []).map(s => String(s.id)));
+    
+    // 1. Remove local solves that no longer exist on the server
+    for (const localId of Object.keys(local)) {
+        if (!serverIds.has(localId)) {
+            delete local[localId];
+            changed = true;
+        }
+    }
+    
+    // 2. Add or update solves from the server
     for (const solve of (pendingFromServer || [])) {
         const id = String(solve.id);
         const serverTs = solve.ts || 0;
         const localTs = local[id] ? (local[id].ts || 0) : -1;
+        
         // Only update if server has a newer entry than local
         if (localTs < serverTs) {
             const updateObj = solve.update && solve.update.$set ? solve.update.$set : solve.update;
@@ -1797,6 +1809,7 @@ function mergeCloudflaresolves(pendingFromServer) {
             changed = true;
         }
     }
+    
     if (changed) lsSaveSolves(local);
 }
 
