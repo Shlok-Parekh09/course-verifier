@@ -1748,7 +1748,7 @@ function initFeesTab() {
 // Zero ongoing network/KV reads after the initial page load.
 // ─────────────────────────────────────────────────────────────────
 
-const LS_SOLVES_KEY = 'cv_solves';
+const LS_SOLVES_KEY = 'cv_solves_v2';
 
 /** Read the full solves map from localStorage */
 function lsGetSolves() {

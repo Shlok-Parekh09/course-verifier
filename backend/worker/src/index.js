@@ -221,6 +221,28 @@ export default {
       }
     }
 
+    // ─── Route: /api/cleanup_solve_keys ─────────────────────────────────────
+    if (path === '/api/cleanup_solve_keys' && request.method === 'POST') {
+      const auth = request.headers.get('Authorization');
+      if (auth !== `Bearer ${env.KV_PUSH_KEY}`) {
+        return jsonResponse({ status: 'error', message: 'Unauthorized' }, 401, request, env);
+      }
+      try {
+        const list = await env.COURSE_DATA.list({ prefix: 'solve_' });
+        let deleted = 0;
+        if (list && list.keys && list.keys.length > 0) {
+          for (const key of list.keys) {
+            await env.COURSE_DATA.delete(key.name);
+            deleted++;
+          }
+        }
+        return jsonResponse({ status: 'success', message: `Deleted ${deleted} solve_ keys` }, 200, request, env);
+      } catch (e) {
+        return jsonResponse({ status: 'error', message: 'Failed to delete: ' + e.message }, 500, request, env);
+      }
+    }
+
+
     // ─── Route: /api/solve_course ───────────────────────────────────────────
     // Write path: read-modify-write on a single KV key.
     // Now supports batching to drastically reduce KV writes and request counts.
