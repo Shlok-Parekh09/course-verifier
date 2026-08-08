@@ -1738,39 +1738,40 @@ function initFeesTab() {
 
 
 // ─────────────────────────────────────────────────────────────────
-// SOLVE STORAGE: localStorage-first, Cloudflare write-through
+// SOLVE STORAGE: sessionStorage-first, Cloudflare write-through
 //
-// All solves are stored in localStorage under 'cv_solves'.
+// All solves are stored in sessionStorage under 'cv_solves_v2'.
 // Structure: { [courseId]: { update: {...}, ts: <unix ms> } }
 //
-// On page load: Cloudflare solves are merged INTO localStorage once.
-// On solve: written to localStorage immediately + posted to Cloudflare.
-// On unsolve: removed from localStorage immediately + posted to Cloudflare.
+// On page load: Cloudflare solves are merged INTO sessionStorage once.
+// On solve: written to sessionStorage immediately + posted to Cloudflare.
+// On unsolve: removed from sessionStorage immediately + posted to Cloudflare.
 // Zero ongoing network/KV reads after the initial page load.
+// Cache is cleared automatically when the user closes the tab.
 // ─────────────────────────────────────────────────────────────────
 
 const LS_SOLVES_KEY = 'cv_solves_v2';
 
-/** Read the full solves map from localStorage */
+/** Read the full solves map from sessionStorage */
 function lsGetSolves() {
     try {
-        return JSON.parse(localStorage.getItem(LS_SOLVES_KEY) || '{}');
+        return JSON.parse(sessionStorage.getItem(LS_SOLVES_KEY) || '{}');
     } catch (e) { return {}; }
 }
 
-/** Write the full solves map to localStorage */
+/** Write the full solves map to sessionStorage */
 function lsSaveSolves(map) {
-    try { localStorage.setItem(LS_SOLVES_KEY, JSON.stringify(map)); } catch (e) {}
+    try { sessionStorage.setItem(LS_SOLVES_KEY, JSON.stringify(map)); } catch (e) {}
 }
 
-/** Apply a single solve into localStorage */
+/** Apply a single solve into sessionStorage */
 function lsSetSolve(courseId, updateObj) {
     const map = lsGetSolves();
     map[String(courseId)] = { update: updateObj, ts: Date.now() };
     lsSaveSolves(map);
 }
 
-/** Remove a single solve from localStorage */
+/** Remove a single solve from sessionStorage */
 function lsRemoveSolve(courseId) {
     const map = lsGetSolves();
     delete map[String(courseId)];
@@ -1778,7 +1779,7 @@ function lsRemoveSolve(courseId) {
 }
 
 /**
- * Merge Cloudflare solves into localStorage.
+ * Merge Cloudflare solves into sessionStorage.
  * Called once at startup. Cloudflare is authoritative for solves the local
  * browser has never seen. Local is authoritative for anything newer.
  */
@@ -1800,7 +1801,7 @@ function mergeCloudflaresolves(pendingFromServer) {
 }
 
 /**
- * Apply all localStorage solves to the loaded course list.
+ * Apply all sessionStorage solves to the loaded course list.
  * Called once after courses are fetched.
  */
 function applyLocalSolves(docs) {
@@ -1815,7 +1816,7 @@ function applyLocalSolves(docs) {
     }
 }
 
-// No more polling — localStorage is the single source of truth for solves.
+// No more polling — sessionStorage is the single source of truth for solves.
 // pollSolves() and setInterval() removed entirely.
 
 
