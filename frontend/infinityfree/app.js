@@ -281,7 +281,7 @@ const API_BASE_URL = 'https://course-verifier-api.shlokparekh08.workers.dev';
  */
 async function fetchAllCourses() {
     setLoaderSub('Fetching courses from database…');
-    const res = await fetch(`https://course-verifier-api.shlokparekh08.workers.dev/api/courses.json`);
+    const res = await fetch(`https://course-verifier-api.shlokparekh08.workers.dev/api/courses.json?t=${Date.now()}`);
     if (!res.ok) {
         const err = await res.text();
         throw new Error(`API error ${res.status}: ${err}`);
@@ -1142,6 +1142,7 @@ function renderCoursesTab() {
                 <td>${escHtml(c.country || '—')}</td>
                 <td><span style="font-size:0.78rem; color:var(--text-muted);">${escHtml(c.domain || 'Uncategorised')}</span></td>
                 <td><span style="font-size:0.78rem; color:var(--text-muted);">${escHtml(c.course_category || 'Uncategorised')}</span></td>
+                <td>${escHtml(c.mode || '—')}</td>
                 <td>${c.has_qs_badge ? '<span class="badge" style="background:var(--blue-bg);color:var(--blue);border:1px solid rgba(59,130,246,0.25);">QS ✓</span>' : '—'}</td>
                 <td>${badgeHtml(c.status)}</td>
             </tr>
