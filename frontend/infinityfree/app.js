@@ -281,7 +281,7 @@ const API_BASE_URL = 'https://course-verifier-api.shlokparekh08.workers.dev';
  */
 async function fetchAllCourses() {
     setLoaderSub('Fetching courses from database…');
-    const res = await fetch(`https://raw.githubusercontent.com/Shlok-Parekh09/course-verifier/main/frontend/infinityfree/data/courses.json`);
+    const res = await fetch(`https://course-verifier-api.shlokparekh08.workers.dev/api/courses.json`);
     if (!res.ok) {
         const err = await res.text();
         throw new Error(`API error ${res.status}: ${err}`);

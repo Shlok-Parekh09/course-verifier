@@ -87,7 +87,21 @@ def process_courses(json_path, mapping):
             c['domain'] = mapping[idx]['domain']
             c['course_category'] = mapping[idx]['course_category']
             
+    # Final pass: categorize page load errors as Web Issues
+    for c in courses:
+        has_page_load_error = False
+        for row in c.get('pdf_table', []):
+            if 'page load error' in str(row.get('verified', '')).lower() or 'page load error' in str(row.get('original', '')).lower():
+                has_page_load_error = True
+                break
+        if has_page_load_error:
+            c['status'] = 'Error'
+            c['issue_category'] = 'error'
+            c['issue_sub_type'] = 'page_load_error'
+            c['disc_reason'] = 'Page Load Error'
+            
     return courses
+
 
 def update_mongo(courses):
     print("[*] Updating MongoDB Atlas...")
