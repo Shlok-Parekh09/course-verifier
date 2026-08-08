@@ -7,21 +7,70 @@
 
 // ── Domain Ranges (fixed by course ID) ───────────────────────────
 const DOMAIN_RANGES = [
-    { label: 'Free', min: 1, max: 25 },
-    { label: 'Free to Audit', min: 26, max: 48 },
-    { label: 'High Value Low Cost', min: 49, max: 100 },
-    { label: 'Foundational', min: 101, max: 601 },
-    { label: 'Network Infrastructure', min: 602, max: 1585 },
-    { label: 'System & Endpoint', min: 1586, max: 1890 },
-    { label: 'Cyber Forensics', min: 1891, max: 2634 },
-    { label: 'Data & Application', min: 2635, max: 2965 },
-    { label: 'Legal & Ethical', min: 2966, max: 3727 },
+    { label: 'Free', min: 1, max: 22 },
+    { label: 'Free to Audit', min: 23, max: 49 },
+    { label: 'High Value Low Cost', min: 50, max: 104 },
+    { label: 'Foundational', min: 105, max: 659 },
+    { label: 'Network Infrastructure', min: 660, max: 1623 },
+    { label: 'System & Endpoint', min: 1624, max: 1919 },
+    { label: 'Cyber Forensics', min: 1920, max: 2653 },
+    { label: 'Data & Application', min: 2654, max: 2979 },
+    { label: 'Legal & Ethical', min: 2980, max: 3720 },
 ];
 
 function getDomainLabel(id) {
     const n = parseInt(id, 10);
     if (isNaN(n)) return 'Uncategorised';
     for (const r of DOMAIN_RANGES) {
+        if (n >= r.min && n <= r.max) return r.label;
+    }
+    return 'Uncategorised';
+}
+
+const CATEGORY_RANGES = [
+    { label: 'Certificate', min: 1, max: 104 },
+    { label: 'Diploma', min: 105, max: 116 },
+    { label: 'Bachelors', min: 117, max: 331 },
+    { label: 'Masters', min: 332, max: 506 },
+    { label: 'Post Graduate Diploma', min: 507, max: 518 },
+    { label: 'Certificate', min: 519, max: 637 },
+    { label: 'Post Graduate Certificate', min: 638, max: 659 },
+    { label: 'Diploma', min: 660, max: 681 },
+    { label: 'Bachelors', min: 682, max: 1165 },
+    { label: 'Masters', min: 1166, max: 1504 },
+    { label: 'Post Graduate Diploma', min: 1505, max: 1526 },
+    { label: 'Certificate', min: 1527, max: 1594 },
+    { label: 'Post Graduate Certificate', min: 1595, max: 1623 },
+    { label: 'Diploma', min: 1624, max: 1626 },
+    { label: 'Bachelors', min: 1627, max: 1745 },
+    { label: 'Masters', min: 1746, max: 1876 },
+    { label: 'Post Graduate Diploma', min: 1877, max: 1885 },
+    { label: 'Certificate', min: 1886, max: 1909 },
+    { label: 'Post Graduate Certificate', min: 1910, max: 1919 },
+    { label: 'Diploma', min: 1920, max: 1930 },
+    { label: 'Bachelors', min: 1931, max: 2317 },
+    { label: 'Masters', min: 2318, max: 2591 },
+    { label: 'Post Graduate Diploma', min: 2592, max: 2613 },
+    { label: 'Certificate', min: 2614, max: 2637 },
+    { label: 'Post Graduate Certificate', min: 2638, max: 2653 },
+    { label: 'Diploma', min: 2654, max: 2661 },
+    { label: 'Bachelors', min: 2662, max: 2796 },
+    { label: 'Masters', min: 2797, max: 2937 },
+    { label: 'Post Graduate Diploma', min: 2938, max: 2941 },
+    { label: 'Certificate', min: 2942, max: 2968 },
+    { label: 'Post Graduate Certificate', min: 2969, max: 2979 },
+    { label: 'Diploma', min: 2980, max: 3000 },
+    { label: 'Bachelors', min: 3001, max: 3420 },
+    { label: 'Masters', min: 3421, max: 3631 },
+    { label: 'Post Graduate Diploma', min: 3632, max: 3661 },
+    { label: 'Certificate', min: 3662, max: 3702 },
+    { label: 'Post Graduate Certificate', min: 3703, max: 3720 }
+];
+
+function getCategoryLabel(id) {
+    const n = parseInt(id, 10);
+    if (isNaN(n)) return 'Uncategorised';
+    for (const r of CATEGORY_RANGES) {
         if (n >= r.min && n <= r.max) return r.label;
     }
     return 'Uncategorised';

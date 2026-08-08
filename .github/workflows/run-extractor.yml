@@ -1,0 +1,65 @@
+name: Run Extractor
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: 'Start Page Number (Optional)'
+        required: false
+        type: string
+      end:
+        description: 'End Page Number (Optional)'
+        required: false
+        type: string
+      pdf_url:
+        description: 'Direct download URL for link_compile.pdf (Optional)'
+        required: false
+        type: string
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Install Dependencies
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          uv pip install PyMuPDF requests gdown --system
+
+      - name: Download PDF
+        run: |
+          if [ -n "${{ github.event.inputs.pdf_url }}" ]; then
+            wget -qO link_compile.pdf "${{ github.event.inputs.pdf_url }}"
+          else
+            echo "Assuming link_compile.pdf is in the repository or downloading default..."
+            # Replace with a default download link if needed, e.g. from Google Drive
+          fi
+
+      - name: Run Extractor
+        run: |
+          CMD="python extractor.py link_compile.pdf"
+          if [ -n "${{ github.event.inputs.start }}" ]; then
+            CMD="$CMD --start ${{ github.event.inputs.start }}"
+          fi
+          if [ -n "${{ github.event.inputs.end }}" ]; then
+            CMD="$CMD --end ${{ github.event.inputs.end }}"
+          fi
+          echo "Running: $CMD"
+          eval $CMD
+
+      - name: Upload Extracted Catalog
+        uses: actions/upload-artifact@v4
+        with:
+          name: extracted_catalog
+          path: extracted_catalog.json
