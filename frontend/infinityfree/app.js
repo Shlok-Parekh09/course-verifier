@@ -1006,8 +1006,8 @@ function renderVerificationTab() {
                 <td title="${escHtml(c.name)}">${escHtml(c.name)}</td>
                 <td title="${escHtml(c.university)}">${escHtml(c.university || '—')}</td>
                 <td>${escHtml(c.country || '—')}</td>
-                <td><span style="font-size:0.78rem; color:var(--text-muted);">${getDomainLabel(c.id)}</span></td>
                 <td><span style="font-size:0.78rem; color:var(--text-muted);">${escHtml(c.domain || 'Uncategorised')}</span></td>
+                <td><span style="font-size:0.78rem; color:var(--text-muted);">${escHtml(c.course_category || 'Uncategorised')}</span></td>
                 <td>${escHtml(c.mode || '—')}</td>
                 <td>${badgeHtml(c.status)}</td>
                 <td style="font-size:0.78rem; color:var(--text-muted);" title="${escHtml(c.disc_reason || c.issue_sub_type || '')}">${escHtml(c.disc_reason || c.issue_sub_type || '—')}</td>
@@ -1140,8 +1140,8 @@ function renderCoursesTab() {
                 <td title="${escHtml(c.name)}">${escHtml(c.name)}</td>
                 <td title="${escHtml(c.university)}">${escHtml(c.university || '—')}</td>
                 <td>${escHtml(c.country || '—')}</td>
-                <td><span style="font-size:0.78rem; color:var(--text-muted);">${getDomainLabel(c.id)}</span></td>
                 <td><span style="font-size:0.78rem; color:var(--text-muted);">${escHtml(c.domain || 'Uncategorised')}</span></td>
+                <td><span style="font-size:0.78rem; color:var(--text-muted);">${escHtml(c.course_category || 'Uncategorised')}</span></td>
                 <td>${c.has_qs_badge ? '<span class="badge" style="background:var(--blue-bg);color:var(--blue);border:1px solid rgba(59,130,246,0.25);">QS ✓</span>' : '—'}</td>
                 <td>${badgeHtml(c.status)}</td>
             </tr>
