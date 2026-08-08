@@ -1,15 +1,10 @@
 import os
-import re
 import json
-import fitz
 from pymongo import MongoClient
 from dotenv import load_dotenv
 import requests
 
-def parse_indexing(pdf_path):
-    print(f"[*] Using hardcoded domain and category mapping...")
-    mapping = {}
-    
+def get_mappings():
     DOMAIN_RANGES = [
         ('Free', 1, 22),
         ('Free to Audit', 23, 49),
@@ -62,6 +57,7 @@ def parse_indexing(pdf_path):
         ('Post Graduate Certificate', 3703, 3720)
     ]
     
+    mapping = {}
     for i in range(1, 3721):
         domain = 'Uncategorised'
         category = 'Certificate'
@@ -77,126 +73,52 @@ def parse_indexing(pdf_path):
             'domain': domain,
             'course_category': category
         }
-    
-    print(f"    Loaded {len(mapping)} mappings from hardcoded ranges.")
     return mapping
 
-def parse_finalreport(pdf_path, mapping):
-    print(f"[*] Parsing {pdf_path} for courses...")
-    doc = fitz.open(pdf_path)
-    text = ""
-    for page in doc:
-        text += page.get_text() + "\n"
+def process_courses(json_path, mapping):
+    print(f"[*] Loading original course data from {json_path}...")
+    with open(json_path, 'r', encoding='utf-8') as f:
+        courses = json.load(f)
         
-    pattern = re.compile(r'\n(\d+)\.\s+(.+?)\nAttribute', re.DOTALL)
-    matches = list(pattern.finditer(text))
-    
-    print(f"    Found {len(matches)} courses. Extracting details...")
-    
-    courses = []
-    
-    for i in range(len(matches)):
-        start = matches[i].end()
-        end = matches[i+1].start() if i+1 < len(matches) else len(text)
-        chunk = text[start:end]
-        
-        idx = int(matches[i].group(1))
-        name = matches[i].group(2).strip()
-        
-        def extract_val_and_status(field1, field2=None):
-            f1_pos = chunk.find(field1 + "\n")
-            if f1_pos == -1: return "", "NOT FOUND"
-            f1_pos += len(field1) + 1
+    print(f"    Loaded {len(courses)} courses. Applying index mappings...")
+    for c in courses:
+        idx = c.get('id')
+        if idx in mapping:
+            c['domain'] = mapping[idx]['domain']
+            c['course_category'] = mapping[idx]['course_category']
             
-            f2_pos = len(chunk)
-            if field2:
-                idx_pos = chunk.find(field2 + "\n", f1_pos)
-                if idx_pos != -1:
-                    f2_pos = idx_pos
-            
-            subchunk = chunk[f1_pos:f2_pos].strip()
-            lines = subchunk.split('\n')
-            if not lines: return "", "NOT FOUND"
-            
-            orig_val = lines[0].strip()
-            status = lines[-1].strip() if len(lines) > 1 else "MATCH"
-            return orig_val, status
-
-        cost, cost_st = extract_val_and_status("Cost", "Duration")
-        duration, dur_st = extract_val_and_status("Duration", "Mode")
-        mode, mode_st = extract_val_and_status("Mode", "Language")
-        language, lang_st = extract_val_and_status("Language", "Country")
-        country, country_st = extract_val_and_status("Country", "University")
-        if country.strip().lower() == 'english':
-            country = "Not Identified"
-        uni, uni_st = extract_val_and_status("University", "Skills")
-        skills, sk_st = extract_val_and_status("Skills", "QS Ranked")
-        qs, _ = extract_val_and_status("QS Ranked", "NIRF Ranked")
-        nirf, _ = extract_val_and_status("NIRF Ranked", "Free Box")
-        
-        c = {
-            "id": idx,
-            "name": name,
-            "university": uni,
-            "domain": mapping.get(idx, {}).get('domain', 'Uncategorised'),
-            "country": country,
-            "cost": cost,
-            "duration": duration,
-            "mode": mode,
-            "skills": skills,
-            "qs": "",
-            "nirf": "",
-            "has_qs_badge": qs != "False",
-            "has_nirf_badge": nirf != "False",
-            "status": "Verified",
-            "issue_category": "verified",
-            "issue_sub_type": "perfect_match",
-            "solved_attrs": [],
-            "retry_count": 0,
-            "error_screenshot_path": "",
-            "cost_match": cost_st == "MATCH",
-            "duration_match": dur_st == "MATCH",
-            "mode_match": mode_st == "MATCH",
-            "lang_match": lang_st == "MATCH",
-            "country_match": country_st == "MATCH",
-            "uni_match": uni_st == "MATCH",
-            "sk_match": sk_st == "MATCH",
-            "disc_reason": "",
-            "pdf_page": 1,
-            "pdf_table": [],
-            "course_category": mapping.get(idx, {}).get('course_category', 'Certificate')
-        }
-        
-        courses.append(c)
-    
     return courses
 
-def update_mongodb(courses):
+def update_mongo(courses):
     print("[*] Updating MongoDB Atlas...")
     load_dotenv('.env')
-    uri = os.environ.get('MONGO_URI')
-    if not uri:
-        print("    [!] Missing MONGO_URI")
+    MONGO_URI = os.getenv("MONGO_URI")
+    if not MONGO_URI:
+        print("    [!] MONGO_URI not found in .env")
         return
         
-    client = MongoClient(uri)
+    client = MongoClient(MONGO_URI)
     db = client['course_verifier']
-    coll = db['courses']
+    collection = db['courses']
     
-    count = coll.count_documents({})
+    count = collection.count_documents({})
     print(f"    Current collection has {count} documents.")
     
-    # DANGER: Wipe collection
     print("    WIPING COLLECTION...")
-    coll.delete_many({})
+    collection.delete_many({})
     
     print(f"    Inserting {len(courses)} new documents...")
-    coll.insert_many(courses)
+    
+    # ensure no _id conflicts
+    for c in courses:
+        if '_id' in c:
+            del c['_id']
+            
+    collection.insert_many(courses)
     print("    [OK] MongoDB updated successfully.")
 
 def update_cloudflare(courses):
     print("[*] Updating Cloudflare KV...")
-    # Remove _id injected by pymongo
     for c in courses:
         if '_id' in c:
             del c['_id']
@@ -220,23 +142,20 @@ def update_cloudflare(courses):
         "X-Endpoint": "courses.json",
     }
     
-    raw = json.dumps(courses)
-    resp = requests.post(f"{cf_url}/api/kv-push", data=raw.encode("utf-8"), headers=headers, timeout=120)
-    
-    if resp.status_code == 200:
-        print("    [OK] Cloudflare KV updated successfully.")
-    else:
-        print(f"    [!] Cloudflare KV push failed: {resp.status_code} - {resp.text}")
+    try:
+        raw = json.dumps(wrapper)
+        resp = requests.post(f"{cf_url}/api/kv-push", data=raw.encode("utf-8"), headers=headers, timeout=120)
+        
+        if resp.status_code == 200:
+            print("    [OK] Cloudflare KV updated successfully.")
+        else:
+            print(f"    [!] Cloudflare KV push failed: {resp.status_code} - {resp.text}")
+    except Exception as e:
+        print(f"    [!] Failed to push to Cloudflare: {e}")
 
 if __name__ == "__main__":
-    mapping = parse_indexing('indexing.pdf')
-    courses = parse_finalreport('finalreport.pdf', mapping)
-    
-    # Verification
-    if len(courses) > 0:
-        print(f"\nSample Course 1: {courses[0]}")
-        print(f"Sample Course Last: {courses[-1]}")
-    
-    update_mongodb(courses)
+    mapping = get_mappings()
+    courses = process_courses("frontend/1.json", mapping)
+    update_mongo(courses)
     update_cloudflare(courses)
     print("\n[*] ALL OPERATIONS COMPLETE.")

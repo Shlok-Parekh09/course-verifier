@@ -1191,6 +1191,7 @@ async function openModal(courseId) {
             ['Duration', c.duration],
             ['Mode', c.mode],
             ['Domain', getDomainLabel(c.id)],
+            ['Category', getCategoryLabel(c.id)],
             ['QS', c.has_qs_badge ? '✓ Ranked' : '—'],
             ['NIRF', c.has_nirf_badge ? '✓ Ranked' : '—'],
         ].map(([k, v]) => `<div class="meta-chip"><strong>${k}:</strong> ${escHtml(String(v || '—'))}</div>`).join('');
