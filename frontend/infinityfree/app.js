@@ -1813,6 +1813,24 @@ function mergeCloudflaresolves(pendingFromServer) {
     if (changed) lsSaveSolves(local);
 }
 
+// Add real-time polling to ensure everyone sees the same numbers.
+// With ~20 concurrent users, polling every 15 seconds is safe for the Cloudflare free tier.
+setInterval(async () => {
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/solves.json?t=${Date.now()}`);
+        if (res.ok) {
+            const data = await res.json();
+            mergeCloudflaresolves(data);
+            if (window._globalCourses) {
+                applyLocalSolves(window._globalCourses);
+                renderCoursesTab();
+            }
+        }
+    } catch(e) {
+        console.warn("Polling error:", e);
+    }
+}, 15000);
+
 /**
  * Apply all sessionStorage solves to the loaded course list.
  * Called once after courses are fetched.
