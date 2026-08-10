@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 CF_WORKER_URL = os.environ.get("CF_WORKER_URL", "https://course-verifier-api.shlokparekh08.workers.dev")
-CF_KV_PUSH_KEY = os.environ.get("CF_KV_PUSH_KEY", "courseverify_secure_push_key_2026")
+CF_KV_PUSH_KEY = os.environ.get("CF_KV_PUSH_KEY", "")
 
 INPUT_JSON = "frontend/course_catalog.json"
 
