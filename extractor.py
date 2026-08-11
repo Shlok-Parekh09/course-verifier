@@ -709,6 +709,8 @@ def extract_courses_from_pdf(pdf_path: str, start_page: int = 1, end_page: int =
     Mirrors the extract_and_parse logic in autonomous_course_verifier.py.
     Returns list of raw course dicts.
     """
+    import pymupdf as fitz
+    
     doc = fitz.open(pdf_path)
     total_pages = len(doc)
     end_page = min(end_page or total_pages, total_pages)
@@ -723,6 +725,10 @@ def extract_courses_from_pdf(pdf_path: str, start_page: int = 1, end_page: int =
     box_labels = ["top-left", "top-right", "bottom-left", "bottom-right"]
 
     for page_num in range(start_page - 1, end_page):
+        # Print progress every 50 pages so CI/Actions don't think it's stuck
+        if page_num > 0 and page_num % 50 == 0:
+            print(f"  [Progress] Extracting data from page {page_num}/{end_page}...")
+            
         page = doc[page_num]
         pw, ph = page.rect.width, page.rect.height
         half_w = pw / 2
