@@ -980,9 +980,12 @@ def main():
         GITHUB_REPO = "logos"
         
         logo_url = ""
-        sanitized = sanitize_filename(uni_canonical)
+        logo_filename = logo_map.get(_norm(uni_canonical))
+        if not logo_filename:
+            logo_filename = sanitize_filename(uni_canonical) + ".png"
+            
         if GITHUB_USERNAME and GITHUB_REPO:
-            logo_url = f"https://cdn.jsdelivr.net/gh/{GITHUB_USERNAME}/{GITHUB_REPO}@main/logos/{sanitized}.svg"
+            logo_url = f"https://cdn.jsdelivr.net/gh/{GITHUB_USERNAME}/{GITHUB_REPO}@main/logos/{logo_filename}"
         # Check DB for QS/NIRF Rankings
         has_qs_db, has_nirf_db = check_rankings_in_db(uni_canonical, affiliated_uni)
 
