@@ -34,8 +34,9 @@ jobs:
 
       - name: Install Dependencies
         run: |
+          sudo apt-get update && sudo apt-get install -y xvfb
           export PATH="$HOME/.local/bin:$PATH"
-          uv pip install PyMuPDF requests gdown --system
+          uv pip install PyMuPDF requests gdown python-dotenv rapidfuzz undetected-chromedriver selenium --system
 
       - name: Download PDF
         run: |
@@ -47,8 +48,11 @@ jobs:
           fi
 
       - name: Run Extractor
+        env:
+          MISTRAL_API_KEY_1: ${{ secrets.MISTRAL_API_KEY_1 }}
+          GEMINI_KEY_1: ${{ secrets.GEMINI_KEY_1 }}
         run: |
-          CMD="python extractor.py link_compile.pdf"
+          CMD="xvfb-run python extractor.py link_compile.pdf"
           if [ -n "${{ github.event.inputs.start }}" ]; then
             CMD="$CMD --start ${{ github.event.inputs.start }}"
           fi
