@@ -543,7 +543,7 @@ def ask_llm_for_description(course_name: str, uni_name: str, page_text: str, cou
 import urllib.parse
 
 def fetch_page_text(url: str) -> str:
-    """Fetch course page text."""
+    """Fetch course page text and selectively download syllabus/catalog PDFs for university websites."""
     if not url or url == "Unknown" or not requests:
         return ""
     try:
@@ -552,11 +552,51 @@ def fetch_page_text(url: str) -> str:
         text = resp.text
         
         import re
+        
+        # Define MOOC platforms that list all details on the page (skip PDF downloading for these)
+        mooc_domains = [
+            "coursera.org", "edx.org", "udemy.com", "swayam.gov.in", "futurelearn.com",
+            "simplilearn.com", "upgrad.com", "udacity.com", "alison.com", "greatlearning.in", 
+            "pluralsight.com", "codecademy.com", "skillshare.com", "nptel.ac.in", "onlinecourses.nptel.ac.in"
+        ]
+        
+        pdf_text = ""
+        is_mooc = any(domain in url.lower() for domain in mooc_domains)
+        
+        if not is_mooc:
+            # Look specifically for syllabus or catalog PDF links
+            pdf_links = re.findall(r'href=["\']([^"\']+(?:syllabus|catalog|curriculum)[^"\']*\.pdf)["\']', text, re.IGNORECASE)
+            
+            # If specific syllabus/catalog pdf not found, try a generic pdf search but ensure the link text or surrounding text implies syllabus (basic heuristic)
+            if not pdf_links:
+                all_pdfs = re.findall(r'href=["\']([^"\']+\.pdf)["\']', text, re.IGNORECASE)
+                pdf_links = [p for p in all_pdfs if 'syllabus' in p.lower() or 'catalog' in p.lower() or 'curriculum' in p.lower() or 'brochure' in p.lower()]
+                
+            if pdf_links:
+                pdf_url = urllib.parse.urljoin(url, pdf_links[0])
+                try:
+                    import fitz
+                    import urllib3
+                    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                    pdf_resp = requests.get(pdf_url, headers=headers, timeout=15, verify=False)
+                    if pdf_resp.status_code == 200:
+                        pdf_doc = fitz.open(stream=pdf_resp.content, filetype="pdf")
+                        for page in pdf_doc:
+                            pdf_text += page.get_text() + "\n"
+                        pdf_doc.close()
+                except Exception as e:
+                    print(f"[WARN] Failed to read PDF {pdf_url}: {e}")
+
         # Strip HTML tags
         text = re.sub(r"<[^>]+>", " ", text)
         text = re.sub(r"\s+", " ", text).strip()
         
-        return text[:12000]
+        combined_text = text
+        if pdf_text:
+            pdf_text = re.sub(r"\s+", " ", pdf_text).strip()
+            combined_text += "\n\n--- PDF CONTENT ---\n\n" + pdf_text
+            
+        return combined_text[:12000]
     except Exception:
         return ""
 
