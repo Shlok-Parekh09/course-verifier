@@ -214,10 +214,13 @@ def _clean_uni_name(name):
 
 def _title_case(name):
     acronyms = {"Iit", "Iiit", "Nit", "Iim", "Aiims", "Bits", "Srm", "Vit", "Mit", "Ucl", "Nus", "Ntu", "Svkm'S", "Nmims", "Iiser", "Niser"}
+    small_words = {"Of", "And", "The", "At", "In"}
     words = name.title().split()
     for i, w in enumerate(words):
         if w in acronyms:
             words[i] = w.upper()
+        elif w in small_words and i > 0:
+            words[i] = w.lower()
         # Handle cases like Svkm's -> SVKM's
         elif w == "Svkm'S":
             words[i] = "SVKM's"

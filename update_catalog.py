@@ -4,34 +4,50 @@ import requests
 import concurrent.futures
 
 def fix_acronyms(name):
-    # Standardize casing. Capitalize words properly, keeping acronyms uppercase.
+    """Standardize casing. Capitalize words properly, keeping acronyms uppercase."""
+    # Common acronyms that must remain completely uppercase
+    acronyms = {
+        "iit", "iiit", "nit", "iim", "bits", "nielit", "mit", "vit", "jnu", 
+        "du", "ucl", "nyu", "nus", "lse", "ucla", "upes", "mca", "bca", 
+        "btech", "mtech", "bba", "mba", "ignou", "cdac", "ugc", "csme", "amity",
+        "ibm", "tcs", "infosys", "cisco", "aws", "google", "meta"
+    }
+    
     words = name.split()
-    acronyms = {"iit", "iiit", "nit", "iim", "bits", "nielit", "mit", "vit", "jnu", "du", "ucl", "nyu", "nus", "lse", "ucla"}
     fixed = []
+    
     for i, w in enumerate(words):
         clean_w = re.sub(r'[^a-zA-Z]', '', w).lower()
         if clean_w in acronyms:
-            # Preserve non-alphabetic chars but uppercase the acronym part
-            fixed.append(w.upper())
-        elif w.lower() in ["of", "and", "the", "in", "at", "for", "on"]:
-            # Only lowercase if it's not the first word
-            if i == 0:
-                fixed.append(w.capitalize())
-            else:
-                fixed.append(w.lower())
+            # Preserve original non-alpha chars (like hyphens) but uppercase the alpha parts
+            # e.g., iit-b -> IIT-B
+            fixed_w = ""
+            for char in w:
+                if char.isalpha():
+                    fixed_w += char.upper()
+                else:
+                    fixed_w += char
+            fixed.append(fixed_w)
         else:
-            fixed.append(w.capitalize())
-    # Special cases handling
+            # Normal title casing, but handle small words properly
+            if clean_w in ["of", "and", "the", "in", "at", "for", "on"] and i != 0 and i != len(words) - 1:
+                fixed.append(w.lower())
+            else:
+                fixed.append(w.capitalize())
+                
     res = " ".join(fixed)
-    res = res.replace(" Of ", " of ").replace(" And ", " and ").replace(" The ", " the ")
     return res
 
 def normalize_uni_name(n):
     return re.sub(r'[^a-z0-9]', '_', n.lower())
 
+GITHUB_USERNAME = "tbot21998-alt"
+GITHUB_REPO = "logos"
+
 def process_logo(uni_name):
     norm = normalize_uni_name(uni_name)
-    url = f"https://pub-188fdc39f1ee412d9ed0028c80cc4778.r2.dev/logos/{norm}.png"
+    # Using jsDelivr + GitHub format
+    url = f"https://cdn.jsdelivr.net/gh/{GITHUB_USERNAME}/{GITHUB_REPO}@main/logos/{norm}.png"
     try:
         resp = requests.head(url, timeout=5)
         if resp.status_code == 200:
@@ -65,7 +81,7 @@ for item in catalog:
             
     if c:
         # Overwrite badly extracted names with the verified names!
-        item['name'] = c['name']
+        item['name'] = fix_acronyms(c['name'])
         
         # Apply Acronym fix just in case the verified name isn't perfect
         fixed_uni = fix_acronyms(c['university'])
@@ -96,6 +112,7 @@ for item in catalog:
     else:
         # If no match, just fix the acronym of whatever it currently is
         item['university'] = fix_acronyms(item.get('university', ''))
+        item['name'] = fix_acronyms(item.get('name', ''))
         
     unique_unis_to_check.add(item['university'])
     updated_catalog.append(item)
