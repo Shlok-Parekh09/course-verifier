@@ -212,6 +212,17 @@ def _clean_uni_name(name):
     return name.strip()
 
 
+def _title_case(name):
+    acronyms = {"Iit", "Iiit", "Nit", "Iim", "Aiims", "Bits", "Srm", "Vit", "Mit", "Ucl", "Nus", "Ntu", "Svkm'S", "Nmims", "Iiser", "Niser"}
+    words = name.title().split()
+    for i, w in enumerate(words):
+        if w in acronyms:
+            words[i] = w.upper()
+        # Handle cases like Svkm's -> SVKM's
+        elif w == "Svkm'S":
+            words[i] = "SVKM's"
+    return " ".join(words)
+
 def resolve_university_name(raw_name: str, logo_map: dict) -> str:
     """
     Normalise abbreviations and return the canonical CSV name.
@@ -227,7 +238,7 @@ def resolve_university_name(raw_name: str, logo_map: dict) -> str:
     if alias_target:
         for csv_norm, url in logo_map.items():
             if _norm(csv_norm) == alias_target or alias_target in _norm(csv_norm):
-                return csv_norm.title()
+                return _title_case(csv_norm)
     # fuzzy match to CSV keys
     best, best_name = 0.0, cleaned
     for csv_n in logo_map:
@@ -235,8 +246,8 @@ def resolve_university_name(raw_name: str, logo_map: dict) -> str:
         if s > best:
             best, best_name = s, csv_n
     if best >= 0.80:
-        return best_name.title()
-    return cleaned
+        return _title_case(best_name)
+    return _title_case(cleaned)
 
 
 # ── Logo lookup ───────────────────────────────────────────────────────────────
