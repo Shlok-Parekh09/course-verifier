@@ -577,8 +577,18 @@ def fetch_page_text(url: str) -> str:
                 try:
                     import fitz
                     import urllib3
+                    from requests.adapters import HTTPAdapter
+                    from urllib3.util.retry import Retry
+                    
                     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-                    pdf_resp = requests.get(pdf_url, headers=headers, timeout=15, verify=False)
+                    
+                    session = requests.Session()
+                    retry = Retry(connect=3, backoff_factor=0.5)
+                    adapter = HTTPAdapter(max_retries=retry)
+                    session.mount('http://', adapter)
+                    session.mount('https://', adapter)
+                    
+                    pdf_resp = session.get(pdf_url, headers=headers, timeout=20, verify=False)
                     if pdf_resp.status_code == 200:
                         pdf_doc = fitz.open(stream=pdf_resp.content, filetype="pdf")
                         for page in pdf_doc:
@@ -646,30 +656,44 @@ def fetch_page_text_selenium(url: str) -> str:
         body = driver.find_element(By.TAG_NAME, 'body')
         page_text = body.text
         
-        # Check for syllabus
+        # Upgrade: Click all buttons/links that might hide syllabus, skills, or curriculum details
         try:
-            links = driver.find_elements(By.TAG_NAME, 'a')
-            for link in links:
-                if link.is_displayed():
-                    text = link.text.lower()
-                    if 'syllabus' in text or 'curriculum' in text:
-                        href = link.get_attribute('href')
-                        if href and href.startswith('http'):
-                            driver.execute_script("window.open('');")
-                            driver.switch_to.window(driver.window_handles[-1])
-                            driver.get(href)
-                            time.sleep(3)
-                            syllabus_text = driver.find_element(By.TAG_NAME, 'body').text
-                            page_text += "\n\n--- SYLLABUS ---\n" + syllabus_text
-                            driver.close()
-                            driver.switch_to.window(driver.window_handles[0])
-                        else:
-                            driver.execute_script("arguments[0].click();", link)
-                            time.sleep(3)
-                            page_text = driver.find_element(By.TAG_NAME, 'body').text
-                        break
-        except Exception:
-            pass
+            keywords = ['syllabus', 'curriculum', 'skills', 'module', 'course content', 'read more', 'view details', 'expand all']
+            
+            # Find both links and buttons
+            interactive_elements = driver.find_elements(By.XPATH, "//a | //button | //div[contains(@class, 'accordion') or contains(@class, 'toggle')]")
+            
+            clicked_any = False
+            for el in interactive_elements:
+                try:
+                    if el.is_displayed():
+                        text = el.text.lower()
+                        if any(kw in text for kw in keywords):
+                            href = el.get_attribute('href')
+                            # If it's a link to a separate page, open it, grab text, and come back
+                            if href and href.startswith('http') and ('pdf' not in href.lower()):
+                                driver.execute_script("window.open('');")
+                                driver.switch_to.window(driver.window_handles[-1])
+                                driver.get(href)
+                                time.sleep(2)
+                                page_text += "\n\n--- " + text.upper() + " ---\n" + driver.find_element(By.TAG_NAME, 'body').text
+                                driver.close()
+                                driver.switch_to.window(driver.window_handles[0])
+                            else:
+                                # Otherwise, click it to expand content on the current page
+                                driver.execute_script("arguments[0].scrollIntoView(true);", el)
+                                time.sleep(0.5)
+                                driver.execute_script("arguments[0].click();", el)
+                                clicked_any = True
+                except Exception:
+                    continue # Stale element or unclickable, move to next
+            
+            if clicked_any:
+                time.sleep(3) # Wait for all animations/ajax to finish expanding
+                page_text = driver.find_element(By.TAG_NAME, 'body').text
+                
+        except Exception as e:
+            print(f"[WARN] Selenium interaction failed: {e}")
             
         return page_text[:12000]
     except Exception as e:
