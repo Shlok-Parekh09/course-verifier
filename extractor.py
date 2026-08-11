@@ -949,21 +949,56 @@ def extract_courses_from_pdf(pdf_path: str, start_page: int = 1, end_page: int =
             country  = field(r"Country:\s*(.*?)(?=\s*(?:Cost:|Duration:|Language:|Mode:|Skills:|Link to|$))")
             mode = mode.replace("Offl\uFB02ine", "Offline").replace("Of\uFB02ine", "Offline")
 
-            # Name + uni (lines before first keyword)
-            pre_lines = []
-            for l in lines:
-                if any(l.lower().startswith(k) for k in ["cost:", "duration:", "language:", "skills:", "mode:"]):
-                    break
-                if l.strip():
-                    pre_lines.append(l.strip())
-            if len(pre_lines) > 1:
-                uni_raw  = pre_lines[-1]
-                name_raw = " ".join(pre_lines[:-1])
-            elif len(pre_lines) == 1:
-                name_raw = pre_lines[0]
-                uni_raw  = "Unknown"
-            else:
-                name_raw = uni_raw = "Unknown"
+            # Name + uni (strict boundary extraction from verifier)
+            has_gray_box = False
+            drawings = page.get_drawings()
+            gray_boxes = [d['rect'] for d in drawings if d.get('fill') and 0.7 < d['fill'][0] < 0.8]
+            q_gray = [b for b in gray_boxes if b.intersects(q["rect"])]
+            
+            if q_gray:
+                has_gray_box = True
+                gb = q_gray[0]
+                uni_words = [w for w in q_words if gb.contains(fitz.Point((w[0]+w[2])/2, (w[1]+w[3])/2))]
+                uni_words.sort(key=lambda w: (w[3], w[0]))
+                uni_raw = " ".join([w[4] for w in uni_words]).strip()
+                
+                name_words = [w for w in q_words if w[1] < gb.y0 and not gb.contains(fitz.Point((w[0]+w[2])/2, (w[1]+w[3])/2))]
+                name_words.sort(key=lambda w: (w[3], w[0]))
+                name_raw = " ".join([w[4] for w in name_words]).strip()
+            
+            if not has_gray_box:
+                # 1. Fast keyword fallback for university
+                uni_str_start = 0
+                for l in lines:
+                    pu = l.lower()
+                    if any(x in pu for x in ['university', 'institute', 'state', 'technology', 'college', 'school', 'academy', 'polytechnic']) or re.search(r'\btech\b', pu):
+                        uni_str_start = fts.find(l)
+                        break
+                        
+                first_keyword_pos = len(fts)
+                for kw in ['Cost:', 'Duration:', 'Language:', 'Skills:', 'Mode:', 'Country:']:
+                    pos = fts.lower().find(kw.lower())
+                    if pos != -1 and pos < first_keyword_pos:
+                        first_keyword_pos = pos
+                        
+                if uni_str_start > 0 and uni_str_start < first_keyword_pos:
+                    name_raw = fts[:uni_str_start].replace('\n', ' ').strip()
+                    uni_raw = fts[uni_str_start:first_keyword_pos].replace('\n', ' ').strip()
+                else:
+                    pre_lines = []
+                    for l in lines:
+                        if any(l.lower().startswith(k) for k in ["cost:", "duration:", "language:", "skills:", "mode:"]):
+                            break
+                        if l.strip():
+                            pre_lines.append(l.strip())
+                    if len(pre_lines) > 1:
+                        uni_raw  = pre_lines[-1]
+                        name_raw = " ".join(pre_lines[:-1])
+                    elif len(pre_lines) == 1:
+                        name_raw = pre_lines[0]
+                        uni_raw  = "Unknown"
+                    else:
+                        name_raw = uni_raw = "Unknown"
 
             # URL
             url = q["links"][0].get("uri", "") if q["links"] else ""
@@ -1012,7 +1047,7 @@ def main():
 
     grouped_catalog = {}
     for idx, c in enumerate(raw_courses, 1):
-        print(f"  [{idx}/{len(raw_courses)}] Processing: {c['name'][:60]}")
+        print(f"  [{idx}/{len(raw_courses)}] Processing: {c['name'][:85]}")
 
         # Resolve canonical university name
         uni_raw = c["uni"]
