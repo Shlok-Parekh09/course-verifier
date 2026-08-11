@@ -543,7 +543,7 @@ def ask_llm_for_description(course_name: str, uni_name: str, page_text: str, cou
 import urllib.parse
 
 def fetch_page_text(url: str) -> str:
-    """Fetch course page text and any linked syllabus PDFs."""
+    """Fetch course page text."""
     if not url or url == "Unknown" or not requests:
         return ""
     try:
@@ -551,35 +551,12 @@ def fetch_page_text(url: str) -> str:
         resp = requests.get(url, headers=headers, timeout=15)
         text = resp.text
         
-        pdf_text = ""
-        # Look for PDF links in the webpage (syllabus, curriculum, etc.)
         import re
-        pdf_links = re.findall(r'href=["\']([^"\']+\.pdf)["\']', text, re.IGNORECASE)
-        if pdf_links:
-            pdf_url = urllib.parse.urljoin(url, pdf_links[0])
-            try:
-                import fitz
-                import urllib3
-                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-                pdf_resp = requests.get(pdf_url, headers=headers, timeout=15, verify=False)
-                if pdf_resp.status_code == 200:
-                    pdf_doc = fitz.open(stream=pdf_resp.content, filetype="pdf")
-                    for page in pdf_doc:
-                        pdf_text += page.get_text() + "\n"
-                    pdf_doc.close()
-            except Exception as e:
-                print(f"[WARN] Failed to read PDF {pdf_url}: {e}")
-
         # Strip HTML tags
         text = re.sub(r"<[^>]+>", " ", text)
         text = re.sub(r"\s+", " ", text).strip()
         
-        combined_text = text
-        if pdf_text:
-            pdf_text = re.sub(r"\s+", " ", pdf_text).strip()
-            combined_text += "\n\n--- PDF CONTENT ---\n\n" + pdf_text
-            
-        return combined_text[:12000]
+        return text[:12000]
     except Exception:
         return ""
 
