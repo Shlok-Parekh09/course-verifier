@@ -559,7 +559,9 @@ def fetch_page_text(url: str) -> str:
             pdf_url = urllib.parse.urljoin(url, pdf_links[0])
             try:
                 import fitz
-                pdf_resp = requests.get(pdf_url, headers=headers, timeout=15)
+                import urllib3
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                pdf_resp = requests.get(pdf_url, headers=headers, timeout=15, verify=False)
                 if pdf_resp.status_code == 200:
                     pdf_doc = fitz.open(stream=pdf_resp.content, filetype="pdf")
                     for page in pdf_doc:
