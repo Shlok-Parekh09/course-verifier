@@ -122,6 +122,7 @@ ALIASES = {
     "iitg": "Indian Institute of Technology Guwahati",
     "iit hyderabad": "Indian Institute of Technology Hyderabad",
     "iith": "Indian Institute of Technology Hyderabad",
+    "iit jammu": "Indian Institute of Technology Jammu",
     "iit bhubaneswar": "Indian Institute of Technology Bhubaneswar",
     "iit gandhinagar": "Indian Institute of Technology Gandhinagar",
     "iit jodhpur": "Indian Institute of Technology Jodhpur",
@@ -484,7 +485,7 @@ def ask_llm_for_description(course_name: str, uni_name: str, page_text: str, cou
     """
     api_keys = [
         k.strip() for k in
-        [os.environ.get("MISTRAL_API_KEY_1", "")] if k.strip()
+        [os.environ.get("MISTRAL_API_KEY"), os.environ.get("MISTRAL_API_KEY_1")] if k and k.strip()
     ]
 
     if not api_keys or not page_text.strip():
@@ -597,6 +598,8 @@ def fetch_page_text(url: str) -> str:
                 except Exception as e:
                     print(f"[WARN] Failed to read PDF {pdf_url}: {e}")
 
+        # Remove script and style blocks completely
+        text = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", text, flags=re.DOTALL | re.IGNORECASE)
         # Strip HTML tags
         text = re.sub(r"<[^>]+>", " ", text)
         text = re.sub(r"\s+", " ", text).strip()
