@@ -134,6 +134,7 @@ ALIASES = {
     "iiitm kancheepuram": "Indian Institute of Information Technology Design and Manufacturing Kancheepuram",
     "atal bihari vajpayee indian institute of information technology and management gwalior": "IIITM Gwalior",
     "iiitm gwalior": "IIITM Gwalior",
+    "iiit kota": "Indian Institute of Information Technology Kota",
     "iim ahmedabad": "Indian Institute of Management Ahmedabad",
     "iima": "Indian Institute of Management Ahmedabad",
     "iim bangalore": "Indian Institute of Management Bangalore",
@@ -279,6 +280,10 @@ def resolve_university_name(raw_name: str, logo_map: dict) -> str:
             best, best_name = s, csv_n
     if best >= 0.80:
         return _title_case(best_name)
+        
+    if alias_target:
+        return _title_case(alias_target)
+        
     return _title_case(cleaned)
 
 

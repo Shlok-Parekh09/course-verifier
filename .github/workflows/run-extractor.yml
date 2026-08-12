@@ -47,10 +47,13 @@ jobs:
             # Replace with a default download link if needed, e.g. from Google Drive
           fi
 
+      - name: Create .env file
+        run: |
+          cat << 'EOF' > .env
+          ${{ secrets.ENV_FILE }}
+          EOF
+
       - name: Run Extractor
-        env:
-          MISTRAL_API_KEY_1: ${{ secrets.MISTRAL_API_KEY_1 }}
-          GEMINI_KEY_1: ${{ secrets.GEMINI_KEY_1 }}
         run: |
           CMD="xvfb-run python extractor.py link_compile.pdf"
           if [ -n "${{ github.event.inputs.start }}" ]; then
