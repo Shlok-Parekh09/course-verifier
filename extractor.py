@@ -1367,7 +1367,7 @@ def main():
             entry = {
                 "id":                 [c["_id"]],
                 "name":               course_name,
-                "university":         uni_canonical,
+                "university":         uni_name,
                 "affiliated_uni":     affiliated_uni,
                 "uni_state":          uni_state,
                 "logo_url":           logo_url,
