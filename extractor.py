@@ -733,9 +733,15 @@ def ask_llm_for_description(course_name: str, uni_name: str, page_text: str, cou
     """
     import random
     api_keys = []
-    for k, v in os.environ.items():
-        if k.startswith("MISTRAL_API_KEY") and v.strip():
-            api_keys.append(v.strip())
+    plural_env = os.environ.get("MISTRAL_API_KEYS") or os.environ.get("MISTRAL_KEYS")
+    if plural_env:
+        api_keys = [k.strip() for k in plural_env.split(",") if k.strip()]
+    if not api_keys:
+        api_keys = [os.environ.get(f"MISTRAL_API_KEY_{i}") for i in range(1, 133) if os.environ.get(f"MISTRAL_API_KEY_{i}")]
+    if not api_keys:
+        singular = os.environ.get("MISTRAL_API_KEY") or os.environ.get("MISTRAL_KEY")
+        if singular:
+            api_keys = [singular]
             
     if not api_keys or not page_text.strip():
         # Simple fallback: first 500 chars of skills-related text
