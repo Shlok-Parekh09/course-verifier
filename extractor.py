@@ -695,20 +695,47 @@ def check_rankings_in_db(uni1: str, uni2: str = ""):
         try:
             from rapidfuzz import fuzz
             def is_match(c, u_list):
-                if c in ["university", "institute", "college", "school"]: return False
-                for u in u_list:
-                    if u in ["university", "institute", "college", "school", "results"]: continue
-                    if c == u or c in u or u in c:
+                if c in ["university", "institute", "college", "school", "unknown"]: return False
+                c_lower = c.lower()
+                for line in u_list:
+                    line_clean = line.strip().lower()
+                    if not line_clean: continue
+                    if line_clean in ["university", "university of", "institute", "institute of", "college", "college of", "school", "school of", "results"]: continue
+                    
+                    if c_lower == line_clean:
                         return True
-                    if fuzz.token_set_ratio(c, u) >= 90:
-                        return True
+                        
+                    if fuzz.token_sort_ratio(c_lower, line_clean) > 88:
+                        ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government', 'engineering', 'technology', 'science', 'sciences', 'management', 'open'}
+                        sig_u = " ".join([w for w in c_lower.split() if w not in ignore_w])
+                        sig_l = " ".join([w for w in line_clean.split() if w not in ignore_w])
+                        if sig_u and sig_l and fuzz.token_sort_ratio(sig_u, sig_l) > 80:
+                            if ('college' in c_lower and 'university' in line_clean) or ('university' in c_lower and 'college' in line_clean):
+                                pass
+                            else:
+                                return True
+                                
+                    if fuzz.token_set_ratio(c_lower, line_clean) > 95 and len(line_clean) > 10:
+                        words = line_clean.split()
+                        if len(words) <= 2 and all(w in ['state', 'national', 'international', 'central', 'global', 'university', 'college', 'institute', 'govt', 'government'] for w in words):
+                            continue
+                            
+                        ignore_w = {'university', 'institute', 'college', 'school', 'academy', 'deemed', 'to', 'be', 'state', 'private', 'of', 'for', 'and', 'the', 'govt', 'government', 'open', 'engineering', 'technology', 'science', 'sciences', 'management'}
+                        w1_sig = [w for w in c_lower.split() if w not in ignore_w]
+                        w2_sig = [w for w in line_clean.split() if w not in ignore_w]
+                        
+                        if len(w1_sig) >= 2 and len(w2_sig) >= 2:
+                            if all(w in w2_sig for w in w1_sig) or all(w in w1_sig for w in w2_sig):
+                                if abs(len(w1_sig) - len(w2_sig)) <= 1:
+                                    return True
                 return False
         except ImportError:
             def is_match(c, u_list):
                 if c in ["university", "institute", "college", "school"]: return False
-                for u in u_list:
-                    if u in ["university", "institute", "college", "school", "results"]: continue
-                    if c == u or c in u or u in c:
+                c_lower = c.lower()
+                for line in u_list:
+                    line_clean = line.strip().lower()
+                    if c_lower == line_clean:
                         return True
                 return False
 
@@ -1338,7 +1365,7 @@ def main():
         GITHUB_REPO = "logos"
         
         logo_url = ""
-        logo_filename = logo_map.get(_norm(uni_canonical))
+        logo_filename = find_logo(uni_canonical, logo_map)
         if not logo_filename:
             logo_filename = sanitize_filename(uni_canonical) + ".png"
             
