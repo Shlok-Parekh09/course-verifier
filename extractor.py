@@ -511,11 +511,12 @@ def ask_llm_for_description(course_name: str, uni_name: str, page_text: str, cou
     and correct the country name if it is suspicious or abbreviated.
     Returns a dict with 'description', 'uni_state', and 'country'.
     """
-    api_keys = [
-        k.strip() for k in
-        [os.environ.get("MISTRAL_API_KEY"), os.environ.get("MISTRAL_API_KEY_1")] if k and k.strip()
-    ]
-
+    import random
+    api_keys = []
+    for k, v in os.environ.items():
+        if k.startswith("MISTRAL_API_KEY") and v.strip():
+            api_keys.append(v.strip())
+            
     if not api_keys or not page_text.strip():
         # Simple fallback: first 500 chars of skills-related text
         fallback_desc = page_text[:300].replace("\n", " ").strip()
@@ -527,13 +528,13 @@ def ask_llm_for_description(course_name: str, uni_name: str, page_text: str, cou
             fallback_desc = skills_re.group(0)[:400].replace("\n", " ").strip()
         return {"description": fallback_desc, "uni_state": "", "country": country_raw}
 
-    api_key = api_keys[0]
+    api_key = random.choice(api_keys)
     prompt = (
         f"You are summarising a course curriculum for a university course catalog.\n"
         f"Course: '{course_name}' at '{uni_name}'.\n\n"
         f"Based on the following extracted web page text (which contains the curriculum/syllabus), "
-        f"generate an extremely concise, punchy description (MAXIMUM 150 characters) of the cybersecurity topics taught. "
-        f"CRITICAL: Write in full, cohesive sentences. Do NOT output a comma-separated list of keywords! Get straight to the point and fit as much fine detail as possible into this short space.\n"
+        f"generate a proper 3-liner description (MAXIMUM 350 characters) of the cybersecurity topics taught. "
+        f"CRITICAL: Write in exactly three full, cohesive sentences. Do NOT output a comma-separated list of keywords! Get straight to the point and fit as much fine detail as possible into this space.\n"
         f"CRITICAL: Vary your vocabulary and sentence structure for every course! Do NOT always start with the same word. Use highly diverse action verbs (e.g. 'Dive into', 'Build skills in', 'Explore', 'Study', 'Analyze').\n"
         f"FORBIDDEN WORD: You are absolutely FORBIDDEN from using the word 'Master' or 'Mastering' anywhere in the description.\n"
         f"If the text contains unrelated web errors like '403 Forbidden', 'Access Denied', or 'Cloudflare', COMPLETELY IGNORE them. Do NOT include them in the description.\n"
