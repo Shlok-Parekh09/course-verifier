@@ -743,6 +743,8 @@ def ask_llm_for_description(course_name: str, uni_name: str, page_text: str, cou
         if singular:
             api_keys = [singular]
             
+    print(f"      -> [LLM Extract] Loaded {len(api_keys)} Mistral API keys")
+            
     if not api_keys or not page_text.strip():
         # Simple fallback: first 500 chars of skills-related text
         fallback_desc = page_text[:300].replace("\n", " ").strip()
@@ -1373,7 +1375,7 @@ def main():
             entry = {
                 "id":                 [c["_id"]],
                 "name":               course_name,
-                "university":         uni_name,
+                "university":         uni_raw,
                 "affiliated_uni":     affiliated_uni,
                 "uni_state":          uni_state,
                 "logo_url":           logo_url,
