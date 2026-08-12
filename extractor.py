@@ -227,22 +227,50 @@ def _title_case(name):
             words[i] = "SVKM's"
     return " ".join(words)
 
+def get_abbreviation_from_db(uni_name: str) -> str:
+    if not os.path.exists(DB_PATH) or not uni_name:
+        return uni_name
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT full_name FROM university_abbreviations WHERE LOWER(abbreviation)=LOWER(?)",
+            (uni_name.strip(),)
+        )
+        row = cur.fetchone()
+        conn.close()
+        if row and row["full_name"]:
+            return row["full_name"]
+    except Exception:
+        pass
+    return uni_name
+
 def resolve_university_name(raw_name: str, logo_map: dict) -> str:
     """
     Normalise abbreviations and return the canonical CSV name.
-    Priority: direct alias -> CSV fuzzy match -> raw name.
+    Priority: direct alias -> DB abbreviation -> CSV fuzzy match -> raw name.
     """
     if not raw_name or raw_name.lower() in ("unknown", "nan", ""):
         return raw_name
     # First clean ligatures and parentheticals
     cleaned = _clean_uni_name(raw_name)
     n = _norm(cleaned)
-    # direct alias
+    
+    # 1) Direct alias
     alias_target = _ALIAS_NORM.get(n)
+    
+    # 2) Database abbreviation mapping
+    if not alias_target:
+        db_expanded = get_abbreviation_from_db(cleaned)
+        if db_expanded and db_expanded.lower() != cleaned.lower():
+            alias_target = _norm(db_expanded)
+            
     if alias_target:
         for csv_norm, url in logo_map.items():
             if _norm(csv_norm) == alias_target or alias_target in _norm(csv_norm):
                 return _title_case(csv_norm)
+                
     # fuzzy match to CSV keys
     best, best_name = 0.0, cleaned
     for csv_n in logo_map:
