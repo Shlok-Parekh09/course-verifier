@@ -17,7 +17,7 @@ Werkzeug
 firebase-admin
 gunicorn
 pandas
-pymongo==4.6.3
+pymongo==4.18.3
 googlesearch-python
 dnspython==2.6.1
 cloudscraper
