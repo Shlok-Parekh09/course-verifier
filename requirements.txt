@@ -19,7 +19,7 @@ gunicorn
 pandas
 pymongo==4.18.3
 googlesearch-python
-dnspython==2.6.1
+dnspython==2.9.2
 cloudscraper
 rapidfuzz
 openpyxl
